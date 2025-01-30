@@ -24,7 +24,7 @@ export class GeneralSettingTab extends PluginSettingTab {
         this.sectionActionButtons.clear();
 
         // Header
-        containerEl.createEl('h1', { text: 'FLARE.ai Settings' });
+        containerEl.createEl('h1', { text: 'FLARE.ai' });
         
         const wrapper = containerEl.createDiv('flare-manager');
 
@@ -36,12 +36,12 @@ export class GeneralSettingTab extends PluginSettingTab {
         const flaresSection = this.createSection(wrapper, 'Flares', true);
         this.plugin.flareManager.createSettingsUI(flaresSection);
 
-        // General Settings Section (renamed from Folders)
-        const generalSection = this.createSection(wrapper, 'General Settings', true);
+        // General Section (no "Settings" suffix)
+        const generalSection = this.createSection(wrapper, 'General', true);
         this.addGeneralSettings(generalSection);
 
-        // History Settings Section
-        const historySection = this.createSection(wrapper, 'History Settings', true);
+        // History Section (no "Settings" suffix)
+        const historySection = this.createSection(wrapper, 'History', true);
         this.addHistorySettings(historySection);
 
         // Title Generation Section
@@ -195,7 +195,7 @@ export class GeneralSettingTab extends PluginSettingTab {
 
         // Debug Logging
         new Setting(containerEl)
-            .setName('Enable Debug Logging')
+            .setName('Enable debug logging')
             .setDesc('Show detailed logs in the console for API calls and chat history')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.debugLoggingEnabled ?? false)
@@ -206,7 +206,7 @@ export class GeneralSettingTab extends PluginSettingTab {
 
         // Flares folder
         new Setting(containerEl)
-            .setName('Flares Location')
+            .setName('Flares location')
             .setDesc('Where to store your Flare configurations')
             .addText(text => text
                 .setPlaceholder('FLAREai/flares')
@@ -218,7 +218,7 @@ export class GeneralSettingTab extends PluginSettingTab {
 
         // History folder
         new Setting(containerEl)
-            .setName('History Location')
+            .setName('History location')
             .setDesc('Where to store your chat history')
             .addText(text => text
                 .setPlaceholder('FLAREai/history')
@@ -372,7 +372,7 @@ export class GeneralSettingTab extends PluginSettingTab {
 
     private addTitleGenerationSettings(containerEl: HTMLElement) {
         // Create collapsible section for title generation
-        const titleSection = this.createSection(containerEl, 'Title Generation', true);
+        const titleSection = this.createSection(containerEl, 'Title generation', true);
 
         // Add action buttons container
         const actionButtons = titleSection.createDiv({ cls: 'flare-form-actions' });
@@ -380,7 +380,7 @@ export class GeneralSettingTab extends PluginSettingTab {
 
         // Add auto title generation toggle
         new Setting(titleSection)
-            .setName('Auto Generate Titles')
+            .setName('Auto-generate titles')
             .setDesc('Automatically generate titles after a specified number of message exchanges')
             .addToggle(toggle => {
                 toggle.setValue(this.plugin.settings.titleSettings.autoGenerate ?? false)
@@ -398,7 +398,7 @@ export class GeneralSettingTab extends PluginSettingTab {
         // Add message pairs setting
         const pairsContainer = titleSection.createDiv({ cls: 'auto-title-pairs-setting' });
         new Setting(pairsContainer)
-            .setName('Message Pairs')
+            .setName('Message pairs')
             .setDesc('Number of message exchanges before auto-generating title (1 pair = 1 user message + 1 assistant response)')
             .addText(text => {
                 text.setValue(String(this.plugin.settings.titleSettings.autoGenerateAfterPairs ?? 2))
@@ -460,7 +460,7 @@ export class GeneralSettingTab extends PluginSettingTab {
             });
 
         new Setting(titleSection)
-            .setName('Max Tokens')
+            .setName('Maximum tokens')
             .setDesc('Maximum length of generated title')
             .addText(text => {
                 text.setValue(String(this.plugin.settings.titleSettings.maxTokens || 50))
