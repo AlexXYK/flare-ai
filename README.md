@@ -1,47 +1,62 @@
 # FLARE.ai for Obsidian
 
-A powerful AI chat interface for Obsidian that supports multiple providers and customizable personas (Flares) with advanced context management.
+A powerful AI chat interface for Obsidian featuring customizable personas (Flares), multiple provider support, and seamless conversation management.
 
-**Version**: 1.0.0
+![FLARE.ai Interface](screenshots/main.png)
 
-## 📚 User Guide
+## Features
 
-### Features
-- 🤖 Multiple AI Provider Support
-  - Local AI through Ollama
-  - OpenAI API integration
-  - OpenRouter API support
-  - Easy provider configuration
-  - Dynamic model selection
-  - Real-time model refresh
-  - Streaming responses
+### 🤖 Multiple AI Provider Support
+- **Local AI** through Ollama
+- **OpenAI** API integration
+- **OpenRouter** API support
+- Easy provider configuration
+- Dynamic model selection
+- Real-time model refresh
+- Streaming responses
 
-- 🔥 Flare Management
-  - Create custom AI personas
-  - Configure provider settings
-  - Set temperature and token limits
-  - Custom system prompts
-  - Easy flare switching with @mentions
-  - Markdown-based storage
+### 🔥 Flare Management
+- Create custom AI personas
+- Configure provider settings
+- Set temperature and token limits
+- Custom system prompts
+- Easy flare switching with @mentions
+- Markdown-based storage
 
-- ⚡ Modern UI/UX
-  - Clean, consistent interface
-  - Multiple view locations
-  - Real-time settings updates
-  - Message actions (copy, edit, delete)
-  - Stop generation support
-  - Auto-generated chat titles
+### ⚡ Modern UI/UX
+- Clean, consistent interface
+- Multiple view locations
+- Real-time settings updates
+- Message actions (copy, delete)
+- Stop generation support
+- Auto-generated chat titles
 
-### Quick Start
+## Installation
+
+1. Open Obsidian Settings
+2. Go to Community Plugins
+3. Search for "FLARE.ai"
+4. Click Install
+5. Enable the plugin
+
+Or manually:
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/AlexXYK/flare-ai/releases/latest)
+2. Create a `flare-ai` folder in your vault's `.obsidian/plugins/` directory
+3. Copy the downloaded files into the folder
+4. Enable the plugin in Obsidian settings
+
+## Quick Start
+
 1. Open Settings > FLARE.ai
 2. Add at least one provider:
-   - For Ollama: Use default endpoint `http://localhost:11434`
+   - For Ollama: Use default endpoint `http://localhost:11434` or a remote endpoint
    - For OpenAI: Add your API key
    - For OpenRouter: Add your API key
-3. Create your first Flare in your vault's `FLAREai/flares` directory
+3. Create your first Flare via the "Create Flare" button in the settings
 4. Start chatting!
 
-### Using Flares
+## Using Flares
+
 Flares are markdown files that define AI personas. They live in your vault and can be edited directly.
 
 Example Flare:
@@ -50,7 +65,7 @@ Example Flare:
 name: Code Assistant
 description: Programming and technical help
 provider: ollama-default
-model: codellama
+model: llama3.1
 temperature: 0.7
 maxTokens: 2048
 historyWindow: 3
@@ -66,12 +81,13 @@ You are an expert programmer focused on clear explanations and practical example
 - Suggest best practices
 ```
 
+## Features in Detail
+
 ### Chat Features
-- Switch models on the fly
+- Switch models on the fly by starting your message with `@flarename`
 - Adjust creativity with temperature
 - Change providers instantly
 - Settings persist per chat
-- Use @mentions for quick flare switching
 - Control context window size
 - Auto-generate chat titles with `/title`
 - Automatic chat history management
@@ -85,102 +101,46 @@ API keys are stored in plain text in your vault's `.obsidian/plugins/flare-ai/da
 - Usage monitoring
 - Setting provider timeouts
 
-## 🛠️ Developer Guide
+## Screenshots
 
-### Architecture Overview
+### Main Interface
+![Main Interface](screenshots/main.png)
 
-#### Core Components
-- **FlareManager**: Handles Flare lifecycle (create, edit, delete)
-- **ProviderManager**: Manages AI providers and model loading
-- **ChatHistoryManager**: Handles message history and context windows
-- **AIChatView**: Main chat interface with real-time updates
+### Settings
+![Settings](screenshots/settings.png)
 
-#### Project Structure
-```
-src/
-├── main.ts                    # Plugin entry point
-├── settings/                  # Settings management
-├── providers/                 # Provider implementations
-├── flares/                   # Flare management
-├── views/                    # UI components
-├── history/                  # History management
-└── types/                    # TypeScript definitions
-```
+### Flare Management
+![Flare Management](screenshots/flares.png)
 
-### Message Handling
+## Contributing
 
-#### Provider Differences
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
-##### Ollama
-- Uses native context management through Ollama's context field
-- Always streams responses for better performance
-- Preserves context between messages unless:
-  - A flare switch occurs
-  - The request is aborted
-- Message format:
-```json
-{
-    "model": "model_name",
-    "messages": [...],
-    "temperature": 0.7,
-    "context": "previous_context",
-    "stream": true
-}
-```
+### Development Setup
+1. Clone the repository
+2. Install dependencies with `npm install`
+3. Build the plugin with `npm run build`
+4. Link to your test vault
 
-##### OpenAI/OpenRouter
-- Handles context through message history
-- Cleans message content by stripping HTML tags
-- Filters out system messages from history
-- Deduplicates user messages
-- Message format:
-```json
-{
-    "model": "model_name",
-    "messages": [
-        {"role": "system", "content": "system_prompt"},
-        {"role": "user", "content": "cleaned_message"},
-        {"role": "assistant", "content": "response"}
-    ],
-    "temperature": 0.7,
-    "max_tokens": 2048,
-    "stream": false
-}
-```
+For more details, see the [Contributing Guide](CONTRIBUTING.md).
 
-### Context Management
+## Support
 
-#### History Window
-Controls message pairs in normal conversation:
-- Set with `historyWindow` in flare config
-- -1: Keep all messages
-- 0: Keep no history
-- N: Keep N user/assistant pairs
-
-#### Handoff Window
-Controls message pairs during flare switches:
-- Set with `handoffWindow` in flare config
-- -1: Transfer all messages
-- 0: Transfer no messages
-- N: Transfer N most recent pairs
-
-### Adding New Providers
-1. Implement the `AIProvider` interface
-2. Create provider manager class
-3. Add to `aiProviders.ts`
-4. Register in `main.ts`
-5. Add provider-specific settings
-6. Implement timeout handling
-7. Add error handling
-
-### Contributing
-1. Report bugs through GitHub issues
-2. Suggest features
-3. Submit pull requests
-4. Share your Flares
+- 📝 [Report a Bug](https://github.com/AlexXYK/flare-ai/issues/new?template=bug_report.md)
+- 💡 [Request a Feature](https://github.com/AlexXYK/flare-ai/issues/new?template=feature_request.md)
+- 🤝 [Contribute](CONTRIBUTING.md)
 
 ## License
-MIT License - See LICENSE file
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Author
+
 Created by Alex Kristiansen ([@AlexXYK](https://github.com/AlexXYK))
+Note: I am not a developer. This plugin was built partially to fulfill a personal need and partially as an exercise in AI coding and development.
+
+---
+
+<div align="center">
+If you find FLARE.ai helpful, please consider starring the repository! ⭐
+</div>
