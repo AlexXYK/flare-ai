@@ -1,0 +1,11 @@
+{
+	"id": "flare-ai",
+	"name": "FLARE.ai",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "A powerful and flexible AI chat interface featuring customizable personas (Flares), multiple provider support, and seamless conversation management.",
+	"author": "Alex Kristiansen",
+	"authorUrl": "https://github.com/AlexXYK",
+	"isDesktopOnly": false,
+	"icon": "flame"
+}
