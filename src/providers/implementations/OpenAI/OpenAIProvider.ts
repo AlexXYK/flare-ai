@@ -1,6 +1,7 @@
 import { BaseProvider } from '../../base/BaseProvider';
 import { AIProviderOptions } from '../../../types/AIProvider';
 import { StreamingOptions } from '../../base/BaseProvider';
+import { requestUrl, RequestUrlParam } from 'obsidian';
 
 interface ChatMessage {
     role: 'system' | 'user' | 'assistant';
@@ -51,17 +52,18 @@ export class OpenAIProvider extends BaseProvider {
 
     async getAvailableModels(): Promise<string[]> {
         try {
-            const response = await fetch('https://api.openai.com/v1/models', {
+            const response = await requestUrl({
+                url: 'https://api.openai.com/v1/models',
                 headers: {
                     'Authorization': `Bearer ${this.apiKey}`
                 }
             });
 
-            if (!response.ok) {
+            if (response.status !== 200) {
                 throw new Error(`OpenAI API error: ${response.status}`);
             }
 
-            const data = await response.json() as OpenAIModelsResponse;
+            const data = response.json as OpenAIModelsResponse;
             return data.data.map(model => model.id);
         } catch (error) {
             throw error;
@@ -100,7 +102,8 @@ export class OpenAIProvider extends BaseProvider {
         const signal = controller.signal;
 
         try {
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            const requestParams: RequestUrlParam = {
+                url: 'https://api.openai.com/v1/chat/completions',
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -113,49 +116,41 @@ export class OpenAIProvider extends BaseProvider {
                     max_tokens: maxTokens,
                     stream
                 }),
-                signal
-            });
+                throw: false // Don't throw on non-200 responses
+            };
 
-            if (!response.ok) {
+            const response = await requestUrl(requestParams);
+
+            if (response.status !== 200) {
                 throw new Error(`OpenAI API error: ${response.status}`);
             }
 
-            if (stream && response.body && onToken) {
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
+            if (stream && onToken) {
+                // Streaming is handled differently with requestUrl
+                // We need to process the response text as a stream of SSE events
+                const lines = response.text.split('\n');
                 let finalResponse = '';
 
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
+                for (const line of lines) {
+                    if (line.trim() === '' || line.trim() === 'data: [DONE]') continue;
 
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop() || '';
-
-                    for (const line of lines) {
-                        if (line.trim() === '') continue;
-                        if (line.trim() === 'data: [DONE]') continue;
-
-                        if (line.startsWith('data: ')) {
-                            try {
-                                const json = JSON.parse(line.slice(6));
-                                const token = json.choices?.[0]?.delta?.content || '';
-                                if (token) {
-                                    finalResponse += token;
-                                    onToken(token);
-                                }
-                            } catch (e) {
-                                // Skip invalid JSON
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const json = JSON.parse(line.slice(6));
+                            const token = json.choices?.[0]?.delta?.content || '';
+                            if (token) {
+                                finalResponse += token;
+                                onToken(token);
                             }
+                        } catch (e) {
+                            // Skip invalid JSON
                         }
                     }
                 }
 
                 return finalResponse;
             } else {
-                const result = await response.json();
+                const result = response.json;
                 return result.choices?.[0]?.message?.content || '';
             }
         } catch (error) {
