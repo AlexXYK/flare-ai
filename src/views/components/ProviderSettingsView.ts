@@ -193,7 +193,7 @@ export class ProviderSettingsView {
     private createOllamaSettings(container: HTMLElement, actionButtons: HTMLElement): void {
         // Base URL setting
         new Setting(container)
-            .setName('Base URL')
+            .setName('Endpoint URL')
             .setDesc('Ollama API endpoint URL')
             .addText(text => text
                 .setPlaceholder('http://localhost:11434')

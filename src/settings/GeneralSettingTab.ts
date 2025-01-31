@@ -524,6 +524,9 @@ export class GeneralSettingTab extends PluginSettingTab {
     }
 
     private populateProviderDropdown(dropdown: DropdownComponent) {
+        // Add default option
+        dropdown.addOption('', 'Select a provider...');
+        
         Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
             if (provider.type && this.plugin.providers.has(provider.type)) {
                 dropdown.addOption(id, provider.name || id);

@@ -391,9 +391,10 @@ export class FlareManager {
             
             // Flare selector with Add and Delete buttons
             const select = new Setting(dropdownGroup)
-                .setName('Flare')
-                .setDesc('Select a flare to configure')
                 .addDropdown(async (dropdown) => {
+                    // Add default option
+                    dropdown.addOption('', 'Select a flare...');
+                    
                     // Add options for existing flares
                     const flares = await this.loadFlares();
                     flares.forEach(flare => {
@@ -414,83 +415,93 @@ export class FlareManager {
                     });
                 });
 
-            // Add buttons
-            select.addButton(btn => 
-                btn
-                    .setIcon('plus')
-                    .setTooltip('Add Flare')
-                    .onClick(async () => {
-                        const newFlareName = await this.createNewFlare();
-                        if (newFlareName) {
-                            // Update dropdown with new option
-                            const dropdownComponent = select.components[0] as DropdownComponent;
-                            if (dropdownComponent) {
-                                dropdownComponent.addOption(newFlareName, newFlareName);
-                            }
-                            new Notice('New flare created. Select it from the dropdown to configure.');
+            // Add buttons container
+            const buttonsContainer = dropdownGroup.createEl('div', { cls: 'flare-buttons' });
+            
+            // Add new flare button
+            const addButton = buttonsContainer.createEl('button', {
+                cls: 'clickable-icon',
+                attr: { 'aria-label': 'Add new flare' }
+            });
+            setIcon(addButton, 'plus');
+            addButton.addEventListener('click', async () => {
+                const newFlareName = await this.createNewFlare();
+                if (newFlareName) {
+                    // Update dropdown with new option
+                    const dropdownComponent = select.components[0] as DropdownComponent;
+                    if (dropdownComponent) {
+                        dropdownComponent.addOption(newFlareName, newFlareName);
+                        dropdownComponent.setValue(newFlareName);
+                    }
+                    new Notice('New flare created. Select it from the dropdown to configure.');
+                }
+            });
+
+            // Add delete button
+            const deleteButton = buttonsContainer.createEl('button', {
+                cls: 'clickable-icon',
+                attr: { 'aria-label': 'Delete flare' }
+            });
+            setIcon(deleteButton, 'trash');
+            if (!this.currentFlare) {
+                deleteButton.addClass('disabled');
+            }
+            deleteButton.addEventListener('click', async () => {
+                if (!this.currentFlare) return;
+                
+                const confirmed = await new Promise<boolean>((resolve) => {
+                    const modal = new ConfirmModal(
+                        this.plugin.app,
+                        'Delete flare',
+                        `Are you sure you want to delete "${this.currentFlare}"?`,
+                        () => resolve(true)
+                    );
+                    modal.onClose = () => resolve(false);
+                    modal.open();
+                });
+
+                if (confirmed) {
+                    try {
+                        // Avoid conflict if we're already loading
+                        if (this.isLoadingFlares) {
+                            return;
                         }
-                    })
-            )
-            .addButton(btn =>
-                btn
-                    .setIcon('trash')
-                    .setTooltip('Delete Flare')
-                    .onClick(async () => {
-                        if (this.currentFlare) {
-                            const confirmed = await new Promise<boolean>((resolve) => {
-                                const modal = new ConfirmModal(
-                                    this.plugin.app,
-                                    'Delete Flare',
-                                    `Are you sure you want to delete "${this.currentFlare}"?`,
-                                    () => resolve(true)
-                                );
-                                modal.onClose = () => resolve(false);
-                                modal.open();
-                            });
+                        this.isLoadingFlares = true;
 
-                            if (confirmed) {
-                                try {
-                                    // Avoid conflict if we're already loading
-                                    if (this.isLoadingFlares) {
-                                        return;
-                                    }
-                                    this.isLoadingFlares = true;
+                        const flareName = this.currentFlare; // Store for notice
+                        
+                        // Proceed with deletion
+                        const filePath = `${this.plugin.settings.flaresFolder}/${this.currentFlare}.md`;
+                        await this.plugin.app.vault.adapter.remove(filePath);
 
-                                    const flareName = this.currentFlare; // Store for notice
-                                    
-                                    // Proceed with deletion
-                                    const filePath = `${this.plugin.settings.flaresFolder}/${this.currentFlare}.md`;
-                                    await this.plugin.app.vault.adapter.remove(filePath);
-
-                                    // Update dropdown
-                                    const dropdownComponent = select.components[0] as DropdownComponent;
-                                    if (dropdownComponent) {
-                                        dropdownComponent.selectEl.querySelector(`option[value="${this.currentFlare}"]`)?.remove();
-                                        dropdownComponent.setValue('');
-                                    }
-                                    
-                                    // Clear settings area
-                                    const settingsArea = wrapper.querySelector('.flare-settings-area');
-                                    if (settingsArea) {
-                                        settingsArea.empty();
-                                    }
-                                    
-                                    this.currentFlare = null;
-                                    this.currentFlareConfig = null;
-                                    this.originalSettings = null;
-                                    this.hasUnsavedChanges = false;
-
-                                    new Notice(`Deleted flare: ${flareName}`);
-                                } catch (error) {
-                                    console.error('Failed to delete flare:', error);
-                                    new Notice('Failed to delete flare');
-                                } finally {
-                                    this.isLoadingFlares = false;
-                                }
-                            }
+                        // Update dropdown
+                        const dropdownComponent = select.components[0] as DropdownComponent;
+                        if (dropdownComponent) {
+                            dropdownComponent.selectEl.querySelector(`option[value="${this.currentFlare}"]`)?.remove();
+                            dropdownComponent.setValue('');
                         }
-                    })
-            );
+                        
+                        // Clear settings area
+                        const settingsArea = wrapper.querySelector('.flare-settings-area');
+                        if (settingsArea) {
+                            settingsArea.empty();
+                        }
+                        
+                        this.currentFlare = null;
+                        this.currentFlareConfig = null;
+                        this.originalSettings = null;
+                        this.hasUnsavedChanges = false;
+                        deleteButton.addClass('disabled');
+
+                        new Notice(`Deleted flare: ${flareName}`);
+                    } catch (error) {
+                        console.error('Failed to delete flare:', error);
+                        new Notice('Failed to delete flare');
+                    } finally {
+                        this.isLoadingFlares = false;
+                    }
+                }
+            });
 
             // Settings area
             wrapper.createDiv('flare-settings-area');
@@ -544,18 +555,39 @@ export class FlareManager {
         new Setting(flareContainer)
             .setName('Provider')
             .addDropdown(dropdown => {
+                if (!this.currentFlareConfig) return dropdown;
+                
+                // Add default option
+                dropdown.addOption('', 'Select a provider...');
+                
+                // Add provider options
                 Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
                     if (provider.enabled) {
                         dropdown.addOption(id, provider.name);
                     }
                 });
-                dropdown.setValue(settings.provider)
-                    .onChange(value => {
-                        settings.provider = value;
-                        settings.model = ''; // Reset model when provider changes
-                        this.markAsChanged();
-                        this.createSettingsUI(containerEl);
-                    });
+                
+                // Set current value if it exists and the provider is still valid
+                const currentProvider = this.plugin.settings.providers[this.currentFlareConfig.provider || ''];
+                if (currentProvider?.enabled && currentProvider.type && this.plugin.providers.has(currentProvider.type)) {
+                    dropdown.setValue(this.currentFlareConfig.provider);
+                } else {
+                    dropdown.setValue('');
+                }
+
+                dropdown.onChange(async value => {
+                    if (!this.currentFlareConfig) return;
+                    this.currentFlareConfig.provider = value;
+                    // Reset model when provider changes
+                    this.currentFlareConfig.model = '';
+                    const settingItem = (dropdown as any).settingEl || dropdown.selectEl.closest('.setting-item');
+                    if (settingItem) {
+                        this.markAsChanged(form, settingItem);
+                    }
+                    // Update the model dropdown with the new provider's models
+                    await this.updateModelDropdown(providerSection, value);
+                });
+                return dropdown;
             });
 
         // Only show reasoning model settings for Ollama provider
@@ -950,11 +982,13 @@ export class FlareManager {
                     .addDropdown(dropdown => {
                         if (!this.currentFlareConfig) return dropdown;
                         
+                        // Add default option
+                        dropdown.addOption('', 'Select a provider...');
+                        
                         // Add provider options
                         Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
-                            // Only show enabled providers with a valid type
-                            if (provider.enabled && provider.type && this.plugin.providers.has(provider.type)) {
-                                dropdown.addOption(id, provider.name || id);
+                            if (provider.enabled) {
+                                dropdown.addOption(id, provider.name);
                             }
                         });
                         
