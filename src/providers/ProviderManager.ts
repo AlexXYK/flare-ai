@@ -1,602 +1,454 @@
-import { Notice, Setting, DropdownComponent, Modal, Platform } from 'obsidian';
+import { Notice, Setting, DropdownComponent, Modal, Platform, setIcon, App } from 'obsidian';
 import type FlarePlugin from '../../main';
 import { ProviderSettings } from '../types/AIProvider';
 import { AIProvider } from './aiProviders';
+import { ProviderSettingsUI } from '../views/components/ProviderSettingsUI';
+import { ProviderSettingsView } from '../views/components/ProviderSettingsView';
+import { OpenAIProvider, OllamaProvider, OpenRouterProvider } from './aiProviders';
 
-export class ProviderManager {
-    protected provider: any;
+export abstract class ProviderManager {
+    protected provider: AIProvider | null = null;
     private currentProvider: string | null = null;
     public id: string;
 
-    constructor(private plugin: FlarePlugin) {
+    constructor(protected plugin: FlarePlugin) {
         this.id = '';  // Should be set by implementing classes
     }
 
-    createProvider(settings: ProviderSettings): AIProvider | null {
-        // Should be implemented by subclasses
-        return null;
+    createSettingsUI(containerEl: HTMLElement) {
+        // Create provider selector UI
+        const settingsUI = new ProviderSettingsUI(this.plugin, containerEl, (providerId) => {
+            this.currentProvider = providerId;
+            // Clear previous settings
+            const existingSettings = containerEl.querySelector('.provider-settings');
+            if (existingSettings) existingSettings.remove();
+            // Create new settings if a provider is selected
+            if (providerId && this.plugin.settings.providers[providerId]) {
+                const settings = this.plugin.settings.providers[providerId];
+                const settingsView = new ProviderSettingsView(
+                    this.plugin,
+                    containerEl,
+                    settings,
+                    async () => {
+                        await this.plugin.saveData(this.plugin.settings);
+                    }
+                );
+                settingsView.display();
+            }
+        });
+        settingsUI.display();
+    }
+
+    public abstract createProvider(settings: ProviderSettings): AIProvider | null;
+
+    async getAvailableModels(settings: ProviderSettings): Promise<string[]> {
+        try {
+            const provider = this.createProvider(settings);
+            if (!provider) {
+                throw new Error('Failed to create provider');
+            }
+            return await provider.getAvailableModels();
+        } catch (error) {
+            if (error instanceof Error) {
+                throw new Error(`Failed to get available models: ${error.message}`);
+            }
+            throw error;
+        }
     }
 
     async initialize() {
         // Initialize providers if needed
     }
 
-    async getAvailableModels(settings: ProviderSettings): Promise<string[]> {
-        return this.getModelsForProvider(settings.type);
+    private createActionButtons(container: HTMLElement): HTMLElement {
+        const actionButtons = container.createDiv('flare-form-actions');
+        return actionButtons;
     }
 
-    createSettingsUI(containerEl: HTMLElement) {
-        const providersSection = containerEl.createDiv('providers-section');
-
-        // Provider selector with add/remove buttons
-        const selectorContainer = providersSection.createDiv('provider-selector');
-        const dropdownContainer = new Setting(selectorContainer)
-            .setName('Provider')
-            .setDesc('Select a provider to configure');
-
-        // Create the dropdown
-        const dropdown = new DropdownComponent(dropdownContainer.controlEl);
-        dropdown.addOption('', 'Choose provider to configure...');
-        Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
-            dropdown.addOption(id, provider.name || id);
-        });
-        
-        let deleteButton: HTMLElement | null = null;
-        
-        // Add the buttons
-        dropdownContainer
-            .addExtraButton(button => button
-                .setIcon('plus')
-                .setTooltip('Add new provider')
-                .onClick(() => {
-                    const id = `provider_${Date.now()}`;
-                    this.plugin.settings.providers[id] = {
-                        name: 'New Provider',
-                        type: '',
-                        enabled: true,
-                        visibleModels: []
-                    };
-                    this.plugin.saveData(this.plugin.settings);
-                    dropdown.addOption(id, 'New Provider');
-                    dropdown.setValue(id);
-                    this.currentProvider = id;
-                    this.createProviderSettings(providersSection);
-                    if (deleteButton) deleteButton.removeClass('disabled');
-                }))
-            .addExtraButton(button => {
-                deleteButton = button.setIcon('trash')
-                    .setTooltip('Delete provider')
-                    .setDisabled(!this.currentProvider)
-                    .onClick(async () => {
-                        if (!this.currentProvider) return;
-                        
-                        const providerName = this.plugin.settings.providers[this.currentProvider].name || this.currentProvider;
-                        
-                        // Show confirmation dialog
-                        const modal = new Modal(this.plugin.app);
-                        modal.titleEl.setText('Delete Provider');
-                        modal.contentEl.createEl('p', {
-                            text: `Are you sure you want to delete the provider "${providerName}"? This action cannot be undone.`
-                        });
-                        
-                        // Add buttons
-                        const buttonContainer = modal.contentEl.createDiv('modal-button-container');
-                        
-                        // Cancel button
-                        buttonContainer.createEl('button', {
-                            text: 'Cancel',
-                            cls: 'mod-secondary'
-                        }).addEventListener('click', () => {
-                            modal.close();
-                        });
-                        
-                        // Delete button
-                        buttonContainer.createEl('button', {
-                            text: 'Delete',
-                            cls: 'mod-warning'
-                        }).addEventListener('click', async () => {
-                            // Remove from settings
-                            delete this.plugin.settings.providers[this.currentProvider!];
-                            await this.plugin.saveData(this.plugin.settings);
-                            
-                            // Remove from dropdown
-                            const select = dropdown.selectEl;
-                            const option = select.querySelector(`option[value="${this.currentProvider}"]`);
-                            if (option) option.remove();
-                            
-                            // Reset selection
-                            this.currentProvider = null;
-                            dropdown.setValue('');
-                            
-                            // Clear settings display
-                            const existingSettings = providersSection.querySelector('.provider-settings');
-                            if (existingSettings) existingSettings.remove();
-                            
-                            // Disable delete button
-                            if (deleteButton) deleteButton.addClass('disabled');
-                            
-                            new Notice(`Provider "${providerName}" deleted`);
-                            modal.close();
-                        });
-                        
-                        modal.open();
-                    }).extraSettingsEl;
-            });
-
-        // Set initial value and handle changes
-        dropdown.setValue('');
-
-        dropdown.onChange(value => {
-            this.currentProvider = value || null;
-            // Clear previous settings
-            const existingSettings = providersSection.querySelector('.provider-settings');
-            if (existingSettings) existingSettings.remove();
-            // Create new settings if a provider is selected
-            if (value) {
-                this.createProviderSettings(providersSection);
-            }
-            // Update delete button state
-            if (deleteButton) {
-                deleteButton.toggleClass('disabled', !value);
-            }
-        });
-
-        // Add action buttons container
-        const actionButtons = providersSection.createDiv({ cls: 'flare-form-actions' });
-        new Setting(actionButtons)
-            .addButton(button => {
-                button
-                    .setButtonText('Save')
-                    .setCta()
-                    .onClick(async () => {
-                        await this.plugin.saveData(this.plugin.settings);
-                        new Notice('Provider settings saved');
-                        actionButtons.style.display = 'none';
-                    });
-            })
-            .addButton(button => {
-                button
-                    .setButtonText('Revert')
-                    .onClick(async () => {
-                        await this.plugin.loadData();
-                        this.createSettingsUI(containerEl);
-                        new Notice('Provider settings reverted');
-                    });
-            });
-
-        // Initially hide the action buttons
-        actionButtons.style.display = 'none';
-    }
-
-    private createProviderSettings(containerEl: HTMLElement) {
-        if (!this.currentProvider) return;
-
-        const settings = this.plugin.settings.providers[this.currentProvider];
-        if (!settings) return;
-
-        // Clear any existing provider settings
-        const existingSettings = containerEl.querySelector('.provider-settings');
-        if (existingSettings) existingSettings.remove();
-
-        const settingsContainer = containerEl.createDiv('provider-settings');
-
-        // Provider name
-        new Setting(settingsContainer)
-            .setName('Name')
-            .setDesc('Name of the provider')
-            .addText(text => text
-                .setPlaceholder('Provider name')
-                .setValue(settings.name || '')
-                .onChange(async (value) => {
-                    settings.name = value;
-                    this.showActionButtons();
-                }));
-
-        // Provider type
-        new Setting(settingsContainer)
-            .setName('Protocol')
-            .setDesc('Select the provider protocol')
-            .addDropdown(dropdown => dropdown
-                .addOption('', 'Select a protocol...')
-                .addOption('openai', 'OpenAI')
-                .addOption('ollama', 'Ollama')
-                .addOption('openrouter', 'OpenRouter')
-                .setValue(settings.type || '')
-                .onChange(async (value) => {
-                    settings.type = value;
-                    settings.apiKey = '';
-                    settings.baseUrl = '';
-                    settings.visibleModels = [];
-                    this.showActionButtons();
-                    // Recreate only the provider-specific settings
-                    this.updateProviderSpecificSettings(settingsContainer, settings);
-                }));
-
-        // Create initial provider-specific settings
-        this.updateProviderSpecificSettings(settingsContainer, settings);
-
-        // Enable/disable toggle
-        new Setting(settingsContainer)
-            .setName('Enable Provider')
-            .setDesc('Enable or disable this provider')
-            .addToggle(toggle => toggle
-                .setValue(settings.enabled ?? true)
-                .onChange(async (value) => {
-                    settings.enabled = value;
-                    this.showActionButtons();
-                }));
-    }
-
-    private showActionButtons() {
-        const actionButtons = document.querySelector('.providers-section .flare-form-actions');
-        if (actionButtons instanceof HTMLElement) {
-            actionButtons.style.display = 'flex';
+    private async validateSettings(settings: ProviderSettings): Promise<void> {
+        if (!settings.name) {
+            throw new Error('Provider name is required');
+        }
+        if (!settings.type) {
+            throw new Error('Provider type is required');
+        }
+        if (!settings.apiKey) {
+            throw new Error('API key is required');
         }
     }
 
-    private updateProviderSpecificSettings(settingsContainer: HTMLElement, settings: ProviderSettings) {
+    private addPasswordToggle(inputEl: HTMLInputElement): void {
+        const toggleBtn = inputEl.parentElement?.createEl('button', {
+            cls: ['password-visibility-toggle'],
+            text: '👁️'
+        });
+        toggleBtn?.addEventListener('click', (e) => {
+            e.preventDefault();
+            inputEl.type = inputEl.type === 'password' ? 'text' : 'password';
+        });
+    }
+
+    private createSection(container: HTMLElement, title: string): HTMLElement {
+        const section = container.createEl('div', { cls: 'flare-section' });
+        
+        // Create header
+        const header = section.createEl('div', { cls: 'flare-section-header' });
+        header.createEl('h4', { text: title });
+        
+        // Create content container
+        const content = section.createEl('div', { cls: 'flare-section-content' });
+        
+        // Add click handler for collapsing
+        header.addEventListener('click', () => {
+            header.classList.toggle('is-collapsed');
+        });
+        
+        return content;
+    }
+
+    private createProviderSettings(container: HTMLElement, settings: ProviderSettings) {
+        const settingsContainer = container.createEl('div', { cls: 'provider-settings' });
+        const actionButtons = settingsContainer.createEl('div', { cls: 'flare-form-actions' });
+
+        // Create General Settings Section
+        const generalSection = this.createSection(settingsContainer, 'General Settings');
+        
+        // Add name setting
+        new Setting(generalSection)
+            .setName('Provider Name')
+            .setDesc('A unique name for this provider')
+            .addText(text => text
+                .setPlaceholder('Enter provider name')
+                .setValue(settings.name || '')
+                .onChange(async (value) => {
+                    settings.name = value;
+                    this.showActionButtons(actionButtons);
+                }));
+
+        // Add enabled toggle
+        new Setting(generalSection)
+            .setName('Enable Provider')
+            .setDesc('Enable or disable this provider')
+            .addToggle(toggle => toggle
+                .setValue(settings.enabled || false)
+                .onChange(async (value) => {
+                    settings.enabled = value;
+                    this.showActionButtons(actionButtons);
+                }));
+
+        // Create Authentication Section
+        const authSection = this.createSection(settingsContainer, 'Authentication');
+        this.updateProviderSpecificSettings(authSection, settings, actionButtons);
+
+        // Add save and cancel buttons
+        const saveBtn = actionButtons.createEl('button', {
+            text: 'Save',
+            cls: 'mod-cta'
+        });
+        saveBtn.addEventListener('click', async () => {
+            try {
+                await this.validateSettings(settings);
+                await this.plugin.saveData(this.plugin.settings);
+                new Notice('Provider settings saved');
+                this.hideActionButtons(actionButtons);
+            } catch (error) {
+                new Notice('Error saving settings: ' + (error as Error).message);
+            }
+        });
+
+        const cancelBtn = actionButtons.createEl('button', {
+            text: 'Cancel'
+        });
+        cancelBtn.addEventListener('click', () => {
+            this.hideActionButtons(actionButtons);
+        });
+    }
+
+    private updateProviderSpecificSettings(container: HTMLElement, settings: ProviderSettings, actionButtons: HTMLElement) {
         // Clear existing provider-specific settings
-        const existingSpecificSettings = settingsContainer.querySelector('.provider-specific-settings');
-        if (existingSpecificSettings) existingSpecificSettings.remove();
+        const existingSettings = container.querySelectorAll('.provider-specific-setting');
+        existingSettings.forEach(el => el.remove());
 
-        if (!settings.type) return;
-
-        const specificContainer = settingsContainer.createDiv('provider-specific-settings');
-
-        // Provider-specific settings
         switch (settings.type) {
-            case 'openai':
-                new Setting(specificContainer)
+            case 'anthropic':
+                new Setting(container)
+                    .setClass('provider-specific-setting')
                     .setName('API Key')
-                    .setDesc('Your OpenAI API key')
+                    .setDesc('Your Anthropic API key')
                     .addText(text => {
-                        text.inputEl.type = 'password';
-                        text.setPlaceholder('Enter your API key')
+                        const input = text
+                            .setPlaceholder('Enter API key')
                         .setValue(settings.apiKey || '')
                         .onChange(value => {
                             settings.apiKey = value;
-                            this.showActionButtons();
-                        });
-                        // Add show/hide password toggle
-                        const togglePasswordBtn = text.inputEl.parentElement?.createEl('button', {
-                            cls: ['password-visibility-toggle'],
-                            text: '👁️'
-                        });
-                        togglePasswordBtn?.addEventListener('click', (e) => {
-                            e.preventDefault();
-                            text.inputEl.type = text.inputEl.type === 'password' ? 'text' : 'password';
-                        });
+                                this.showActionButtons(actionButtons);
+                            });
+                        input.inputEl.type = 'password';
+                        this.addPasswordToggle(input.inputEl);
                     });
                 break;
 
             case 'ollama':
-                new Setting(specificContainer)
+                // Base URL setting
+                new Setting(container)
+                    .setClass('provider-specific-setting')
                     .setName('Base URL')
                     .setDesc('Ollama API endpoint URL')
                     .addText(text => text
                         .setPlaceholder('http://localhost:11434')
                         .setValue(settings.baseUrl || 'http://localhost:11434')
-                        .onChange(value => {
+                        .onChange(async value => {
                             settings.baseUrl = value;
-                            this.showActionButtons();
+                            this.showActionButtons(actionButtons);
+                            
+                            // Try to refresh models when URL changes
+                            try {
+                                const models = await this.getAvailableModels(settings);
+                                settings.availableModels = models;
+                                settings.visibleModels = settings.visibleModels || [];
+                                
+                                // Refresh the models section
+                                const modelsSection = container.querySelector('.flare-section-content') as HTMLElement;
+                                if (modelsSection) {
+                                    await this.createModelsSection(modelsSection, settings, actionButtons);
+                                }
+                            } catch (error) {
+                                if (error instanceof Error) {
+                                    new Notice('Error refreshing models: ' + error.message);
+                                }
+                            }
                         }));
+
+                // Create Models Section
+                const ollamaModelsSection = this.createSection(container, 'Available Models');
+                this.createModelsSection(ollamaModelsSection, settings, actionButtons);
                 break;
 
-            case 'openrouter':
-                new Setting(specificContainer)
+            case 'openai':
+                new Setting(container)
+                    .setClass('provider-specific-setting')
                     .setName('API Key')
-                    .setDesc('Your OpenRouter API key')
+                    .setDesc('Your OpenAI API key')
                     .addText(text => {
-                        text.inputEl.type = 'password';
-                        text.setPlaceholder('Enter your API key')
+                        const input = text
+                            .setPlaceholder('Enter API key')
+                            .setValue(settings.apiKey || '')
+                            .onChange(value => {
+                                settings.apiKey = value;
+                                this.showActionButtons(actionButtons);
+                            });
+                        input.inputEl.type = 'password';
+                        this.addPasswordToggle(input.inputEl);
+                    });
+
+                new Setting(container)
+                    .setClass('provider-specific-setting')
+                    .setName('Base URL')
+                    .setDesc('Optional: Custom base URL for API requests')
+                    .addText(text => text
+                        .setPlaceholder('https://api.openai.com/v1')
+                        .setValue(settings.baseUrl || '')
+                        .onChange(value => {
+                            settings.baseUrl = value;
+                            this.showActionButtons(actionButtons);
+                        }));
+
+                // Create Models Section
+                const modelsSection = this.createSection(container, 'Available Models');
+                this.createModelsSection(modelsSection, settings, actionButtons);
+                break;
+
+            case 'azure':
+                new Setting(container)
+                    .setClass('provider-specific-setting')
+                    .setName('API Key')
+                    .setDesc('Your Azure OpenAI API key')
+                    .addText(text => {
+                        const input = text
+                            .setPlaceholder('Enter API key')
                         .setValue(settings.apiKey || '')
                         .onChange(value => {
                             settings.apiKey = value;
-                            this.showActionButtons();
-                        });
-                        // Add show/hide password toggle
-                        const togglePasswordBtn = text.inputEl.parentElement?.createEl('button', {
-                            cls: ['password-visibility-toggle'],
-                            text: '👁️'
-                        });
-                        togglePasswordBtn?.addEventListener('click', (e) => {
-                            e.preventDefault();
-                            text.inputEl.type = text.inputEl.type === 'password' ? 'text' : 'password';
-                        });
+                                this.showActionButtons(actionButtons);
+                            });
+                        input.inputEl.type = 'password';
+                        this.addPasswordToggle(input.inputEl);
                     });
+
+                new Setting(container)
+                    .setClass('provider-specific-setting')
+                    .setName('Base URL')
+                    .setDesc('Your Azure OpenAI endpoint URL')
+                    .addText(text => text
+                        .setPlaceholder('https://<resource>.openai.azure.com')
+                        .setValue(settings.baseUrl || '')
+                        .onChange(value => {
+                            settings.baseUrl = value;
+                            this.showActionButtons(actionButtons);
+                        }));
+
+                // Create Models Section
+                const azureModelsSection = this.createSection(container, 'Available Models');
+                this.createModelsSection(azureModelsSection, settings, actionButtons);
                 break;
         }
-
-        // Create models section
-        this.createModelsSection(specificContainer, settings);
     }
 
-    private async createModelsSection(container: HTMLElement, settings: ProviderSettings) {
-        // Clear existing models section
-        const existingModels = container.querySelector('.model-container');
-        if (existingModels) existingModels.remove();
+    private async createModelsSection(container: HTMLElement, settings: ProviderSettings, actionButtons: HTMLElement) {
+        // Clear any existing models section
+        container.empty();
 
-        const modelContainer = container.createDiv('model-container');
-        
-        // Create header section with title and refresh button
-        const headerSection = modelContainer.createDiv('models-header');
-        
-        // Add title and description
-        headerSection.createEl('h3', { text: 'Visible Models', cls: 'setting-item-name' });
-        headerSection.createEl('div', { text: 'Select which models should be visible in dropdowns', cls: 'setting-item-description' });
-        
-        // Create scrollable models container
-        const scrollContainer = modelContainer.createDiv({ cls: 'models-scroll-container' });
-        
-        // Add sortable headers
-        const headerContainer = scrollContainer.createDiv({ cls: 'models-list-header' });
-        const modelNameHeader = headerContainer.createDiv({ 
-            cls: 'model-header model-name-header',
-            text: 'Model Name'
-        });
-        const visibilityHeader = headerContainer.createDiv({ 
-            cls: 'model-header visibility-header',
-            text: 'Visible'
-        });
-
-        // Create models list container
-        const modelsContainer = scrollContainer.createDiv({ cls: 'models-list' });
-
-        try {
-            const models = await this.getModelsForProvider(settings.type, settings);
-            
-            if (!settings.visibleModels) {
-                settings.visibleModels = [...models].sort();
-            }
-
-            // Define renderModelsList function
-            const renderModelsList = () => {
-                // Clear existing list
-                modelsContainer.empty();
-
-                // Sort models based on current sort settings
-                const sortedModels = [...models].sort((a, b) => {
-                    if (sortField === 'name') {
-                        return sortAsc ? 
-                            a.localeCompare(b) : 
-                            b.localeCompare(a);
-                    } else {
-                        const aVisible = settings.visibleModels?.includes(a) ?? true;
-                        const bVisible = settings.visibleModels?.includes(b) ?? true;
-                        return sortAsc ?
-                            (aVisible === bVisible ? 0 : aVisible ? -1 : 1) :
-                            (aVisible === bVisible ? 0 : aVisible ? 1 : -1);
+        // Add refresh models button
+        new Setting(container)
+            .setName('Available Models')
+            .setDesc('Select which models to show in the model selector')
+            .addButton(button => button
+                .setButtonText('Refresh Models')
+                .onClick(async () => {
+                    try {
+                        const models = await this.getAvailableModels(settings);
+                        settings.availableModels = models;
+                        settings.visibleModels = settings.visibleModels || [];
+                        
+                        this.showActionButtons(actionButtons);
+                        await this.createModelsSection(container, settings, actionButtons);
+                        new Notice('Models refreshed');
+                    } catch (error) {
+                        if (error instanceof Error) {
+                            new Notice('Error refreshing models: ' + error.message);
+                        }
                     }
-                });
+                }));
 
-                // Render sorted models
-                sortedModels.forEach(model => {
-                    new Setting(modelsContainer)
-                        .setName(model)
-                        .addToggle(toggle => toggle
-                            .setValue(settings.visibleModels?.includes(model) ?? true)
-                            .onChange(value => {
-                                settings.visibleModels = settings.visibleModels || [];
-                                if (value && !settings.visibleModels.includes(model)) {
-                                    settings.visibleModels.push(model);
-                                    settings.visibleModels.sort();
-                                } else if (!value) {
-                                    settings.visibleModels = settings.visibleModels.filter(m => m !== model);
-                                }
-                                this.showActionButtons();
-                            }));
-                });
-            };
-
-            // Add sort indicators and click handlers
-            let sortField: 'name' | 'visibility' = 'name';
-            let sortAsc = true;
-
-            const updateSortIndicators = () => {
-                modelNameHeader.removeClass('sort-asc', 'sort-desc');
-                visibilityHeader.removeClass('sort-asc', 'sort-desc');
-                
-                if (sortField === 'name') {
-                    modelNameHeader.addClass(sortAsc ? 'sort-asc' : 'sort-desc');
-                } else {
-                    visibilityHeader.addClass(sortAsc ? 'sort-asc' : 'sort-desc');
+        // Try to load models if none are loaded
+        if (!settings.availableModels?.length) {
+            try {
+                const models = await this.getAvailableModels(settings);
+                settings.availableModels = models;
+                settings.visibleModels = settings.visibleModels || [];
+            } catch (error) {
+                if (error instanceof Error) {
+                    new Notice('Error loading models: ' + error.message);
                 }
-            };
+            }
+        }
 
-            modelNameHeader.addEventListener('click', () => {
-                if (sortField === 'name') {
-                    sortAsc = !sortAsc;
-                } else {
-                    sortField = 'name';
-                    sortAsc = true;
-                }
-                updateSortIndicators();
-                renderModelsList();
+        // Add model toggles
+        if (settings.availableModels?.length) {
+            const modelsList = container.createEl('div', { cls: 'models-list' });
+            
+            // Add header
+            const header = modelsList.createEl('div', { cls: 'models-list-header' });
+            header.createEl('div', { 
+                cls: 'model-header model-name-header',
+                text: 'Model'
+            });
+            header.createEl('div', { 
+                cls: 'model-header visibility-header',
+                text: 'Show'
             });
 
-            visibilityHeader.addEventListener('click', () => {
-                if (sortField === 'visibility') {
-                    sortAsc = !sortAsc;
-                } else {
-                    sortField = 'visibility';
-                    sortAsc = true;
-                }
-                updateSortIndicators();
-                renderModelsList();
-            });
-
-            // Add refresh button
-            new Setting(headerSection)
-                .addButton(button => button
-                    .setButtonText('Refresh Models')
-                    .onClick(async () => {
-                        button.setDisabled(true);
-                        try {
-                            modelContainer.addClass('loading');
-                            const newModels = await this.getModelsForProvider(settings.type, settings);
-                            
+            settings.availableModels.forEach((model: string) => {
+                new Setting(modelsList)
+                    .setName(model)
+                    .addToggle(toggle => toggle
+                        .setValue(settings.visibleModels?.includes(model) || false)
+                        .onChange(value => {
                             if (!settings.visibleModels) {
-                                settings.visibleModels = [...newModels].sort();
-                            } else {
-                                settings.visibleModels = settings.visibleModels.filter(m => newModels.includes(m)).sort();
+                                settings.visibleModels = [];
                             }
                             
-                            this.showActionButtons();
-                            await this.createModelsSection(container, settings);
-                            new Notice('Models refreshed');
-                        } catch (error) {
-                            console.error('Failed to refresh models:', error);
-                            new Notice('Failed to refresh models');
-                        } finally {
-                            button.setDisabled(false);
-                            modelContainer.removeClass('loading');
-                        }
-                    }));
-
-            // Initial render with default sort
-            updateSortIndicators();
-            renderModelsList();
-
-        } catch (error) {
-            console.error('Failed to load models:', error);
-            new Notice('Failed to load models');
-            
-            const errorDiv = scrollContainer.createDiv('error-message');
-            errorDiv.setText('Failed to load models. Please try again.');
-            new Setting(errorDiv)
-                .addButton(button => button
-                    .setButtonText('Retry')
-                    .setWarning()
-                    .onClick(async () => {
-                        await this.createModelsSection(container, settings);
-                    }));
+                            if (value) {
+                                if (!settings.visibleModels.includes(model)) {
+                                    settings.visibleModels.push(model);
+                                }
+                            } else {
+                                settings.visibleModels = settings.visibleModels.filter(m => m !== model);
+                            }
+                            this.showActionButtons(actionButtons);
+                        }));
+            });
         }
     }
 
-    async getModelsForProvider(providerType: string, settings?: ProviderSettings): Promise<string[]> {
+    private toggleActionButtons(actionButtons: HTMLElement, show: boolean) {
+        if (show) {
+            actionButtons.classList.add('is-visible');
+        } else {
+            actionButtons.classList.remove('is-visible');
+        }
+    }
+
+    private hideActionButtons(actionButtons: HTMLElement) {
+        this.toggleActionButtons(actionButtons, false);
+    }
+
+    private showActionButtons(actionButtons: HTMLElement) {
+        this.toggleActionButtons(actionButtons, true);
+    }
+
+    async getModelsForProvider(settings?: ProviderSettings): Promise<string[]> {
+        if (!settings) {
+            throw new Error('No provider settings provided to getModelsForProvider');
+        }
+
+        const providerType = settings.type;
+        const models: string[] = [];
+
         try {
-            if (!settings) {
-                if (this.plugin.settings.debugLoggingEnabled) {
-                    console.warn('No provider settings provided to getModelsForProvider');
-                }
-                return [];
-            }
-
-            if (this.plugin.settings.debugLoggingEnabled) {
-                console.log('Provider settings:', settings);
-            }
-
             switch (providerType) {
                 case 'openai': {
                     if (!settings.apiKey) {
-                        console.warn('No API key provided for OpenAI provider');
-                        return [];
+                        throw new Error('No API key provided for OpenAI provider');
                     }
-                    
-                    try {
-                        const url = settings.baseUrl || 'https://api.openai.com/v1';
-                        const response = await fetch(`${url}/models`, {
-                            headers: {
-                                'Authorization': `Bearer ${settings.apiKey}`,
-                                'Content-Type': 'application/json',
-                            }
-                        });
-                        
-                        if (!response.ok) {
-                            throw new Error(`Failed to fetch models: ${response.statusText}`);
-                        }
-                        
-                        const data = await response.json();
-                        const models = data.data
-                            .filter((m: any) => m.id.startsWith('gpt-'))
-                            .map((m: any) => m.id);
 
-                        if (this.plugin.settings.debugLoggingEnabled) {
-                            console.log('Using visible models:', models);
-                        }
+                    const provider = new OpenAIProvider(settings.apiKey, settings.baseUrl);
+                    provider.setConfig(settings);
+                    const allModels = await provider.getAvailableModels();
 
-                        return models;
-                    } catch (error) {
-                        console.error('Failed to fetch OpenAI models');
-                        new Notice('Failed to fetch OpenAI models. Check your API key.');
-                        return [];
+                    // Filter models based on settings
+                    if (settings.visibleModels?.length) {
+                        return allModels.filter(model => settings.visibleModels?.includes(model));
                     }
+
+                    return allModels;
                 }
+
                 case 'ollama': {
-                    const url = settings.baseUrl || 'http://localhost:11434';
-                    try {
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => controller.abort(), 5000);
-                        const response = await fetch(`${url}/api/tags`, {
-                            signal: controller.signal
-                        });
-                        clearTimeout(timeoutId);
-                        
-                        if (!response.ok) {
-                            throw new Error(`Failed to fetch models: ${response.statusText}`);
-                        }
-                        
-                        const data = await response.json();
-                        if (!data.models || !Array.isArray(data.models)) {
-                            console.warn('Invalid response format from Ollama API');
-                            return [];
-                        }
-                        
-                        const models = data.models.map((model: { name: string }) => model.name);
+                    const provider = new OllamaProvider(settings.baseUrl || '');
+                    provider.setConfig(settings);
+                    const allModels = await provider.getAvailableModels();
 
-                        if (this.plugin.settings.debugLoggingEnabled) {
-                            console.log('Using visible models:', models);
-                        }
-
-                        return models;
-                    } catch (error) {
-                        console.error('Failed to fetch Ollama models:', error);
-                        new Notice('Failed to fetch Ollama models. Check if Ollama is running.');
-                        return [];
+                    // Filter models based on settings
+                    if (settings.visibleModels?.length) {
+                        return allModels.filter(model => settings.visibleModels?.includes(model));
                     }
+
+                    return allModels;
                 }
+
                 case 'openrouter': {
                     if (!settings.apiKey) {
-                        console.warn('No API key provided for OpenRouter provider');
-                        return [];
+                        throw new Error('No API key provided for OpenRouter provider');
                     }
-                    
-                    try {
-                        const response = await fetch('https://openrouter.ai/api/v1/models', {
-                            headers: {
-                                'Authorization': `Bearer ${settings.apiKey}`,
-                                'HTTP-Referer': window.location.href,
-                                'Content-Type': 'application/json',
-                            }
-                        });
-                        
-                        if (!response.ok) {
-                            throw new Error(`Failed to fetch models: ${response.statusText}`);
-                        }
-                        
-                        const data = await response.json();
-                        const models = data.data
-                            .filter((m: any) => m.id)
-                            .map((m: any) => m.id);
 
-                        if (this.plugin.settings.debugLoggingEnabled) {
-                            console.log('Using visible models:', models);
-                        }
+                    const provider = new OpenRouterProvider(settings.apiKey);
+                    provider.setConfig(settings);
+                    const allModels = await provider.getAvailableModels();
 
-                        return models;
-                    } catch (error) {
-                        console.error('Failed to fetch OpenRouter models');
-                        new Notice('Failed to fetch OpenRouter models. Check your API key.');
-                        return [];
+                    // Filter models based on settings
+                    if (settings.visibleModels?.length) {
+                        return allModels.filter(model => settings.visibleModels?.includes(model));
                     }
+
+                    return allModels;
                 }
+
                 default:
-                    console.warn(`Unknown provider type: ${providerType}`);
-                    return [];
+                    throw new Error(`Unknown provider type: ${providerType}`);
             }
         } catch (error) {
-            console.error('Failed to get models for provider:', error);
-            return [];
+            throw error;
         }
     }
 } 

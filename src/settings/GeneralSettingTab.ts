@@ -46,115 +46,20 @@ export class GeneralSettingTab extends PluginSettingTab {
 
         // Title Generation Section
         this.addTitleGenerationSettings(wrapper);
-
-        // Add some CSS to make the textarea bigger
-        containerEl.createEl('style', {
-            text: `
-            .flare-title-prompt-setting textarea {
-                width: 100%;
-                min-height: 100px;
-                max-height: 300px;
-                font-family: var(--font-monospace);
-                background: var(--background-primary);
-                color: var(--text-normal);
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 4px;
-                padding: 12px;
-                resize: vertical;
-                line-height: 1.5;
-                font-size: 14px;
-                overflow-y: auto;
-                -webkit-overflow-scrolling: touch;
-                box-sizing: border-box;
-                margin: 6px 0;
-            }
-            .flare-title-prompt-setting {
-                width: 100%;
-                position: relative;
-                display: flex;
-                flex-direction: column;
-            }
-            .flare-title-prompt-setting .setting-item-control {
-                width: 100%;
-                position: relative;
-                display: flex;
-                flex-direction: column;
-            }
-            .flare-section {
-                margin: 20px 0;
-                border: 1px solid var(--background-modifier-border);
-                border-radius: 8px;
-                background: var(--background-secondary);
-                overflow: hidden;
-            }
-            .flare-section-header {
-                display: flex;
-                align-items: center;
-                padding: 12px 16px;
-                background: var(--background-secondary-alt);
-                cursor: pointer;
-                transition: background-color 0.15s ease;
-            }
-            .flare-section-header:hover {
-                background: var(--background-modifier-hover);
-            }
-            .flare-section-header h4 {
-                margin: 0;
-                font-size: 1.1em;
-                font-weight: 600;
-                color: var(--text-normal);
-            }
-            .flare-section-header.is-collapsed {
-                border-bottom: none;
-            }
-            .flare-section-content {
-                padding: 16px;
-                border-top: 1px solid var(--background-modifier-border);
-            }
-            .flare-section-content .setting-item {
-                border: none;
-                padding: 12px 0;
-            }
-            .flare-section-content .setting-item:not(:last-child) {
-                border-bottom: 1px solid var(--background-modifier-border);
-            }
-            .flare-section-content .setting-item-name {
-                font-weight: 600;
-                color: var(--text-normal);
-            }
-            .flare-section-content .setting-item-description {
-                color: var(--text-muted);
-                font-size: 0.9em;
-                margin-top: 4px;
-            }
-            .flare-form-actions {
-                margin-top: 16px;
-                padding: 16px;
-                background: var(--background-secondary);
-                border-radius: 8px;
-                border-top: 1px solid var(--background-modifier-border);
-                display: none;
-                justify-content: flex-end;
-                gap: 8px;
-            }
-            `
-        });
     }
 
     private createSection(containerEl: HTMLElement, title: string, collapsible: boolean = false): HTMLElement {
         const section = containerEl.createDiv({ cls: 'flare-section' });
         const header = section.createDiv({ cls: 'flare-section-header' });
-        header.createEl('h4', { text: title });
-
         const content = section.createDiv({ cls: 'flare-section-content' });
 
+        header.createSpan({ cls: 'flare-section-chevron' });
+        header.createSpan({ text: title });
+
         if (collapsible) {
-            // Add collapse/expand functionality
-            let isCollapsed = false;
             header.addEventListener('click', () => {
-                isCollapsed = !isCollapsed;
-                content.style.display = isCollapsed ? 'none' : 'block';
-                header.classList.toggle('is-collapsed', isCollapsed);
+                header.classList.toggle('is-collapsed');
+                content.classList.toggle('is-hidden');
             });
         }
 
@@ -192,17 +97,6 @@ export class GeneralSettingTab extends PluginSettingTab {
         // Add action buttons container
         const actionButtons = containerEl.createDiv({ cls: 'flare-form-actions' });
         this.sectionActionButtons.set('general', actionButtons);
-
-        // Debug Logging
-        new Setting(containerEl)
-            .setName('Enable debug logging')
-            .setDesc('Show detailed logs in the console for API calls and chat history')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.debugLoggingEnabled ?? false)
-                .onChange(value => {
-                    this.plugin.settings.debugLoggingEnabled = value;
-                    this.markSectionAsChanged('general');
-                }));
 
         // Flares folder
         new Setting(containerEl)
@@ -315,7 +209,14 @@ export class GeneralSettingTab extends PluginSettingTab {
     private markSectionAsChanged(section: string) {
         const actionButtons = this.sectionActionButtons.get(section);
         if (actionButtons) {
-            actionButtons.style.display = 'flex';
+            actionButtons.classList.add('is-visible');
+        }
+    }
+
+    private hideSectionButtons(section: string) {
+        const actionButtons = this.sectionActionButtons.get(section);
+        if (actionButtons) {
+            actionButtons.classList.remove('is-visible');
         }
     }
 
@@ -332,7 +233,7 @@ export class GeneralSettingTab extends PluginSettingTab {
             
             const actionButtons = this.sectionActionButtons.get(section);
             if (actionButtons) {
-                actionButtons.style.display = 'none';
+                actionButtons.classList.remove('is-visible');
             }
             
             // Update original settings after saving
@@ -352,7 +253,6 @@ export class GeneralSettingTab extends PluginSettingTab {
             if (section === 'general') {
                 this.plugin.settings.flaresFolder = this.originalSettings.flaresFolder;
                 this.plugin.settings.historyFolder = this.originalSettings.historyFolder;
-                this.plugin.settings.debugLoggingEnabled = this.originalSettings.debugLoggingEnabled;
             } else if (section === 'history') {
                 this.plugin.settings.autoSaveInterval = this.originalSettings.autoSaveInterval;
                 this.plugin.settings.maxHistoryFiles = this.originalSettings.maxHistoryFiles;
@@ -387,9 +287,9 @@ export class GeneralSettingTab extends PluginSettingTab {
                     .onChange(async value => {
                         this.plugin.settings.titleSettings.autoGenerate = value;
                         // Show/hide the message pairs setting based on toggle
-                        const pairsContainer = titleSection.querySelector('.auto-title-pairs-setting') as HTMLElement;
-                        if (pairsContainer) {
-                            pairsContainer.style.display = value ? 'block' : 'none';
+                        const pairsContainer = titleSection.querySelector('.auto-title-pairs-setting');
+                        if (pairsContainer instanceof HTMLElement) {
+                            pairsContainer.classList.toggle('is-visible', value);
                         }
                         this.markSectionAsChanged('title');
                     });
@@ -397,23 +297,9 @@ export class GeneralSettingTab extends PluginSettingTab {
 
         // Add message pairs setting
         const pairsContainer = titleSection.createDiv({ cls: 'auto-title-pairs-setting' });
-        new Setting(pairsContainer)
-            .setName('Message pairs')
-            .setDesc('Number of message exchanges before auto-generating title (1 pair = 1 user message + 1 assistant response)')
-            .addText(text => {
-                text.setValue(String(this.plugin.settings.titleSettings.autoGenerateAfterPairs ?? 2))
-                    .setPlaceholder('2')
-                    .onChange(async value => {
-                        const pairs = parseInt(value);
-                        if (!isNaN(pairs) && pairs > 0) {
-                            this.plugin.settings.titleSettings.autoGenerateAfterPairs = pairs;
-                            this.markSectionAsChanged('title');
-                        }
-                    });
-            });
-
-        // Set initial visibility of pairs setting
-        pairsContainer.style.display = this.plugin.settings.titleSettings.autoGenerate ? 'block' : 'none';
+        if (this.plugin.settings.titleSettings.autoGenerate) {
+            pairsContainer.classList.add('is-visible');
+        }
 
         new Setting(titleSection)
             .setName('Provider')
@@ -499,27 +385,6 @@ export class GeneralSettingTab extends PluginSettingTab {
             this.markSectionAsChanged('title');
         });
 
-        // Add auto-resize functionality with debounce
-        let resizeTimeout: NodeJS.Timeout;
-        const adjustHeight = () => {
-            if (resizeTimeout) {
-                clearTimeout(resizeTimeout);
-            }
-            resizeTimeout = setTimeout(() => {
-                promptArea.style.height = 'auto';
-                const newHeight = Math.min(500, Math.max(150, promptArea.scrollHeight));
-                promptArea.style.height = newHeight + 'px';
-            }, 100);
-        };
-        
-        // Handle resize events
-        promptArea.addEventListener('input', adjustHeight, { passive: true });
-        promptArea.addEventListener('touchstart', adjustHeight, { passive: true });
-        window.addEventListener('resize', adjustHeight, { passive: true });
-        
-        // Initial height adjustment
-        setTimeout(adjustHeight, 0);
-
         // Add save/revert buttons
         new Setting(actionButtons)
             .addButton(button => {
@@ -591,10 +456,14 @@ export class GeneralSettingTab extends PluginSettingTab {
                 const modelDropdown = modelSetting.querySelector('select');
                 if (modelDropdown instanceof HTMLSelectElement) {
                     modelDropdown.disabled = false;
-                    modelDropdown.innerHTML = '';
-                    modelDropdown.add(new Option('Select a model...', ''));
+                    // Remove all existing options
+                    while (modelDropdown.firstChild) {
+                        modelDropdown.removeChild(modelDropdown.firstChild);
+                    }
+                    // Add new options
+                    modelDropdown.appendChild(new Option('Select a model...', ''));
                     models.forEach(model => {
-                        modelDropdown.add(new Option(model, model));
+                        modelDropdown.appendChild(new Option(model, model));
                     });
 
                     // Keep current selection if it exists in new model list, otherwise use default
@@ -664,13 +533,13 @@ export class GeneralSettingTab extends PluginSettingTab {
 
     private showTitleSettingsButtons() {
         if (this.titleSettingsActionButtons) {
-            this.titleSettingsActionButtons.style.display = 'flex';
+            this.titleSettingsActionButtons.classList.add('is-visible');
         }
     }
 
     private hideTitleSettingsButtons() {
         if (this.titleSettingsActionButtons) {
-            this.titleSettingsActionButtons.style.display = 'none';
+            this.titleSettingsActionButtons.classList.remove('is-visible');
         }
     }
 

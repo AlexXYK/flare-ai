@@ -1,3 +1,5 @@
+import type { ProviderManager } from '../providers/ProviderManager';
+
 export interface AIProvider {
     sendMessage(message: string, options?: AIProviderOptions): Promise<string>;
     getModels?(): Promise<string[]>;
@@ -26,6 +28,7 @@ export interface ProviderSettings {
     baseUrl?: string;
     defaultModel?: string;
     visibleModels?: string[];
+    availableModels?: string[];
     [key: string]: any;
 }
 
@@ -53,6 +56,14 @@ export interface PluginSettings {
         prompt: string;
     };
     handoffSettings: HandoffSettings;
+}
+
+export interface FlarePlugin {
+    settings: PluginSettings;
+    providerManager: ProviderManager;
+    saveData(settings: PluginSettings): Promise<void>;
+    loadData(): Promise<void>;
+    app: any;
 }
 
 export interface MessageSettings {

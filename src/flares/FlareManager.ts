@@ -687,39 +687,9 @@ export class FlareManager {
     }
 
     private markAsChanged(form?: HTMLElement, settingItem?: HTMLElement): void {
-        this.hasUnsavedChanges = true;
-
-        // Create action buttons if they don't exist
-        if (!this.actionButtons) {
-            const settingsArea = form?.closest('.flare-settings-area') as HTMLElement;
-            if (settingsArea) {
-                const actions = settingsArea.createDiv('flare-form-actions');
-                // Insert at the beginning of settings area
-                settingsArea.insertBefore(actions, settingsArea.firstChild);
-                this.actionButtons = actions;
-                
-                new Setting(actions)
-                    .addButton(button => {
-                        button
-                            .setButtonText('Save')
-                            .setCta()
-                            .onClick(async () => {
-                                await this.saveChanges();
-                            });
-                    })
-                    .addButton(button => {
-                        button
-                            .setButtonText('Revert')
-                            .onClick(async () => {
-                                await this.revertChanges(settingsArea);
-                            });
-                    });
-            }
-        }
-        
         // Show action buttons
         if (this.actionButtons) {
-            this.actionButtons.style.display = 'flex';
+            this.actionButtons.classList.add('is-visible');
         }
         
         // If a specific setting item was changed, add visual indicator
@@ -755,7 +725,7 @@ export class FlareManager {
             this.originalSettings = await this.loadFlareConfig(newName);
             
             if (this.actionButtons) {
-                this.actionButtons.style.display = 'none';
+                this.actionButtons.classList.remove('is-visible');
             }
 
             // Update UI if name changed
@@ -788,7 +758,7 @@ export class FlareManager {
         
         this.hasUnsavedChanges = false;
         if (this.actionButtons) {
-            this.actionButtons.style.display = 'none';
+            this.actionButtons.classList.remove('is-visible');
         }
         
         new Notice('Flare settings reverted');
@@ -1298,20 +1268,13 @@ export class FlareManager {
         
         // Set initial state
         if (!expanded) {
-            content.style.display = 'none';
             header.addClass('is-collapsed');
         }
 
         // Toggle handler
         header.onclick = () => {
             const isCollapsed = header.hasClass('is-collapsed');
-            if (isCollapsed) {
-                header.removeClass('is-collapsed');
-                content.style.display = 'block';
-            } else {
-                header.addClass('is-collapsed');
-                content.style.display = 'none';
-            }
+            header.toggleClass('is-collapsed', !isCollapsed);
         };
 
         return content;

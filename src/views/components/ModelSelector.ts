@@ -160,11 +160,7 @@ export class ModelSelector {
         this.dropupEl = document.body.createDiv('flare-model-dropup');
         
         // Position the dropup above the settings bar
-        const settingsRect = this.settingsBarEl.getBoundingClientRect();
-        this.dropupEl.style.position = 'fixed';
-        this.dropupEl.style.bottom = `${window.innerHeight - settingsRect.top + 8}px`;
-        this.dropupEl.style.left = `${settingsRect.left}px`;
-        this.dropupEl.style.width = `${settingsRect.width}px`;
+        this.updateDropupPosition();
         
         // Group models by provider
         Object.entries(this.plugin.settings.providers).forEach(([providerId, provider]) => {
@@ -182,6 +178,15 @@ export class ModelSelector {
             const modelList = section.createDiv('flare-model-list');
             this.loadModels(modelList, providerId, provider);
         });
+    }
+
+    private updateDropupPosition() {
+        if (!this.dropupEl) return;
+
+        const settingsRect = this.containerEl.getBoundingClientRect();
+        this.dropupEl.style.setProperty('--bottom-pos', `${window.innerHeight - settingsRect.top + 8}px`);
+        this.dropupEl.style.setProperty('--left-pos', `${settingsRect.left}px`);
+        this.dropupEl.style.setProperty('--width', `${settingsRect.width}px`);
     }
 
     private async loadModels(container: HTMLElement, providerId: string, provider: any) {

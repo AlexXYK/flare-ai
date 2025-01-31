@@ -25,6 +25,14 @@ interface ChatHistory {
     messages: ChatMessage[];
 }
 
+interface FrontMatter {
+    created?: number;
+    lastModified?: number;
+    title?: string;
+    flare?: string;
+    [key: string]: string | number | undefined;  // Allow for additional string/number properties
+}
+
 export class ChatHistoryManager {
     private autoSaveTimer: NodeJS.Timer | null = null;
     private currentHistory: ChatHistory | null = null;
@@ -169,14 +177,8 @@ export class ChatHistoryManager {
             this.currentHistory.lastModified = Date.now();
             this.unsavedChanges = true;
 
-            // Debug log the stored message if enabled
-            if (this.plugin.settings.debugLoggingEnabled) {
-                console.log('FLARE.ai: Stored Message:', {
-                    role: fullMessage.role,
-                    content: fullMessage.content.substring(0, 100) + (fullMessage.content.length > 100 ? '...' : ''),
-                    settings: fullMessage.settings
-                });
-            }
+            // Save history after each message
+            await this.saveCurrentHistory();
         }
     }
 
@@ -230,7 +232,7 @@ export class ChatHistoryManager {
         return `${frontmatter}\n${messages}`;
     }
 
-    private parseHistoryFile(content: string): { frontmatter: any, messages: ChatMessage[] } {
+    private parseHistoryFile(content: string): { frontmatter: FrontMatter, messages: ChatMessage[] } {
         const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
         if (!frontmatterMatch) {
             throw new Error('Invalid history file format');
@@ -243,15 +245,17 @@ export class ChatHistoryManager {
         return { frontmatter, messages };
     }
 
-    private parseFrontmatter(content: string): any {
-        const frontmatter: any = {};
+    private parseFrontmatter(content: string): FrontMatter {
+        const frontmatter: FrontMatter = {};
         const lines = content.split('\n');
         
         lines.forEach(line => {
             const match = line.match(/^(\w+):\s*(.+)$/);
             if (match) {
                 const [, key, value] = match;
-                frontmatter[key] = value.replace(/^"(.*)"$/, '$1'); // Remove quotes if present
+                // Try to convert to number if possible
+                const numValue = Number(value.replace(/^"(.*)"$/, '$1'));
+                frontmatter[key] = isNaN(numValue) ? value.replace(/^"(.*)"$/, '$1') : numValue;
             }
         });
 
@@ -407,11 +411,13 @@ export class ChatHistoryManager {
             
             try {
                 await this.plugin.app.fileManager.renameFile(this.currentFile, newPath);
-                this.currentFile = this.plugin.app.vault.getAbstractFileByPath(newPath) as TFile;
+                const newFile = this.plugin.app.vault.getAbstractFileByPath(newPath);
                 
-                if (!this.currentFile) {
-                    throw new Error('Failed to update file reference after rename');
+                if (!(newFile instanceof TFile)) {
+                    throw new Error('Failed to get new file reference after rename');
                 }
+                
+                this.currentFile = newFile;
             } catch (error) {
                 // Revert title in memory if rename fails
                 this.currentHistory.title = oldTitle;

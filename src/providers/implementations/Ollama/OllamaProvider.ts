@@ -1,6 +1,7 @@
 import { BaseProvider } from '../../base/BaseProvider';
 import { AIProviderOptions, ProviderSettings } from '../../../types/AIProvider';
 import { StreamingOptions } from '../../base/BaseProvider';
+import { AIProvider } from '../../../types/AIProvider';
 
 interface OllamaModel {
     name: string;
@@ -8,15 +9,37 @@ interface OllamaModel {
     size: number;
 }
 
+interface OllamaResponse {
+    models: OllamaModel[];
+}
+
+interface OllamaChatResponse {
+    message: {
+        content: string;
+        role: string;
+    };
+    done: boolean;
+    context?: number[];
+}
+
 interface ChatMessage {
     role: 'system' | 'user' | 'assistant';
     content: string;
 }
 
-export class OllamaProvider extends BaseProvider {
+interface MessageOptions {
+    messageHistory?: Array<{role: string; content: string}>;
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    stream?: boolean;
+    onToken?: (token: string) => void;
+}
+
+export class OllamaProvider extends BaseProvider implements AIProvider {
     name = 'Ollama';
     protected models: string[] = [];
-    private context: any = null;
+    private context: number[] | null = null;
     private currentModel: string = '';
     private url: string = '';
 
@@ -39,20 +62,12 @@ export class OllamaProvider extends BaseProvider {
                 throw new Error(`Ollama API error: ${error.error || 'Unknown error'}`);
             }
 
-            const data = await response.json();
+            const data = await response.json() as OllamaResponse;
             this.models = (data.models || [])
-                .map((model: OllamaModel) => model.name);
-
-            // Filter models based on visibility settings if configured
-            if (this.config?.visibleModels?.length) {
-                this.models = this.models.filter(model => 
-                    this.config.visibleModels?.includes(model)
-                );
-            }
+                .map(model => model.name);
 
             return this.models;
         } catch (error) {
-            console.error('Failed to fetch Ollama models:', error);
             throw error;
         }
     }
@@ -63,181 +78,126 @@ export class OllamaProvider extends BaseProvider {
         }
     }
 
-    async sendMessage(message: string, options?: AIProviderOptions & StreamingOptions): Promise<string> {
+    async sendMessage(message: string, options?: MessageOptions): Promise<string> {
         try {
-            // Ensure we have a valid model
-            if (!options?.model) {
-                throw new Error('No model specified for Ollama provider');
-            }
-
-            // If no message history is provided, return early for empty messages
-            if (!message?.trim() && (!options?.messageHistory || options.messageHistory.length === 0)) {
+            if (!message?.trim()) {
                 return '';
             }
-
-            // Build messages array with cleaned content
-            const messages: ChatMessage[] = [];
-
-            // Add message history if available
-            if (options?.messageHistory && options.messageHistory.length > 0) {
-                // The history should already be properly windowed by main.ts
-                const filteredHistory = options.messageHistory
-                    .filter(msg => 
-                        msg.content?.trim() && 
-                        msg.role && 
-                        // Don't include the last message if it matches our current message
-                        !(msg.role === 'user' && msg.content.trim() === message.trim())
-                    )
-                    .map(msg => ({
-                        role: msg.role as 'system' | 'user' | 'assistant',
-                        content: msg.content
-                    }));
-
-                messages.push(...filteredHistory);
+            const messages = this.buildMessages(message, options?.messageHistory);
+            const model = options?.model || this.config.defaultModel;
+            if (!model) {
+                throw new Error('No model specified for Ollama provider');
             }
+            const temperature = options?.temperature ?? 0.7;
+            const maxTokens = options?.maxTokens;
 
-            // Add current message
-            if (message?.trim()) {
-                messages.push({
-                    role: 'user',
-                    content: message.trim()
-                });
-            }
+            const response = await this.makeRequest(messages, model, temperature, maxTokens, options?.stream, options?.onToken);
+            return response;
+        } catch (error) {
+            throw error;
+        }
+    }
 
-            // Add debug logging
-            if (this.config?.debugLoggingEnabled) {
-                console.debug('Ollama messages:', messages.map(m => ({
-                    role: m.role,
-                    content: m.content.substring(0, 50) + '...'
-                })));
-            }
+    private async makeRequest(
+        messages: Array<{role: string; content: string}>,
+        model: string,
+        temperature: number,
+        maxTokens?: number,
+        stream?: boolean,
+        onToken?: (token: string) => void
+    ): Promise<string> {
+        const controller = new AbortController();
+        const signal = controller.signal;
 
-            const requestBody = {
-                model: options.model,
-                messages: messages,
-                temperature: options?.temperature ?? 0.7,
-                context: options?.isFlareSwitch ? undefined : this.context,
-                stream: true  // Always stream for Ollama, it handles both formats well
-            };
-
-            // Create new abort controller for this request
-            this.abortController = new AbortController();
-
-            const response = await fetch(`${this.url}/api/chat`, {
+        try {
+            const response = await fetch(`${this.config.baseUrl}/api/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(requestBody),
-                signal: this.abortController.signal
+                body: JSON.stringify({
+                    model,
+                    messages,
+                    stream,
+                    context: this.context,
+                    options: {
+                        temperature,
+                        num_predict: maxTokens
+                    }
+                }),
+                signal
             });
 
             if (!response.ok) {
-                const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-                throw new Error(`Ollama API error: ${error.error || 'Unknown error'}`);
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            // Handle streaming response
-            if (options?.stream && options.onToken) {
-                const reader = response.body?.getReader();
-                if (!reader) throw new Error('Failed to get response reader');
-
-                let completeResponse = '';
+            if (stream && response.body && onToken) {
+                const reader = response.body.getReader();
                 const decoder = new TextDecoder();
-                let wasAborted = false;
+                let buffer = '';
+                let finalResponse = '';
 
-                try {
-                    while (true) {
-                        // If we were aborted, stop reading new chunks
-                        if (this.abortController?.signal.aborted) {
-                            wasAborted = true;
-                            break;
-                        }
-
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        const chunk = decoder.decode(value);
-                        const lines = chunk.split('\n').filter(line => line.trim());
-
-                        for (const line of lines) {
-                            try {
-                                const data = JSON.parse(line);
-                                if (data.message?.content) {
-                                    const token = data.message.content;
-                                    completeResponse += token;
-                                    options.onToken(token);
-                                }
-                                if (data.context) {
-                                    this.context = data.context;
-                                }
-                            } catch (e) {
-                                console.warn('Failed to parse streaming response line:', e);
-                            }
-                        }
-                    }
-                } catch (error) {
-                    if (error.name === 'AbortError') {
-                        console.log('Request aborted');
-                        wasAborted = true;
-                    } else {
-                        throw error;
-                    }
-                } finally {
-                    reader.releaseLock();
-                    // Clear context if this was aborted or a flare switch
-                    if (wasAborted || options?.isFlareSwitch) {
-                        this.context = null;
-                    }
-                }
-
-                return completeResponse;
-            }
-
-            // Handle non-streaming response
-            let responseText = '';
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error('Failed to get response reader');
-            const decoder = new TextDecoder();
-
-            try {
                 while (true) {
-                    const { done, value } = await reader.read();
+                    const { value, done } = await reader.read();
                     if (done) break;
-                    
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n').filter(line => line.trim());
-                    
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
                     for (const line of lines) {
+                        if (line.trim() === '') continue;
+
                         try {
-                            const data = JSON.parse(line);
-                            if (data.message?.content) {
-                                responseText += data.message.content;
+                            const json = JSON.parse(line) as OllamaChatResponse;
+                            if (json.done) {
+                                this.context = json.context || null;
+                                continue;
                             }
-                            if (data.context) {
-                                this.context = data.context;
+                            
+                            const token = json.message?.content || '';
+                            if (token) {
+                                finalResponse += token;
+                                onToken(token);
                             }
                         } catch (e) {
-                            console.warn('Failed to parse response line:', e);
+                            // Skip invalid JSON
                         }
                     }
                 }
-            } finally {
-                reader.releaseLock();
-            }
 
-            return responseText;
+                return finalResponse;
+            } else {
+                const result = await response.json() as OllamaChatResponse;
+                this.context = result.context || null;
+                return result.message?.content || '';
+            }
         } catch (error) {
-            console.error('Failed to send message to Ollama:', error);
-            throw error;
-        } finally {
-            // Clear abort controller after request is done
-            this.abortController = undefined;
-
-            // Only clear context on flare switch
-            if (options?.isFlareSwitch) {
-                this.context = null;
+            if (error.name === 'AbortError') {
+                return 'Request aborted';
             }
+            throw error;
         }
+    }
+
+    private buildMessages(message: string, history?: Array<{role: string; content: string}>): Array<{role: string; content: string}> {
+        const messages: Array<{role: string; content: string}> = [];
+        
+        // Add message history if available
+        if (history?.length) {
+            messages.push(...history);
+        }
+
+        // Add current message if not empty
+        const trimmedMessage = message.trim();
+        if (trimmedMessage) {
+            messages.push({
+                role: 'user',
+                content: trimmedMessage
+            });
+        }
+
+        return messages;
     }
 } 

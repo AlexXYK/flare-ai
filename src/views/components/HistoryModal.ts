@@ -112,8 +112,8 @@ export class HistoryModal extends Modal {
                 attr: { 'data-path': item.path }
             });
 
-            // Indentation
-            itemEl.style.paddingLeft = `${level * 20}px`;
+            // Set indentation using CSS custom property
+            itemEl.style.setProperty('--indent-level', `${level * 20}px`);
 
             // Icon and name container
             const content = itemEl.createDiv('flare-history-item-content');

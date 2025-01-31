@@ -15,7 +15,6 @@ export interface PluginSettings {
     defaultFlare: string;
     flaresFolder: string;
     historyFolder: string;
-    debugLoggingEnabled: boolean;
     autoSaveEnabled: boolean;
     autoSaveInterval: number;
     maxHistoryFiles: number;
@@ -32,7 +31,6 @@ export const DEFAULT_SETTINGS: Partial<PluginSettings> = {
     autoSaveEnabled: true,
     autoSaveInterval: 30,
     maxHistoryFiles: 100,
-    debugLoggingEnabled: false,
     titleSettings: {
         provider: '',
         model: '',

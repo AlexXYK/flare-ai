@@ -7,6 +7,7 @@ import {
     OpenAIManager,
     ProviderSettings
 } from './src/providers/aiProviders';
+import { MainProviderManager } from './src/providers/MainProviderManager';
 import { ProviderManager } from './src/providers/ProviderManager';
 import { FlareConfig } from './src/flares/FlareConfig';
 import { FlareManager } from './src/flares/FlareManager';
@@ -46,7 +47,7 @@ interface ObsidianPlugins {
 export default class FlarePlugin extends Plugin {
     settings: PluginSettings;
     providers: Map<string, ProviderManager> = new Map();
-    providerManager: ProviderManager;
+    providerManager: MainProviderManager;
     activeProvider: AIProvider | null = null;
     flareManager: FlareManager;
     chatHistoryManager: ChatHistoryManager;
@@ -61,7 +62,7 @@ export default class FlarePlugin extends Plugin {
             this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
             
             // Initialize managers
-            this.providerManager = new ProviderManager(this);
+            this.providerManager = new MainProviderManager(this);
             this.flareManager = new FlareManager(this);
             this.chatHistoryManager = new ChatHistoryManager(this);
             
@@ -126,9 +127,6 @@ export default class FlarePlugin extends Plugin {
         if (this.flareManager) {
             await this.flareManager.cleanup();
         }
-
-        // Deregister the view
-        this.app.workspace.detachLeavesOfType(VIEW_TYPE_AI_CHAT);
 
         await this.saveData(this.settings);
     }
@@ -215,7 +213,6 @@ export default class FlarePlugin extends Plugin {
             const providers = Object.entries(this.settings.providers);
             
             if (providers.length === 0) {
-                console.debug('No providers configured');
                 return;
             }
 
@@ -261,7 +258,6 @@ export default class FlarePlugin extends Plugin {
 
             // If all validation passes, set as active provider
             this.activeProvider = provider;
-            console.debug(`Successfully initialized provider: ${config.type}`);
         } catch (error) {
             console.error(`Failed to initialize provider ${id}:`, error);
             throw error;
@@ -330,18 +326,6 @@ export default class FlarePlugin extends Plugin {
                 isFlareSwitch = lastFlares.size > 1 || !lastFlares.has(newFlareName);
             } else {
                 isFlareSwitch = true; // First message is always a flare switch
-            }
-
-            if (this.settings.debugLoggingEnabled) {
-                console.debug('Flare switch detection:', {
-                    newFlareName,
-                    lastMessages: options?.messageHistory?.slice(-3).map(m => ({
-                        flare: m.settings?.flare,
-                        role: m.role,
-                        content: m.content.substring(0, 30) + '...'
-                    })),
-                    isFlareSwitch
-                });
             }
 
             // Start with complete message history
@@ -468,20 +452,6 @@ export default class FlarePlugin extends Plugin {
             // Strip reasoning content from messages when switching flares or if current flare is not a reasoning model
             if (isFlareSwitch || !flareConfig.isReasoningModel) {
                 historyToSend = this.stripReasoningContent(historyToSend, flareConfig.reasoningHeader);
-            }
-
-            if (this.settings.debugLoggingEnabled) {
-                console.log('Sending to provider:', {
-                    messageCount: historyToSend.length + 1, // +1 for current message
-                    hasSystem: historyToSend.some(m => m.role === 'system'),
-                    isFlareSwitch,
-                    handoffWindow: isFlareSwitch ? flareConfig.handoffWindow : 'n/a',
-                    historyWindow: flareConfig.historyWindow,
-                    messages: [...historyToSend, currentMessage].map(m => ({
-                        role: m.role,
-                        content: m.content.substring(0, 50) + '...'
-                    }))
-                });
             }
 
             // Get provider and send message
@@ -680,10 +650,6 @@ export default class FlarePlugin extends Plugin {
             return;
         }
         this.providers.set(manager.id, manager);
-        if (this.settings.debugLoggingEnabled) {
-            const providerName = this.settings.providers[manager.id]?.name || manager.id;
-            console.debug(`Registered provider: ${providerName}`);
-        }
     }
 
     private startFlareWatcher() {
@@ -986,17 +952,8 @@ export default class FlarePlugin extends Plugin {
                                 
                                 // Replace the codeblock with the formatted results
                                 processedContent = processedContent.replace(block, resultText);
-                                
-                                if (this.settings.debugLoggingEnabled) {
-                                    console.log('FLARE.ai: Dataview query result:', {
-                                        query,
-                                        type: result.type,
-                                        result: resultText.substring(0, 100) + '...'
-                                    });
-                                }
                             }
                         } catch (err) {
-                            console.warn('Failed to evaluate dataview query:', err);
                             // Keep the original block if evaluation fails
                         }
                     }
@@ -1008,31 +965,59 @@ export default class FlarePlugin extends Plugin {
                             // Execute the JS code and get results
                             const component = await dataviewPlugin.api.executeJs(code, file.path);
                             if (component?.container?.innerHTML) {
-                                const jsResult = component.container.innerHTML;
-                                // Replace the codeblock with the results
-                                processedContent = processedContent.replace(block, jsResult);
+                                // Create a temporary container to safely handle the HTML content
+                                const tempContainer = document.createElement('div');
+                                // Parse the HTML content into DOM elements
+                                const parser = new DOMParser();
+                                const doc = parser.parseFromString(component.container.innerHTML, 'text/html');
+                                // Only copy over safe elements and attributes
+                                const safeElements = ['p', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'strong', 'em', 'code', 'pre'];
+                                const safeAttributes = ['class', 'id', 'style'];
                                 
-                                if (this.settings.debugLoggingEnabled) {
-                                    console.log('FLARE.ai: DataviewJS result:', {
-                                        code: code.substring(0, 100) + '...',
-                                        result: jsResult.substring(0, 100) + '...'
-                                    });
+                                const sanitizeNode = (node: Node): Node | null => {
+                                    if (node.nodeType === Node.TEXT_NODE) {
+                                        return node.cloneNode(true);
+                                    }
+                                    if (node.nodeType === Node.ELEMENT_NODE) {
+                                        const el = node as Element;
+                                        if (!safeElements.includes(el.tagName.toLowerCase())) {
+                                            return document.createTextNode(el.textContent || '');
+                                        }
+                                        const newEl = document.createElement(el.tagName.toLowerCase());
+                                        // Copy safe attributes
+                                        for (const attr of safeAttributes) {
+                                            if (el.hasAttribute(attr)) {
+                                                newEl.setAttribute(attr, el.getAttribute(attr)!);
+                                            }
+                                        }
+                                        // Recursively sanitize child nodes
+                                        for (const child of Array.from(el.childNodes)) {
+                                            const sanitizedChild = sanitizeNode(child);
+                                            if (sanitizedChild) {
+                                                newEl.appendChild(sanitizedChild);
+                                            }
+                                        }
+                                        return newEl;
+                                    }
+                                    return null;
+                                };
+
+                                // Sanitize the content
+                                for (const node of Array.from(doc.body.childNodes)) {
+                                    const sanitizedNode = sanitizeNode(node);
+                                    if (sanitizedNode) {
+                                        tempContainer.appendChild(sanitizedNode);
+                                    }
                                 }
+
+                                // Use the sanitized content
+                                const sanitizedContent = tempContainer.outerHTML;
+                                processedContent = processedContent.replace(block, sanitizedContent);
                             }
                         } catch (err) {
-                            console.warn('Failed to evaluate dataviewjs block:', err);
                             // Keep the original block if evaluation fails
                         }
                     }
-                }
-
-                if (this.settings.debugLoggingEnabled) {
-                    console.log('FLARE.ai: Expanded wikilink content:', {
-                        link,
-                        originalContent: content.substring(0, 100) + '...',
-                        processedContent: processedContent.substring(0, 100) + '...',
-                        hasDataview: dataviewPlugin?.api ? 'yes' : 'no'
-                    });
                 }
 
                 result[fileName] = processedContent;

@@ -7,6 +7,39 @@ interface ChatMessage {
     content: string;
 }
 
+interface OpenAIModel {
+    id: string;
+    object: string;
+    created: number;
+    owned_by: string;
+}
+
+interface OpenAIModelsResponse {
+    data: OpenAIModel[];
+    object: string;
+}
+
+interface MessageHistoryItem {
+    role: string;
+    content: string;
+    settings?: {
+        provider?: string;
+        model?: string;
+        temperature?: number;
+        flare?: string;
+        timestamp?: number;
+    };
+}
+
+interface MessageOptions {
+    messageHistory?: MessageHistoryItem[];
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    stream?: boolean;
+    onToken?: (token: string) => void;
+}
+
 export class OpenAIProvider extends BaseProvider {
     name = 'OpenAI';
     private url: string;
@@ -18,218 +51,161 @@ export class OpenAIProvider extends BaseProvider {
 
     async getAvailableModels(): Promise<string[]> {
         try {
-            const response = await fetch(`${this.url}/models`, {
+            const response = await fetch('https://api.openai.com/v1/models', {
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.apiKey}`
                 }
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw new Error(`OpenAI API error: ${error.error?.message || 'Unknown error'}`);
+                throw new Error(`OpenAI API error: ${response.status}`);
             }
 
-            const data = await response.json();
-            this.models = data.data
-                .filter((m: any) => m.id.startsWith('gpt-'))
-                .map((m: any) => m.id);
-            return this.models;
+            const data = await response.json() as OpenAIModelsResponse;
+            return data.data.map(model => model.id);
         } catch (error) {
-            console.error('Failed to fetch OpenAI models:', error);
             throw error;
         }
     }
 
-    async sendMessage(message: string, options?: AIProviderOptions & StreamingOptions): Promise<string> {
+    async sendMessage(message: string, options?: MessageOptions): Promise<string> {
         try {
-            // Clean message content by stripping HTML tags
-            const cleanMessage = (text: string) => {
-                // Remove HTML tags and decode HTML entities
-                const tempDiv = document.createElement('div');
-                tempDiv.innerHTML = text;
-                return tempDiv.textContent || tempDiv.innerText || '';
-            };
-
-            // Build messages array
-            const messages: ChatMessage[] = [];
-
-            // Add message history if available
-            if (options?.messageHistory && options.messageHistory.length > 0) {
-                // The history should already be properly windowed by main.ts
-                const filteredHistory = options.messageHistory
-                    .filter(msg => 
-                        msg.content?.trim() && 
-                        msg.role && 
-                        // Don't include the last message if it matches our current message
-                        !(msg.role === 'user' && msg.content.trim() === message.trim())
-                    )
-                    .map(msg => ({
-                        role: msg.role as 'system' | 'user' | 'assistant',
-                        content: cleanMessage(msg.content)
-                    }));
-
-                messages.push(...filteredHistory);
+            if (!message?.trim()) {
+                return '';
             }
-
-            // Add current message
-            if (message?.trim()) {
-                messages.push({
-                    role: 'user',
-                    content: cleanMessage(message)
-                });
+            const messages = this.buildMessages(message, options?.messageHistory);
+            const model = options?.model || this.config?.defaultModel;
+            if (!model) {
+                throw new Error('No model specified for OpenAI provider');
             }
+            const temperature = options?.temperature ?? 0.7;
+            const maxTokens = options?.maxTokens;
 
-            // Add debug logging
-            if (this.config?.debugLoggingEnabled) {
-                console.debug('OpenAI messages:', messages.map(m => ({
-                    role: m.role,
-                    content: m.content.substring(0, 50) + '...'
-                })));
-            }
+            const response = await this.makeRequest(messages, model, temperature, maxTokens, options?.stream, options?.onToken);
+            return response;
+        } catch (error) {
+            throw error;
+        }
+    }
 
-            // Create new abort controller for this request
-            this.abortController = new AbortController();
+    private async makeRequest(
+        messages: Array<{role: string; content: string}>,
+        model: string,
+        temperature: number,
+        maxTokens?: number,
+        stream?: boolean,
+        onToken?: (token: string) => void
+    ): Promise<string> {
+        const controller = new AbortController();
+        const signal = controller.signal;
 
-            const response = await fetch(`${this.url}/chat/completions`, {
+        try {
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
                     'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.apiKey}`
                 },
                 body: JSON.stringify({
-                    model: options?.model || 'gpt-3.5-turbo',
-                    messages: messages,
-                    temperature: options?.temperature ?? 0.7,
-                    max_tokens: options?.maxTokens,
-                    stream: options?.stream ?? false
+                    model,
+                    messages,
+                    temperature,
+                    max_tokens: maxTokens,
+                    stream
                 }),
-                signal: this.abortController.signal
+                signal
             });
 
             if (!response.ok) {
-                const errorText = await response.text();
-                try {
-                    const error = JSON.parse(errorText);
-                    throw new Error(`OpenAI API error: ${error.error?.message || errorText}`);
-                } catch (e) {
-                    throw new Error(`OpenAI API error: ${errorText}`);
-                }
+                throw new Error(`OpenAI API error: ${response.status}`);
             }
 
-            // Check if this is a streaming response
-            const isStreamingResponse = response.headers.get('content-type')?.includes('text/event-stream');
-
-            // Handle streaming response
-            if ((options?.stream && options.onToken) || isStreamingResponse) {
-                if (!response.body) {
-                    throw new Error('No response body received');
-                }
-
+            if (stream && response.body && onToken) {
                 const reader = response.body.getReader();
-                let completeResponse = '';
                 const decoder = new TextDecoder();
+                let buffer = '';
+                let finalResponse = '';
 
-                try {
-                    let buffer = '';
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
 
-                        // Decode chunk and add to buffer
-                        const chunk = decoder.decode(value, { stream: true });
-                        buffer += chunk;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
 
-                        // Process complete lines
-                        while (buffer.includes('\n')) {
-                            const newlineIndex = buffer.indexOf('\n');
-                            const line = buffer.slice(0, newlineIndex).trim();
-                            buffer = buffer.slice(newlineIndex + 1);
+                    for (const line of lines) {
+                        if (line.trim() === '') continue;
+                        if (line.trim() === 'data: [DONE]') continue;
 
-                            // Skip empty lines and SSE comments
-                            if (!line || line.startsWith(':')) {
-                                continue;
-                            }
-
-                            // Handle SSE data lines
-                            if (line.startsWith('data: ')) {
-                                const data = line.slice(6);
-                                if (data === '[DONE]') continue;
-
-                                try {
-                                    const parsed = JSON.parse(data);
-                                    const token = parsed.choices?.[0]?.delta?.content;
-                                    if (token) {
-                                        completeResponse += token;
-                                        if (options?.onToken) {
-                                            options.onToken(token);
-                                        }
-                                    }
-                                } catch (e) {
-                                    console.warn('Failed to parse SSE data:', { 
-                                        line,
-                                        data,
-                                        error: e 
-                                    });
-                                }
-                            }
-                        }
-                    }
-
-                    // Process any remaining buffer content
-                    if (buffer.trim()) {
-                        const line = buffer.trim();
                         if (line.startsWith('data: ')) {
-                            const data = line.slice(6);
-                            if (data !== '[DONE]') {
-                                try {
-                                    const parsed = JSON.parse(data);
-                                    const token = parsed.choices?.[0]?.delta?.content;
-                                    if (token) {
-                                        completeResponse += token;
-                                        if (options?.onToken) {
-                                            options.onToken(token);
-                                        }
-                                    }
-                                } catch (e) {
-                                    console.warn('Failed to parse final SSE data:', { 
-                                        line,
-                                        data,
-                                        error: e 
-                                    });
+                            try {
+                                const json = JSON.parse(line.slice(6));
+                                const token = json.choices?.[0]?.delta?.content || '';
+                                if (token) {
+                                    finalResponse += token;
+                                    onToken(token);
                                 }
+                            } catch (e) {
+                                // Skip invalid JSON
                             }
                         }
                     }
-
-                    return completeResponse;
-                } catch (error) {
-                    if (error.name === 'AbortError') {
-                        console.log('Request aborted');
-                    }
-                    throw error;
-                } finally {
-                    reader.releaseLock();
                 }
-            }
 
-            // Handle non-streaming response
-            const responseText = await response.text();
-            // Skip any SSE prefixes
-            const jsonMatch = responseText.match(/data: ({.*})/);
-            if (jsonMatch) {
-                const data = JSON.parse(jsonMatch[1]);
-                return data.choices[0].message.content;
+                return finalResponse;
+            } else {
+                const result = await response.json();
+                return result.choices?.[0]?.message?.content || '';
             }
-            // If no SSE prefix, try parsing the whole response
-            const data = JSON.parse(responseText);
-            return data.choices[0].message.content;
         } catch (error) {
-            console.error('Failed to send message to OpenAI:', error);
+            if (error.name === 'AbortError') {
+                return 'Request aborted';
+            }
             throw error;
-        } finally {
-            // Clear abort controller after request is done
-            this.abortController = undefined;
         }
+    }
+
+    private buildMessages(message: string, messageHistory?: MessageHistoryItem[]): ChatMessage[] {
+        // Clean message content by stripping HTML tags
+        const cleanMessage = (text: string) => {
+            // Create a text node to safely handle HTML content
+            const textNode = document.createTextNode(text);
+            return textNode.textContent || '';
+        };
+
+        // Build messages array
+        const messages: ChatMessage[] = [];
+
+        // Add message history if available
+        if (messageHistory?.length) {
+            const validRoles = ['system', 'user', 'assistant'] as const;
+            type ValidRole = typeof validRoles[number];
+            
+            const filteredHistory = messageHistory
+                .filter(msg => 
+                    msg.content?.trim() && 
+                    msg.role && 
+                    validRoles.includes(msg.role as ValidRole) &&
+                    // Don't include the last message if it matches our current message
+                    !(msg.role === 'user' && msg.content.trim() === message.trim())
+                )
+                .map(msg => ({
+                    role: msg.role as ValidRole,
+                    content: cleanMessage(msg.content)
+                }));
+
+            messages.push(...filteredHistory);
+        }
+
+        // Add current message if not empty
+        if (message?.trim()) {
+            messages.push({
+                role: 'user' as const,
+                content: cleanMessage(message)
+            });
+        }
+
+        return messages;
     }
 } 

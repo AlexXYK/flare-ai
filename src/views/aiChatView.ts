@@ -72,6 +72,7 @@ export class AIChatView extends ItemView {
     private isStreaming: boolean = false;
     private originalSendHandler: ((this: GlobalEventHandlers, ev: MouseEvent) => any) | null = null;
     private expandedReasoningMessages: Set<string> = new Set();
+    private suggestionsEl: HTMLElement;
 
     constructor(leaf: WorkspaceLeaf, private plugin: FlarePlugin) {
         super(leaf);
@@ -93,9 +94,6 @@ export class AIChatView extends ItemView {
     async onload() {
         const container = this.containerEl.children[1];
         container.empty();
-
-        // Add styles first
-        this.addStyles();
 
         // Create main chat container
         const chatContainer = container.createDiv('flare-chat-container');
@@ -381,7 +379,7 @@ export class AIChatView extends ItemView {
             });
         }
         
-        // Handle input
+        // Setup input handlers for flare suggestions
         if (this.inputEl) {
             let suggestionContainer: HTMLElement | null = null;
             let selectedIndex = -1;
@@ -419,12 +417,6 @@ export class AIChatView extends ItemView {
             };
 
             const updateSuggestions = async (searchTerm: string) => {
-                // Only show suggestions if @ is at the start
-                if (!this.inputEl.value.trimStart().startsWith('@')) {
-                    removeSuggestions();
-                    return;
-                }
-
                 try {
                     // Load available flares
                     flares = await this.plugin.flareManager.loadFlares();
@@ -444,7 +436,8 @@ export class AIChatView extends ItemView {
 
                     // Create or update suggestion container
                     if (!suggestionContainer) {
-                        suggestionContainer = createDiv('flare-suggestions mobile');
+                        suggestionContainer = createDiv('flare-suggestions');
+                        document.body.appendChild(suggestionContainer);
                     }
                     suggestionContainer.empty();
 
@@ -454,6 +447,9 @@ export class AIChatView extends ItemView {
                     // Add suggestions
                     filtered.forEach((flare, index) => {
                         const item = suggestionsInner.createDiv('flare-suggestion-item');
+                        if (index === selectedIndex) {
+                            item.addClass('is-selected');
+                        }
                         
                         const icon = item.createDiv('suggestion-icon');
                         setIcon(icon, 'flame');
@@ -464,185 +460,150 @@ export class AIChatView extends ItemView {
                             item.createDiv('suggestion-hint').setText('↵ to select');
                         }
                         
-                        item.onclick = (e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            selectSuggestion(index);
-                        };
+                        // Handle click
+                        item.addEventListener('click', async () => {
+                            await selectSuggestion(index);
+                        });
                     });
 
-                    // Position the container
-                    if (Platform.isMobile) {
-                        // Get input wrapper for positioning reference
-                        const inputWrapper = this.inputEl.closest('.flare-input-wrapper') as HTMLElement;
-                        if (!inputWrapper) return;
+                    // Position the suggestions
+                    const inputWrapper = this.inputEl.closest('.flare-input-wrapper') as HTMLElement;
+                    if (!inputWrapper) return;
 
-                        const wrapperRect = inputWrapper.getBoundingClientRect();
-                        const viewportHeight = window.innerHeight;
-                        const viewportWidth = window.innerWidth;
-                        
-                        // Calculate available space above and below input
-                        const spaceAbove = wrapperRect.top;
-                        const spaceBelow = viewportHeight - wrapperRect.bottom;
-                        
-                        // Position container and set max height
-                        if (!suggestionContainer.parentElement) {
-                            this.containerEl.appendChild(suggestionContainer);
-                        }
-                        
-                        // Set max height based on available space
-                        const maxHeight = Math.max(spaceAbove, spaceBelow) - 20; // 20px padding
-                        suggestionsInner.style.maxHeight = `${maxHeight}px`;
-                        
-                        // Use a wider width - 90% of viewport width
-                        const containerWidth = Math.min(viewportWidth * 0.9, 400); // 90% of viewport, max 400px
-                        
-                        // Center the container in the viewport
-                        const leftOffset = (viewportWidth - containerWidth) / 2;
-                        
-                        // Position relative to viewport
-                        suggestionContainer.style.position = 'fixed';
-                        suggestionContainer.style.width = `${containerWidth}px`;
-                        suggestionContainer.style.left = `${leftOffset}px`;
-                        
-                        // If more space below or equal, position below input
-                        if (spaceBelow >= spaceAbove) {
-                            suggestionContainer.style.top = `${wrapperRect.bottom + 8}px`; // 8px gap
-                            suggestionContainer.style.bottom = 'auto';
-                            suggestionContainer.classList.remove('position-above');
-                            suggestionContainer.classList.add('position-below');
-                        } else {
-                            // Position above input
-                            suggestionContainer.style.bottom = `${viewportHeight - wrapperRect.top + 8}px`; // 8px gap
-                            suggestionContainer.style.top = 'auto';
-                            suggestionContainer.classList.remove('position-below');
-                            suggestionContainer.classList.add('position-above');
-                        }
-                        
-                        this.containerEl.addClass('has-suggestions');
+                    const wrapperRect = inputWrapper.getBoundingClientRect();
+                    const viewportHeight = window.innerHeight;
+                    const viewportWidth = window.innerWidth;
+                    
+                    // Calculate available space
+                    const spaceBelow = viewportHeight - wrapperRect.bottom;
+                    const spaceAbove = wrapperRect.top;
+                    
+                    // Calculate dimensions
+                    const containerWidth = Math.min(viewportWidth * 0.9, 400);
+                    const leftOffset = Math.max(8, wrapperRect.left);
+                    
+                    // Set position and dimensions
+                    suggestionContainer.style.position = 'fixed';
+                    suggestionContainer.style.width = `${containerWidth}px`;
+                    suggestionContainer.style.left = `${leftOffset}px`;
+                    
+                    // Set max height for suggestions container
+                    const maxHeight = Math.min(300, Math.max(spaceAbove, spaceBelow) - 16);
+                    suggestionsInner.style.maxHeight = `${maxHeight}px`;
+                    
+                    if (spaceBelow >= 200 || spaceBelow > spaceAbove) {
+                        // Position below input
+                        suggestionContainer.style.top = `${wrapperRect.bottom + 8}px`;
+                        suggestionContainer.style.bottom = 'auto';
+                        suggestionContainer.removeClass('position-top');
+                        suggestionContainer.addClass('position-bottom');
                     } else {
-                        // Desktop positioning - attach to input wrapper
-                        const inputWrapper = this.inputEl.closest('.flare-input-wrapper');
-                        if (inputWrapper && !suggestionContainer.parentElement) {
-                            inputWrapper.appendChild(suggestionContainer);
-                        }
+                        // Position above input
+                        suggestionContainer.style.bottom = `${viewportHeight - wrapperRect.top + 8}px`;
+                        suggestionContainer.style.top = 'auto';
+                        suggestionContainer.addClass('position-top');
+                        suggestionContainer.removeClass('position-bottom');
                     }
 
-                    selectedIndex = 0;
-                    suggestionsInner.children[0]?.addClass('is-selected');
+                    // Show suggestions
+                    suggestionContainer.addClass('is-visible');
+                    
+                    // Set initial selection
+                    if (selectedIndex === -1) {
+                        selectedIndex = 0;
+                    }
+
                 } catch (error) {
-                    console.error('Failed to load flares:', error);
-                    new Notice('Failed to load flares');
+                    console.error('Error updating suggestions:', error);
+                    removeSuggestions();
                 }
             };
 
-            // Auto-resize input and handle suggestions
-            this.inputEl.addEventListener('input', async (event: InputEvent) => {
-                // Reset height if empty, otherwise adjust to content
-                if (!this.inputEl.value) {
-                    this.inputEl.style.height = '';
-                } else {
-                    // Save the current scroll position
-                    const scrollPos = this.inputEl.scrollTop;
-                    
-                    // Reset height temporarily to get the right scrollHeight
-                    this.inputEl.style.height = '0';
-                    
-                    // Get the scroll height and add a small buffer to prevent flickering
-                    const height = this.inputEl.scrollHeight;
-                    
-                    // Set the height
-                    this.inputEl.style.height = `${height}px`;
-                    
-                    // Restore the scroll position
-                    this.inputEl.scrollTop = scrollPos;
-                }
-
-                // Handle suggestion updates
+            // Add input handlers
+            this.inputEl.addEventListener('input', async () => {
                 const input = this.inputEl.value;
                 const cursorPosition = this.inputEl.selectionStart || 0;
                 
-                // Only show suggestions if @ is at the start and we're still typing the flare name
-                if (input.trimStart().startsWith('@')) {
-                    const atIndex = input.trimStart().indexOf('@');
-                    const searchTerm = input.slice(atIndex + 1, cursorPosition);
-                    if (!searchTerm.includes(' ')) {
-                        await updateSuggestions(searchTerm);
-                        return;
+                // Check if we're at the start of the input or after whitespace
+                const beforeCursor = input.slice(0, cursorPosition);
+                const isAtStart = beforeCursor.trim() === beforeCursor && beforeCursor.startsWith('@');
+                
+                if (isAtStart) {
+                    const searchTerm = beforeCursor.slice(1); // Remove the @ symbol
+                    await updateSuggestions(searchTerm);
+                } else {
+                    removeSuggestions();
+                }
+            });
+
+            // Also trigger suggestions on @ being typed
+            this.inputEl.addEventListener('keyup', async (e: KeyboardEvent) => {
+                if (e.key === '@') {
+                    const input = this.inputEl.value;
+                    const cursorPosition = this.inputEl.selectionStart || 0;
+                    const beforeCursor = input.slice(0, cursorPosition);
+                    
+                    // Only show suggestions if @ is at the start or after whitespace
+                    if (beforeCursor.trim() === '@') {
+                        await updateSuggestions('');
                     }
                 }
-                
-                removeSuggestions();
-            }, { passive: true });
+            });
 
-            // Add keyboard navigation handler
+            // Handle keyboard navigation
             this.inputEl.addEventListener('keydown', async (e: KeyboardEvent) => {
-                // Only handle keyboard navigation if suggestions are visible
-                if (suggestionContainer && suggestionContainer.querySelector('.flare-suggestions-container')) {
-                    const items = suggestionContainer.querySelectorAll('.flare-suggestion-item');
-                    
+                // Handle suggestions navigation if suggestions are visible
+                if (suggestionContainer) {
                     switch (e.key) {
-                        case 'ArrowDown':
-                            e.preventDefault();
-                            selectedIndex = (selectedIndex + 1) % items.length;
-                            items.forEach((item, i) => {
-                                item.toggleClass('is-selected', i === selectedIndex);
-                            });
-                            break;
-                            
                         case 'ArrowUp':
                             e.preventDefault();
-                            selectedIndex = selectedIndex <= 0 ? items.length - 1 : selectedIndex - 1;
-                            items.forEach((item, i) => {
-                                item.toggleClass('is-selected', i === selectedIndex);
-                            });
+                            selectedIndex = Math.max(0, selectedIndex - 1);
+                            const upSearchTerm = this.inputEl.value.slice(1, this.inputEl.selectionStart).trim();
+                            await updateSuggestions(upSearchTerm);
+                            break;
+                            
+                        case 'ArrowDown':
+                            e.preventDefault();
+                            selectedIndex = Math.min(flares.length - 1, selectedIndex + 1);
+                            const downSearchTerm = this.inputEl.value.slice(1, this.inputEl.selectionStart).trim();
+                            await updateSuggestions(downSearchTerm);
                             break;
                             
                         case 'Enter':
-                            // If suggestions are visible, select the current suggestion
-                            if (selectedIndex >= 0 && selectedIndex < items.length) {
+                            if (selectedIndex >= 0) {
                                 e.preventDefault();
                                 await selectSuggestion(selectedIndex);
-                                return;
                             }
+                            break;
                             
-                            // If no suggestions or nothing selected, handle as normal message
-                            if (!Platform.isMobile && !e.shiftKey) {
-                                e.preventDefault();
-                                const sendBtn = this.containerEl.querySelector('.flare-send-button') as HTMLButtonElement;
-                                // Don't trigger the handler if we're streaming
-                                if (sendBtn && this.originalSendHandler && !this.isStreaming) {
-                                    await this.originalSendHandler.call(sendBtn, e as unknown as MouseEvent);
-                                }
-                            }
+                        case 'Escape':
+                            removeSuggestions();
                             break;
                     }
                     return;
                 }
 
-                // Handle Enter for sending messages when no suggestions are shown
+                // Handle Enter key behavior when no suggestions are shown
                 if (e.key === 'Enter') {
-                    // On desktop (not mobile), Enter without shift sends the message
-                    if (!Platform.isMobile && !e.shiftKey) {
-                        e.preventDefault(); // Prevent new line
+                    // On mobile, allow normal Enter behavior
+                    if (Platform.isMobile) {
+                        return;
+                    }
+                    
+                    // On desktop:
+                    // - Shift+Enter creates a line break
+                    // - Plain Enter sends the message
+                    if (!e.shiftKey) {
+                        e.preventDefault();
                         const sendBtn = this.containerEl.querySelector('.flare-send-button') as HTMLButtonElement;
-                        // Don't trigger the handler if we're streaming
                         if (sendBtn && this.originalSendHandler && !this.isStreaming) {
-                            await this.originalSendHandler.call(sendBtn, e as unknown as MouseEvent);
+                            await this.originalSendHandler.call(this);
                         }
                     }
-                    // On mobile or with shift key, allow default behavior (new line)
                 }
             });
 
-            // Also trigger on @ being typed only if it's at the start
-            this.inputEl.addEventListener('keyup', async (e: KeyboardEvent) => {
-                if (e.key === '@' && this.inputEl.value.trimStart() === '@') {
-                    await updateSuggestions('');
-                }
-            });
-
-            // Handle clicks outside to close suggestions
+            // Remove suggestions when clicking outside
             document.addEventListener('click', (e: MouseEvent) => {
                 if (suggestionContainer && !suggestionContainer.contains(e.target as Node) && !this.inputEl.contains(e.target as Node)) {
                     removeSuggestions();
@@ -1117,17 +1078,10 @@ export class AIChatView extends ItemView {
             // Clear input field immediately and reset its height
             if (this.inputEl) {
                 this.inputEl.value = '';
-                this.inputEl.style.height = '';  // Reset height immediately
+                this.inputEl.classList.add('is-empty');
                 // Force a reflow to ensure height is updated
                 void this.inputEl.offsetHeight;
-            }
-
-            if (this.plugin.settings.debugLoggingEnabled) {
-                console.log('View Message History (Before):', 
-                    this.messageHistory.map(m => ({
-                        role: m.role,
-                        content: m.content.substring(0, 50) + '...'
-                    })));
+                this.inputEl.classList.remove('is-empty');
             }
 
             // Get current flare settings
@@ -1154,10 +1108,6 @@ export class AIChatView extends ItemView {
             
             // Add to local history
             this.messageHistory.push(userMessage);
-            
-            if (this.plugin.settings.debugLoggingEnabled) {
-                console.log('Added User Message:', content.substring(0, 50) + '...');
-            }
             
             // Add to ChatHistoryManager
             await this.plugin.chatHistoryManager.addMessage(userMessage);
@@ -1220,49 +1170,41 @@ export class AIChatView extends ItemView {
                                 }
                                 
                                 if (settings.isReasoningModel) {
-                                    // PARTIAL EXTRACTION LOGIC: show everything outside <think>...</think>
-                                    let parsePos = 0;
-                                    while (parsePos < accumulatedContent.length) {
-                                        if (!isInReasoning) {
-                                            // find the next opening tag
-                                            const startIdx = accumulatedContent.substr(parsePos).search(new RegExp(escapedHeader));
-                                            if (startIdx === -1) {
-                                                // no more header
-                                                displayedContent += accumulatedContent.substring(parsePos);
-                                                parsePos = accumulatedContent.length;
-                                            } else {
-                                                // append text up to the header
-                                                const absStart = parsePos + startIdx;
-                                                displayedContent += accumulatedContent.substring(parsePos, absStart);
-                                                parsePos = absStart + reasoningHeader.length;
-                                                isInReasoning = true;
-                                            }
-                                        } else {
-                                            // we are in a reasoning block, find the end tag
-                                            const endIdx = accumulatedContent.substr(parsePos).search(new RegExp(escapedEndTag));
-                                            if (endIdx === -1) {
-                                                // still in reasoning block, skip everything
-                                                parsePos = accumulatedContent.length;
-                                            } else {
-                                                // move parsePos to after the end tag
-                                                parsePos += endIdx + reasoningEndTag.length;
-                                                isInReasoning = false;
-                                            }
+                                    // Extract all reasoning blocks
+                                    const reasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
+                                    const reasoningBlocks: string[] = [];
+                                    let responsePart = accumulatedContent;
+                                    let match;
+
+                                    while ((match = reasoningRegex.exec(accumulatedContent)) !== null) {
+                                        const [fullMatch, reasoningContent] = match;
+                                        if (reasoningContent.trim()) {
+                                            reasoningBlocks.push(reasoningContent.trim());
                                         }
+                                        // Remove this reasoning block from the response part
+                                        responsePart = responsePart.replace(fullMatch, '');
+                                    }
+
+                                    // Only show the response part during streaming
+                                    markdownContainer.empty();
+                                    if (responsePart.trim()) {
+                                        MarkdownRenderer.renderMarkdown(
+                                            responsePart.trim(),
+                                            markdownContainer,
+                                            '',
+                                            this.plugin
+                                        );
                                     }
                                 } else {
-                                    // If not a reasoning model, just show everything
-                                    displayedContent = accumulatedContent;
+                                    // Not a reasoning model, show everything
+                                    markdownContainer.empty();
+                                    MarkdownRenderer.renderMarkdown(
+                                        accumulatedContent,
+                                        markdownContainer,
+                                        '',
+                                        this.plugin
+                                    );
                                 }
-
-                                // Now display whatever is outside the reasoning block
-                                markdownContainer.empty();
-                                if (displayedContent) {
-                                    MarkdownRenderer.renderMarkdown(displayedContent, markdownContainer, '', this.plugin);
-                                }
-                                
-                                // Reset displayedContent to avoid re-rendering old tokens next time
-                                displayedContent = '';
                             }
                         }
                     }
@@ -1271,7 +1213,7 @@ export class AIChatView extends ItemView {
                 // Add assistant response to histories
                 const assistantMessage = {
                     role: 'assistant',
-                    content: response,
+                    content: settings.stream ? accumulatedContent : response,
                     settings: {
                         ...settings,
                         truncated: false
@@ -1281,28 +1223,20 @@ export class AIChatView extends ItemView {
                 // Add to local history
                 this.messageHistory.push(assistantMessage);
                 
-                if (this.plugin.settings.debugLoggingEnabled) {
-                    console.log('View Message History (After):', 
-                        this.messageHistory.map(m => ({
-                            role: m.role,
-                            content: m.content.substring(0, 50) + '...'
-                        })));
-                }
-                
                 // Add to ChatHistoryManager
                 await this.plugin.chatHistoryManager.addMessage(assistantMessage);
 
                 // Update loading message with final response
                 if (loadingMsg) {
                     loadingMsg.removeClass('is-loading');
-                    await this.addMessage('assistant', response, settings, false);
+                    await this.addMessage('assistant', settings.stream ? accumulatedContent : response, settings, false);
                     loadingMsg.remove();
                 }
 
                 // Save history after each message exchange
                 await this.plugin.chatHistoryManager.saveCurrentHistory();
                 
-                // Check if we should auto-generate title only for complete responses
+                // Check if we should auto-generate title
                 const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
                 const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
                 if (titleEl && currentFile && titleEl.textContent === 'New Chat') {
@@ -1550,24 +1484,51 @@ export class AIChatView extends ItemView {
                 const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
                 const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
 
-                // Safely parse out the reasoning block
-                const reasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`);
-                const reasoningMatch = content.match(reasoningRegex);
-                const hasReasoning = reasoningMatch !== null;
-                
-                if (hasReasoning && reasoningMatch && settings.isReasoningModel) {
-                    // Extract reasoning and response parts
-                    const reasoningContent = reasoningMatch[1].trim();
-                    const responsePart = content.replace(reasoningMatch[0], '').trim();
+                // Extract all reasoning blocks
+                const reasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
+                const reasoningBlocks: string[] = [];
+                let responsePart = content;
+                let match;
 
+                while ((match = reasoningRegex.exec(content)) !== null) {
+                    const [fullMatch, reasoningContent] = match;
+                    if (reasoningContent.trim()) {
+                        reasoningBlocks.push(reasoningContent.trim());
+                    }
+                    // Remove this reasoning block from the response part
+                    responsePart = responsePart.replace(fullMatch, '');
+                }
+
+                const hasReasoning = reasoningBlocks.length > 0;
+                
+                if (hasReasoning && settings.isReasoningModel) {
                     // Create reasoning container (initially hidden)
                     const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
-                    reasoningContainer.style.display = this.expandedReasoningMessages.has(messageId) ? 'block' : 'none';
-                    await MarkdownRenderer.renderMarkdown(reasoningContent, reasoningContainer, '', this.plugin);
+                    reasoningContainer.style.display = 'block';
+                    reasoningContainer.style.opacity = '0';
+                    reasoningContainer.style.height = '0';
+                    reasoningContainer.style.overflow = 'hidden';
+                    reasoningContainer.style.transition = 'opacity 0.2s ease, height 0.2s ease';
+                    
+                    if (this.expandedReasoningMessages.has(messageId)) {
+                        reasoningContainer.style.opacity = '1';
+                        reasoningContainer.style.height = 'auto';
+                    }
+                    
+                    // Render all reasoning blocks
+                    if (reasoningBlocks.length > 0) {
+                        // Join reasoning blocks with dividers
+                        const reasoningContent = reasoningBlocks.join('\n\n---\n\n');
+                        await MarkdownRenderer.renderMarkdown(reasoningContent, reasoningContainer, '', this.plugin);
+                    } else {
+                        reasoningContainer.setText('No reasoning content found.');
+                    }
 
                     // Create response container
                     const responseContainer = markdownContainer.createDiv('flare-response-content');
-                    await MarkdownRenderer.renderMarkdown(responsePart, responseContainer, '', this.plugin);
+                    if (responsePart.trim()) {
+                        await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
+                    }
 
                     // Add expand/collapse button to actions
                     const expandBtn = actions.createEl('button', {
@@ -1579,11 +1540,22 @@ export class AIChatView extends ItemView {
                         const isExpanded = this.expandedReasoningMessages.has(messageId);
                         if (isExpanded) {
                             this.expandedReasoningMessages.delete(messageId);
-                            reasoningContainer.style.display = 'none';
+                            reasoningContainer.style.opacity = '0';
+                            reasoningContainer.style.height = '0';
                             setIcon(expandBtn, 'plus-circle');
+                            // Wait for animation to complete before hiding
+                            setTimeout(() => {
+                                if (!this.expandedReasoningMessages.has(messageId)) {
+                                    reasoningContainer.style.display = 'none';
+                                }
+                            }, 200);
                         } else {
                             this.expandedReasoningMessages.add(messageId);
                             reasoningContainer.style.display = 'block';
+                            // Force a reflow
+                            void reasoningContainer.offsetHeight;
+                            reasoningContainer.style.opacity = '1';
+                            reasoningContainer.style.height = 'auto';
                             setIcon(expandBtn, 'minus-circle');
                         }
                     };
@@ -2003,19 +1975,6 @@ export class AIChatView extends ItemView {
         }
     }
 
-    // Add CSS for disabled state
-    private addStyles() {
-        const style = document.createElement('style');
-        style.textContent = `
-            .flare-temp-control.is-disabled {
-                opacity: 0.5;
-                cursor: not-allowed;
-                pointer-events: none;
-            }
-        `;
-        document.head.appendChild(style);
-    }
-
     private async showModelSelector() {
         if (!this.currentFlare) return;
 
@@ -2176,5 +2135,83 @@ export class AIChatView extends ItemView {
 
     private escapeRegexSpecials(str: string): string {
         return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    private updateInputHeight() {
+        if (!this.inputEl) return;
+
+        // Reset height to auto to get scrollHeight
+        this.inputEl.classList.add('is-empty');
+        
+        // Set height to 0 to measure content
+        this.inputEl.classList.add('is-measuring');
+        
+        // Get content height and set CSS variable
+        const contentHeight = this.inputEl.scrollHeight;
+        this.inputEl.style.setProperty('--content-height', `${contentHeight}px`);
+        
+        // Apply content height
+        this.inputEl.classList.remove('is-measuring', 'is-empty');
+        this.inputEl.classList.add('has-content');
+    }
+
+    private updateSuggestionsPosition() {
+        const suggestionContainer = this.containerEl.querySelector('.flare-suggestions') as HTMLElement;
+        if (!suggestionContainer) return;
+
+        // Get input wrapper for positioning reference
+        const inputWrapper = this.inputEl.closest('.flare-input-wrapper') as HTMLElement;
+        if (!inputWrapper) return;
+
+        const wrapperRect = inputWrapper.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+        
+        // Calculate available space above and below input
+        const spaceAbove = wrapperRect.top;
+        const spaceBelow = viewportHeight - wrapperRect.bottom;
+
+        // Calculate dimensions
+        const containerWidth = Math.min(viewportWidth * 0.9, 400);
+        const leftOffset = (viewportWidth - containerWidth) / 2;
+        
+        // Set CSS custom properties for positioning
+        suggestionContainer.addClass('position-fixed');
+        suggestionContainer.style.setProperty('--container-width', `${containerWidth}px`);
+        suggestionContainer.style.setProperty('--left-offset', `${leftOffset}px`);
+        
+        // Get suggestions inner container
+        const suggestionsInner = suggestionContainer.querySelector('.flare-suggestions-container') as HTMLElement;
+        if (suggestionsInner) {
+            // Set max height based on available space
+            const maxHeight = Math.max(spaceAbove, spaceBelow) - 20;
+            suggestionsInner.style.setProperty('--max-height', `${maxHeight}px`);
+        }
+        
+        // Position above or below based on available space
+        if (spaceBelow >= spaceAbove) {
+            suggestionContainer.addClass('position-bottom');
+            suggestionContainer.removeClass('position-top');
+            suggestionContainer.style.setProperty('--bottom-offset', `${wrapperRect.bottom + 8}px`);
+        } else {
+            suggestionContainer.addClass('position-top');
+            suggestionContainer.removeClass('position-bottom');
+            suggestionContainer.style.setProperty('--top-offset', `${viewportHeight - wrapperRect.top + 8}px`);
+        }
+    }
+
+    private toggleReasoningVisibility(messageEl: HTMLElement) {
+        const reasoningContent = messageEl.querySelector('.flare-reasoning-content');
+        if (reasoningContent) {
+            reasoningContent.classList.toggle('is-expanded');
+        }
+    }
+
+    async saveChat(error?: Error) {
+        try {
+            // ... existing code ...
+        } catch (error) {
+            console.error('Error saving chat:', error);
+        }
     }
 } 

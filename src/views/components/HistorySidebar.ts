@@ -36,19 +36,17 @@ export class HistorySidebar {
         const header = this.sidebarEl.createDiv('flare-history-header');
         header.createEl('h2', { text: 'Chat History' });
         
-        // Create actions container
-        const actions = header.createDiv('flare-history-actions');
+        // Create header actions container
+        const headerActions = header.createDiv('flare-history-actions');
         
         // Add refresh button
-        const refreshButton = this.createActionButton(actions, 'refresh-cw', 'Refresh History');
+        const refreshButton = this.createActionButton(headerActions, 'refresh-cw', 'Refresh History');
         refreshButton.onclick = async () => {
-            await this.loadHistory();
-            this.displayTree(this.historyTree);
+            await this.refresh();
         };
         
         // Add close button
-        const closeButton = header.createDiv('flare-history-close');
-        setIcon(closeButton, 'x');
+        const closeButton = this.createActionButton(headerActions, 'x', 'Close');
         closeButton.onclick = () => this.hide();
 
         // Create search
@@ -62,16 +60,15 @@ export class HistorySidebar {
         // Add clear button
         const clearButton = searchContainer.createDiv('flare-history-search-clear');
         setIcon(clearButton, 'x');
-        clearButton.style.display = 'none';
         
         this.searchInput.addEventListener('input', () => {
-            clearButton.style.display = this.searchInput.value ? 'flex' : 'none';
+            clearButton.classList.toggle('is-visible', Boolean(this.searchInput.value));
             this.filterTree();
         });
         
         clearButton.onclick = () => {
             this.searchInput.value = '';
-            clearButton.style.display = 'none';
+            clearButton.classList.remove('is-visible');
             this.filterTree();
         };
 
@@ -103,25 +100,7 @@ export class HistorySidebar {
             this.showEmptyState();
         });
         
-        this.addEventListeners();
-    }
-
-    private addEventListeners() {
-        // Handle clicks and touches outside the sidebar
-        const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
-            const target = e.target as HTMLElement;
-            if (this.isVisible && 
-                !this.sidebarEl.contains(target) && 
-                !this.contextMenu?.contains(target)) {
-                this.hide();
-            }
-        };
-
-        // Add both mouse and touch handlers
-        document.addEventListener('mousedown', handleOutsideClick);
-        document.addEventListener('touchstart', handleOutsideClick, { passive: true });
-
-        // Handle touch events for mobile
+        // Add touch event listeners
         this.sidebarEl.addEventListener('touchstart', (e) => {
             if (this.longPressTimeout) clearTimeout(this.longPressTimeout);
             
@@ -157,86 +136,58 @@ export class HistorySidebar {
             e.preventDefault();
             this.showContextMenu(item, e.pageX, e.pageY);
         });
-
-        // Handle keyboard navigation
-        this.sidebarEl.addEventListener('keydown', (e) => {
-            const target = e.target as HTMLElement;
-            const item = target.closest('.flare-history-item') as HTMLElement;
-            if (!item) return;
-
-            switch (e.key) {
-                case 'Enter':
-                    e.preventDefault();
-                    this.handleItemClick(item);
-                    break;
-                case 'ArrowDown':
-                    e.preventDefault();
-                    this.focusNextItem(item);
-                    break;
-                case 'ArrowUp':
-                    e.preventDefault();
-                    this.focusPreviousItem(item);
-                    break;
-            }
-        });
-    }
-
-    private focusNextItem(currentItem: HTMLElement) {
-        const items = Array.from(this.treeContainer.querySelectorAll('.flare-history-item')) as HTMLElement[];
-        const currentIndex = items.indexOf(currentItem);
-        const nextItem = items[currentIndex + 1];
-        if (nextItem) {
-            nextItem.focus();
-        }
-    }
-
-    private focusPreviousItem(currentItem: HTMLElement) {
-        const items = Array.from(this.treeContainer.querySelectorAll('.flare-history-item')) as HTMLElement[];
-        const currentIndex = items.indexOf(currentItem);
-        const previousItem = items[currentIndex - 1];
-        if (previousItem) {
-            previousItem.focus();
-        }
     }
 
     async show() {
         if (this.isVisible) return;
-
-        try {
-            // Make sidebar visible first
-            this.sidebarEl.style.display = 'flex'; // Ensure it's displayed before adding visible class
-            this.sidebarEl.addClass('is-visible');
+        
+        // Load history if needed
+        if (!this.historyTree.length) {
+            await this.loadHistory();
+            this.displayTree(this.historyTree);
+        }
+        
+        // Show sidebar with transition
+        requestAnimationFrame(() => {
+            this.sidebarEl.classList.add('is-visible');
             this.isVisible = true;
             
-            // Load history data
-            await this.loadHistory();
+            // Add event listeners
+            document.addEventListener('click', this.handleOutsideClick);
+            document.addEventListener('keydown', this.handleKeyDown);
             
-            // Display tree in the next frame
-            requestAnimationFrame(() => {
-                this.showHistoryTree();
-                
-                // Focus search input
-                this.searchInput.focus();
-            });
-        } catch (error) {
-            console.error('Error showing sidebar:', error);
-            this.isSelecting = false;
-            this.showEmptyState();
-        }
+            // Focus the search input
+            this.searchInput.focus();
+        });
     }
 
     hide() {
         if (!this.isVisible) return;
-        this.sidebarEl.removeClass('is-visible');
-        // Wait for transition to complete before hiding
-        setTimeout(() => {
-            if (!this.isVisible) {
-                this.sidebarEl.style.display = 'none';
-            }
-        }, 300); // Match transition duration
+        
+        // Hide sidebar with transition
+        this.sidebarEl.classList.remove('is-visible');
         this.isVisible = false;
+        
+        // Remove event listeners
+        document.removeEventListener('click', this.handleOutsideClick);
+        document.removeEventListener('keydown', this.handleKeyDown);
+        
+        // Hide any open context menu
         this.hideContextMenu();
     }
+
+    private handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+        const target = e.target as Node;
+        if (!this.sidebarEl.contains(target) && !this.contextMenu?.contains(target)) {
+            this.hide();
+        }
+    };
+
+    private handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+            this.hide();
+        }
+    };
 
     private async loadHistory() {
         try {
@@ -361,10 +312,6 @@ export class HistorySidebar {
                 content.addEventListener('click', (e) => {
                     e.stopPropagation();
                     itemEl.classList.toggle('is-collapsed');
-                    const chevron = icon.querySelector('svg');
-                    if (chevron) {
-                        chevron.style.transform = itemEl.classList.contains('is-collapsed') ? 'rotate(-90deg)' : '';
-                    }
                 });
             } else {
                 // Handle file click
@@ -465,7 +412,7 @@ export class HistorySidebar {
         try {
             const file = this.plugin.app.vault.getAbstractFileByPath(path);
             if (file instanceof TFile) {
-                await this.plugin.app.vault.delete(file);
+                await this.plugin.app.fileManager.trashFile(file);
                 await this.loadHistory();
                 this.displayTree(this.historyTree);
             }
@@ -478,7 +425,7 @@ export class HistorySidebar {
         try {
             const folder = this.plugin.app.vault.getAbstractFileByPath(path);
             if (folder) {
-                await this.plugin.app.vault.delete(folder);
+                await this.plugin.app.fileManager.trashFile(folder);
                 await this.loadHistory();
                 this.displayTree(this.historyTree);
             }
@@ -533,40 +480,43 @@ export class HistorySidebar {
     }
 
     private showContextMenu(item: HTMLElement, x: number, y: number) {
+        // Remove any existing context menu
         this.hideContextMenu();
-
-        const type = item.classList.contains('folder') ? 'folder' : 'file';
-        const path = item.getAttribute('data-path');
-        if (!path) return;
-
-        this.contextMenu = document.body.createDiv('flare-context-menu');
+        
+        // Create context menu
+        this.contextMenu = document.createElement('div');
+        this.contextMenu.className = 'flare-history-context-menu';
+        document.body.appendChild(this.contextMenu);
         
         // Position menu
-        const rect = item.getBoundingClientRect();
-        const menuX = Math.min(x, window.innerWidth - 200); // Prevent overflow
-        const menuY = Math.min(y, window.innerHeight - 200);
+        const menuRect = this.contextMenu.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
         
-        this.contextMenu.style.left = `${menuX}px`;
-        this.contextMenu.style.top = `${menuY}px`;
-
-        if (type === 'folder') {
-            this.addContextMenuItem('New Chat Here', 'plus', () => 
-                this.createNewChat(path));
-            this.addContextMenuItem('Rename', 'edit', () => 
-                this.renameItem(item, path));
-            this.addContextMenuItem('Delete', 'trash-2', () => 
-                this.deleteFolder(path), true);
+        // Adjust position to keep menu in viewport
+        const menuX = Math.min(x, viewportWidth - menuRect.width);
+        const menuY = Math.min(y, viewportHeight - menuRect.height);
+        
+        // Use CSS custom properties for positioning
+        this.contextMenu.style.setProperty('--menu-x', `${menuX}px`);
+        this.contextMenu.style.setProperty('--menu-y', `${menuY}px`);
+        this.contextMenu.classList.add('is-visible');
+        
+        // Add menu items based on item type
+        const path = item.getAttribute('data-path') || '';
+        const isFolder = item.classList.contains('folder');
+        
+        if (isFolder) {
+            this.addContextMenuItem('New Chat', 'plus', () => this.createNewChat(path));
+            this.addContextMenuItem('Rename', 'pencil', () => this.renameItem(item, path));
+            this.addContextMenuItem('Delete', 'trash', () => this.deleteFolder(path), true);
         } else {
-            this.addContextMenuItem('Rename', 'edit', () => 
-                this.renameItem(item, path));
-            this.addContextMenuItem('Delete', 'trash-2', () => 
-                this.deleteHistory(path), true);
+            this.addContextMenuItem('Rename', 'pencil', () => this.renameItem(item, path));
+            this.addContextMenuItem('Delete', 'trash', () => this.deleteHistory(path), true);
         }
-
-        // Close context menu when clicking outside
-        setTimeout(() => {
-            document.addEventListener('click', this.hideContextMenu, { once: true });
-        }, 0);
+        
+        // Add click outside listener
+        document.addEventListener('click', this.hideContextMenu);
     }
 
     private addContextMenuItem(text: string, icon: string, onClick: () => void, isDanger = false) {
@@ -588,7 +538,7 @@ export class HistorySidebar {
         };
     }
 
-    private hideContextMenu = () => {
+    private hideContextMenu() {
         if (this.contextMenu) {
             this.contextMenu.remove();
             this.contextMenu = null;
@@ -603,31 +553,84 @@ export class HistorySidebar {
         if (this.selectionTimeout) {
             clearTimeout(this.selectionTimeout);
         }
+        // Remove all event listeners
+        document.removeEventListener('click', this.handleOutsideClick);
+        document.removeEventListener('keydown', this.handleKeyDown);
+        document.removeEventListener('touchstart', this.handleOutsideClick);
+        this.hideContextMenu();
         this.sidebarEl.detach();
     }
 
     public async refresh() {
-        // Load fresh history data
-        await this.loadHistory();
-        // Re-display the tree with updated data
-        this.displayTree(this.historyTree);
+        try {
+            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[aria-label="Refresh History"]');
+            if (refreshButton) {
+                refreshButton.addClass('is-refreshing');
+            }
+            
+            // Load fresh history data
+            await this.loadHistory();
+            
+            // Re-display the tree with updated data
+            this.displayTree(this.historyTree);
+        } catch (error) {
+            console.error('Error refreshing history:', error);
+        } finally {
+            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[aria-label="Refresh History"]');
+            if (refreshButton) {
+                refreshButton.removeClass('is-refreshing');
+            }
+        }
     }
 
     private showHistoryTree() {
         try {
             if (this.historyTree.length > 0) {
-                if (this.plugin.settings.debugLoggingEnabled) {
-                    console.log('Displaying history tree with items:', this.historyTree.length);
-                }
                 this.displayTree(this.historyTree);
             } else {
-                if (this.plugin.settings.debugLoggingEnabled) {
-                    console.log('No items to display, showing empty state');
-                }
                 this.showEmptyState();
             }
         } catch (error) {
             console.error('Error showing history tree:', error);
         }
+    }
+
+    private setupEventListeners() {
+        // Add touch event listeners
+        this.sidebarEl.addEventListener('touchstart', (e) => {
+            if (this.longPressTimeout) clearTimeout(this.longPressTimeout);
+            
+            const target = e.target as HTMLElement;
+            const item = target.closest('.flare-history-item') as HTMLElement;
+            if (!item) return;
+
+            this.longPressTimeout = setTimeout(() => {
+                e.preventDefault();
+                const rect = item.getBoundingClientRect();
+                this.showContextMenu(item, rect.left, rect.bottom);
+            }, this.longPressDelay);
+        }, { passive: true });
+
+        this.sidebarEl.addEventListener('touchend', () => {
+            if (this.longPressTimeout) {
+                clearTimeout(this.longPressTimeout);
+            }
+        }, { passive: true });
+
+        this.sidebarEl.addEventListener('touchmove', () => {
+            if (this.longPressTimeout) {
+                clearTimeout(this.longPressTimeout);
+            }
+        }, { passive: true });
+
+        // Handle right-click for desktop
+        this.sidebarEl.addEventListener('contextmenu', (e) => {
+            const target = e.target as HTMLElement;
+            const item = target.closest('.flare-history-item') as HTMLElement;
+            if (!item) return;
+
+            e.preventDefault();
+            this.showContextMenu(item, e.pageX, e.pageY);
+        });
     }
 } 
