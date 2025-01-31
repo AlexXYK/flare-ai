@@ -75,7 +75,7 @@ export class ProviderSettingsUI {
             
             // Show confirmation dialog
             const modal = new Modal(this.plugin.app);
-            modal.titleEl.setText('Delete Provider');
+            modal.titleEl.setText('Delete provider');
             modal.contentEl.createEl('p', {
                 text: `Are you sure you want to delete the provider "${providerName}"? This action cannot be undone.`
             });
