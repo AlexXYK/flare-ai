@@ -55,6 +55,8 @@ Or manually:
 3. Create your first Flare via the "Create Flare" button in the settings
 4. Start chatting!
 
+> If you encounter any issues during initial setup (i.e. models not appearing in the title generation dropdown or the reasoning model toggle not appearing when selecting an Ollama provider in the Flare congig menu), simply navigate out of the settings tab and back in.
+
 ## Using Flares
 
 Flares are markdown files that define AI personas. They live in your vault and can be edited directly.
@@ -62,7 +64,7 @@ Flares are markdown files that define AI personas. They live in your vault and c
 Example Flare:
 ```markdown
 ---
-name: Code Assistant
+name: CodeAssistant
 description: Programming and technical help
 provider: ollama-default
 model: llama3.1
