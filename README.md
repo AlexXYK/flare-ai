@@ -24,6 +24,8 @@ A powerful AI chat interface for Obsidian featuring customizable personas (Flare
 - Markdown-based storage
 
 ### ⚡ Modern UI/UX
+- [[Wikilinked]] notes from your vault directly into chat or system prompts
+- **Dataview** query support in chat and system prompts
 - Clean, consistent interface
 - Multiple view locations
 - Real-time settings updates
