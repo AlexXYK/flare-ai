@@ -7,6 +7,7 @@ export class OpenAIManager extends ProviderManager {
     id = 'openai';
     name = 'OpenAI';
     description = 'OpenAI GPT models';
+    protected provider: OpenAIProvider | null = null;
 
     constructor(plugin: FlarePlugin) {
         super(plugin);
@@ -19,15 +20,16 @@ export class OpenAIManager extends ProviderManager {
 
         // Reuse existing provider if settings haven't changed
         if (this.provider && 
-            this.provider.config?.apiKey === settings.apiKey &&
-            this.provider.config?.endpoint === settings.endpoint) {
+            this.provider.config.apiKey === settings.apiKey &&
+            this.provider.config.endpoint === settings.endpoint) {
             return this.provider;
         }
 
         // Create new provider
-        this.provider = new OpenAIProvider(settings.apiKey || '', settings.endpoint);
-        this.provider.config = settings;
+        const provider = new OpenAIProvider(settings.apiKey || '', settings.endpoint);
+        provider.setConfig(settings);
+        this.provider = provider;
         
-        return this.provider;
+        return provider;
     }
 } 

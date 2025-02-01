@@ -554,7 +554,7 @@ export class FlareManager {
         // Provider selection
         new Setting(flareContainer)
             .setName('Provider')
-            .addDropdown(dropdown => {
+            .addDropdown((dropdown) => {
                 if (!this.currentFlareConfig) return dropdown;
                 
                 // Add default option
@@ -575,17 +575,17 @@ export class FlareManager {
                     dropdown.setValue('');
                 }
 
-                dropdown.onChange(async value => {
+                dropdown.onChange(async (value) => {
                     if (!this.currentFlareConfig) return;
                     this.currentFlareConfig.provider = value;
                     // Reset model when provider changes
                     this.currentFlareConfig.model = '';
                     const settingItem = (dropdown as any).settingEl || dropdown.selectEl.closest('.setting-item');
                     if (settingItem) {
-                        this.markAsChanged(form, settingItem);
+                        this.markAsChanged(containerEl, settingItem);
                     }
                     // Update the model dropdown with the new provider's models
-                    await this.updateModelDropdown(providerSection, value);
+                    await this.updateModelDropdown(containerEl, value);
                 });
                 return dropdown;
             });
@@ -949,146 +949,118 @@ export class FlareManager {
         });
     }
 
-    private async createProviderSettingsSection(form: HTMLElement) {
-        // Remove any existing provider settings section first
-        const existingSection = form.querySelector('.flare-section[data-section="provider-settings"]');
-        if (existingSection) {
-            existingSection.remove();
-        }
-
-        // Find the basic settings section to insert after it
-        const basicSection = form.querySelector('.flare-section[data-section="basic-settings"]');
+    private async createProviderSettingsSection(formElement: HTMLElement) {
+        const providerSectionElement = this.createSection(formElement, 'Provider Settings');
         
-        const section = document.createElement('div');
-        section.className = 'flare-section';
-        section.setAttribute('data-section', 'provider-settings');
-        const header = section.createDiv('flare-section-header');
-        header.createEl('h4', { text: 'Provider Settings' });
-        const providerSection = section.createDiv('flare-section-content');
+        new Setting(providerSectionElement)
+            .setName('Provider')
+            .setDesc('Select the AI provider to use')
+            .addDropdown((dropdown) => {
+                if (!this.currentFlareConfig) return dropdown;
+                
+                // Add default option
+                dropdown.addOption('', 'Select a provider...');
+                
+                // Add provider options
+                Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
+                    if (provider.enabled) {
+                        dropdown.addOption(id, provider.name);
+                    }
+                });
+                
+                // Set current value if it exists and the provider is still valid
+                const currentProvider = this.plugin.settings.providers[this.currentFlareConfig.provider || ''];
+                if (currentProvider?.enabled && currentProvider.type && this.plugin.providers.has(currentProvider.type)) {
+                    dropdown.setValue(this.currentFlareConfig.provider);
+                } else {
+                    dropdown.setValue('');
+                }
 
-        // Insert after basic settings if it exists, otherwise prepend to form
-        if (basicSection) {
-            basicSection.after(section);
-        } else {
-            form.prepend(section);
-        }
-        
-        await new Promise<void>(resolve => {
-            setTimeout(() => {
-                // Provider selection
-                new Setting(providerSection)
-                    .setName('Provider')
-                    .setDesc('Select the AI provider for this flare')
-                    .addDropdown(dropdown => {
-                        if (!this.currentFlareConfig) return dropdown;
-                        
-                        // Add default option
-                        dropdown.addOption('', 'Select a provider...');
-                        
-                        // Add provider options
-                        Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
-                            if (provider.enabled) {
-                                dropdown.addOption(id, provider.name);
-                            }
-                        });
-                        
-                        // Set current value if it exists and the provider is still valid
-                        const currentProvider = this.plugin.settings.providers[this.currentFlareConfig.provider || ''];
-                        if (currentProvider?.enabled && currentProvider.type && this.plugin.providers.has(currentProvider.type)) {
-                            dropdown.setValue(this.currentFlareConfig.provider);
-                        } else {
-                            dropdown.setValue('');
-                        }
+                dropdown.onChange(async (value) => {
+                    if (!this.currentFlareConfig) return;
+                    this.currentFlareConfig.provider = value;
+                    // Reset model when provider changes
+                    this.currentFlareConfig.model = '';
+                    const settingItem = (dropdown as any).settingEl || dropdown.selectEl.closest('.setting-item');
+                    if (settingItem) {
+                        this.markAsChanged(formElement, settingItem);
+                    }
+                    // Update the model dropdown with the new provider's models
+                    await this.updateModelDropdown(providerSectionElement, value);
+                });
+                return dropdown;
+            });
 
-                        dropdown.onChange(async value => {
+        // Only show reasoning model settings for Ollama provider
+        if (this.currentFlareConfig?.provider) {
+            const provider = this.plugin.settings.providers[this.currentFlareConfig.provider];
+            if (provider?.type === 'ollama') {
+                new Setting(providerSectionElement)
+                    .setName('Reasoning Model')
+                    .setDesc('Enable for models that support reasoning (e.g. deepseek-coder)')
+                    .addToggle(toggle => toggle
+                        .setValue(this.currentFlareConfig?.isReasoningModel ?? false)
+                        .onChange(value => {
                             if (!this.currentFlareConfig) return;
-                            this.currentFlareConfig.provider = value;
-                            // Reset model when provider changes
-                            this.currentFlareConfig.model = '';
-                            const settingItem = (dropdown as any).settingEl || dropdown.selectEl.closest('.setting-item');
+                            this.currentFlareConfig.isReasoningModel = value;
+                            const settingItem = (toggle as any).settingEl || toggle.toggleEl.closest('.setting-item');
                             if (settingItem) {
-                                this.markAsChanged(form, settingItem);
+                                this.markAsChanged(formElement, settingItem);
                             }
-                            // Update the model dropdown with the new provider's models
-                            await this.updateModelDropdown(providerSection, value);
-                        });
-                        return dropdown;
-                    });
+                            // Instead of recreating the entire section, just update the header setting
+                            const headerSetting = providerSectionElement.querySelector('.reasoning-header-setting');
+                            if (value) {
+                                if (!headerSetting) {
+                                    new Setting(providerSectionElement)
+                                        .setClass('reasoning-header-setting')
+                                        .setName('Reasoning Header')
+                                        .setDesc('The tag that marks the start of reasoning (e.g. <think>)')
+                                        .addText(text => {
+                                            if (!this.currentFlareConfig) return text;
+                                            return text
+                                                .setValue(this.currentFlareConfig.reasoningHeader || '<think>')
+                                                .onChange(headerValue => {
+                                                    if (!this.currentFlareConfig) return;
+                                                    this.currentFlareConfig.reasoningHeader = headerValue;
+                                                    const headerSettingItem = (text as any).settingEl || text.inputEl.closest('.setting-item');
+                                                    if (headerSettingItem) {
+                                                        this.markAsChanged(formElement, headerSettingItem);
+                                                    }
+                                                });
+                                        });
+                                }
+                            } else {
+                                headerSetting?.remove();
+                            }
+                        }));
 
-                // Only show reasoning model settings for Ollama provider
-                if (this.currentFlareConfig?.provider) {
-                    const provider = this.plugin.settings.providers[this.currentFlareConfig.provider];
-                    if (provider?.type === 'ollama') {
-                        new Setting(providerSection)
-                            .setName('Reasoning Model')
-                            .setDesc('Enable for models that support reasoning (e.g. deepseek-coder)')
-                            .addToggle(toggle => toggle
-                                .setValue(this.currentFlareConfig?.isReasoningModel ?? false)
+                // Only show reasoning header if reasoning model is enabled
+                if (this.currentFlareConfig.isReasoningModel) {
+                    new Setting(providerSectionElement)
+                        .setClass('reasoning-header-setting')
+                        .setName('Reasoning Header')
+                        .setDesc('The tag that marks the start of reasoning (e.g. <think>)')
+                        .addText(text => {
+                            if (!this.currentFlareConfig) return text;
+                            return text
+                                .setValue(this.currentFlareConfig.reasoningHeader || '<think>')
                                 .onChange(value => {
                                     if (!this.currentFlareConfig) return;
-                                    this.currentFlareConfig.isReasoningModel = value;
-                                    const settingItem = (toggle as any).settingEl || toggle.toggleEl.closest('.setting-item');
+                                    this.currentFlareConfig.reasoningHeader = value;
+                                    const settingItem = (text as any).settingEl || text.inputEl.closest('.setting-item');
                                     if (settingItem) {
-                                        this.markAsChanged(form, settingItem);
+                                        this.markAsChanged(formElement, settingItem);
                                     }
-                                    // Instead of recreating the entire section, just update the header setting
-                                    const headerSetting = providerSection.querySelector('.reasoning-header-setting');
-                                    if (value) {
-                                        if (!headerSetting) {
-                                            new Setting(providerSection)
-                                                .setClass('reasoning-header-setting')
-                                                .setName('Reasoning Header')
-                                                .setDesc('The tag that marks the start of reasoning (e.g. <think>)')
-                                                .addText(text => {
-                                                    if (!this.currentFlareConfig) return text;
-                                                    return text
-                                                        .setValue(this.currentFlareConfig.reasoningHeader || '<think>')
-                                                        .onChange(headerValue => {
-                                                            if (!this.currentFlareConfig) return;
-                                                            this.currentFlareConfig.reasoningHeader = headerValue;
-                                                            const headerSettingItem = (text as any).settingEl || text.inputEl.closest('.setting-item');
-                                                            if (headerSettingItem) {
-                                                                this.markAsChanged(form, headerSettingItem);
-                                                            }
-                                                        });
-                                                });
-                                        }
-                                    } else {
-                                        headerSetting?.remove();
-                                    }
-                                }));
-
-                        // Only show reasoning header if reasoning model is enabled
-                        if (this.currentFlareConfig.isReasoningModel) {
-                            new Setting(providerSection)
-                                .setClass('reasoning-header-setting')
-                                .setName('Reasoning Header')
-                                .setDesc('The tag that marks the start of reasoning (e.g. <think>)')
-                                .addText(text => {
-                                    if (!this.currentFlareConfig) return text;
-                                    return text
-                                        .setValue(this.currentFlareConfig.reasoningHeader || '<think>')
-                                        .onChange(value => {
-                                            if (!this.currentFlareConfig) return;
-                                            this.currentFlareConfig.reasoningHeader = value;
-                                            const settingItem = (text as any).settingEl || text.inputEl.closest('.setting-item');
-                                            if (settingItem) {
-                                                this.markAsChanged(form, settingItem);
-                                            }
-                                        });
                                 });
-                        }
-                    }
+                        });
                 }
+            }
+        }
 
-                // Initial model dropdown
-                if (this.currentFlareConfig?.provider) {
-                    this.updateModelDropdown(providerSection, this.currentFlareConfig.provider);
-                }
-
-                resolve();
-            }, 0);
-        });
+        // Initial model dropdown
+        if (this.currentFlareConfig?.provider) {
+            this.updateModelDropdown(providerSectionElement, this.currentFlareConfig.provider);
+        }
     }
 
     private async updateModelDropdown(container: HTMLElement, providerId: string) {

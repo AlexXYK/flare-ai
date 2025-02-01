@@ -4,6 +4,8 @@ export interface AIProvider {
     sendMessage(message: string, options?: AIProviderOptions): Promise<string>;
     getModels?(): Promise<string[]>;
     getAvailableModels(): Promise<string[]>;
+    config: ProviderSettings;
+    setConfig(config: ProviderSettings): void;
 }
 
 export interface AIProviderOptions {

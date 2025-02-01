@@ -1,5 +1,5 @@
 import { BaseProvider } from '../../base/BaseProvider';
-import { AIProviderOptions } from '../../../types/AIProvider';
+import { AIProviderOptions, ProviderSettings } from '../../../types/AIProvider';
 import { StreamingOptions } from '../../base/BaseProvider';
 import { requestUrl, RequestUrlParam } from 'obsidian';
 
