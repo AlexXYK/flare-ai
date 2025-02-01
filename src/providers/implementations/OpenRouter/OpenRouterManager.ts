@@ -19,13 +19,13 @@ export class OpenRouterManager extends ProviderManager {
 
         // Reuse existing provider if settings haven't changed
         if (this.provider && 
-            this.provider.config?.apiKey === settings.apiKey) {
+            this.provider.config.apiKey === settings.apiKey) {
             return this.provider;
         }
 
         // Create new provider
         this.provider = new OpenRouterProvider(settings.apiKey || '');
-        this.provider.config = settings;
+        this.provider.setConfig(settings);
         
         return this.provider;
     }

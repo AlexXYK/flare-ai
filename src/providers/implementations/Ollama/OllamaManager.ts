@@ -19,7 +19,7 @@ export class OllamaManager extends ProviderManager {
 
         // Reuse existing provider if settings haven't changed
         if (this.provider && 
-            this.provider.config?.baseUrl === settings.baseUrl) {
+            this.provider.config.baseUrl === settings.baseUrl) {
             return this.provider;
         }
 

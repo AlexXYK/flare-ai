@@ -13,7 +13,11 @@ export interface StreamingOptions {
 export abstract class BaseProvider implements AIProvider {
     abstract name: string;
     protected models: string[] = [];
-    protected config: ProviderSettings;
+    public config: ProviderSettings = {
+        type: '',
+        name: '',
+        enabled: false
+    };
     protected abortController?: AbortController;
 
     /**
