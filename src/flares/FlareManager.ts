@@ -719,6 +719,8 @@ export class FlareManager {
     }
 
     private markAsChanged(form?: HTMLElement, settingItem?: HTMLElement): void {
+        this.hasUnsavedChanges = true;
+        
         // Show action buttons
         if (this.actionButtons) {
             this.actionButtons.classList.add('is-visible');
@@ -756,9 +758,14 @@ export class FlareManager {
             this.hasUnsavedChanges = false;
             this.originalSettings = await this.loadFlareConfig(newName);
             
+            // Hide action buttons
             if (this.actionButtons) {
                 this.actionButtons.classList.remove('is-visible');
             }
+
+            // Remove changed indicators from all setting items
+            const settingItems = document.querySelectorAll('.setting-item.is-changed');
+            settingItems.forEach(item => item.classList.remove('is-changed'));
 
             // Update UI if name changed
             if (oldName !== newName) {
@@ -786,14 +793,29 @@ export class FlareManager {
     private async revertChanges(containerEl: HTMLElement) {
         if (!this.currentFlare || !this.originalSettings) return;
         
-        await this.showFlareSettings(containerEl, this.currentFlare);
-        
-        this.hasUnsavedChanges = false;
-        if (this.actionButtons) {
-            this.actionButtons.classList.remove('is-visible');
+        try {
+            // Reset current config to original settings
+            this.currentFlareConfig = { ...this.originalSettings };
+            
+            // Reload the settings UI
+            await this.showFlareSettings(containerEl, this.currentFlare);
+            
+            this.hasUnsavedChanges = false;
+            
+            // Hide action buttons
+            if (this.actionButtons) {
+                this.actionButtons.classList.remove('is-visible');
+            }
+
+            // Remove changed indicators from all setting items
+            const settingItems = document.querySelectorAll('.setting-item.is-changed');
+            settingItems.forEach(item => item.classList.remove('is-changed'));
+            
+            new Notice('Flare settings reverted');
+        } catch (error) {
+            console.error('Failed to revert flare settings:', error);
+            new Notice('Failed to revert flare settings');
         }
-        
-        new Notice('Flare settings reverted');
     }
 
     private async deleteFlare(flareName: string) {
@@ -838,12 +860,6 @@ export class FlareManager {
         // Reset state when switching flares
         this.currentFlare = flareName;
         this.hasUnsavedChanges = false;
-        
-        // Remove any existing action buttons
-        if (this.actionButtons) {
-            this.actionButtons.remove();
-            this.actionButtons = null;
-        }
 
         // Create loading indicator
         const loadingIndicator = containerEl.createDiv('loading-indicator');
@@ -871,6 +887,27 @@ export class FlareManager {
 
             // Create form for settings
             const form = settingsArea.createDiv('flare-settings-form');
+
+            // Create action buttons container
+            this.actionButtons = form.createDiv({ cls: 'flare-form-actions' });
+            
+            // Add save and revert buttons
+            new Setting(this.actionButtons)
+                .addButton(button => {
+                    button
+                        .setButtonText('Save')
+                        .setCta()
+                        .onClick(async () => {
+                            await this.saveChanges();
+                        });
+                })
+                .addButton(button => {
+                    button
+                        .setButtonText('Revert')
+                        .onClick(async () => {
+                            await this.revertChanges(containerEl);
+                        });
+                });
 
             // Create sections
             await Promise.all([
