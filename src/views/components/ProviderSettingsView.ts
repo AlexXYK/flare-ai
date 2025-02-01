@@ -15,7 +15,7 @@ export class ProviderSettingsView {
         const actionButtons = settingsContainer.createEl('div', { cls: 'flare-form-actions' });
 
         // Create General Settings Section
-        const generalSection = this.createSection(settingsContainer, 'General Settings');
+        const generalSection = this.createSection(settingsContainer, 'General');
         this.createGeneralSettings(generalSection, actionButtons);
 
         // Create Authentication Section
@@ -23,7 +23,7 @@ export class ProviderSettingsView {
         this.createAuthSettings(authSection, actionButtons);
 
         // Create Models Section
-        const modelsSection = this.createSection(settingsContainer, 'Available Models');
+        const modelsSection = this.createSection(settingsContainer, 'Available models');
         this.createModelsSection(modelsSection, actionButtons);
 
         // Add save and cancel buttons
@@ -71,7 +71,7 @@ export class ProviderSettingsView {
     private createGeneralSettings(container: HTMLElement, actionButtons: HTMLElement): void {
         // Add name setting
         new Setting(container)
-            .setName('Provider Name')
+            .setName('Name')
             .setDesc('A unique name for this provider')
             .addText(text => text
                 .setPlaceholder('Enter provider name')
@@ -83,7 +83,7 @@ export class ProviderSettingsView {
 
         // Add enabled toggle
         new Setting(container)
-            .setName('Enable Provider')
+            .setName('Enable provider')
             .setDesc('Enable or disable this provider')
             .addToggle(toggle => toggle
                 .setValue(this.settings.enabled || false)
@@ -193,7 +193,7 @@ export class ProviderSettingsView {
     private createOllamaSettings(container: HTMLElement, actionButtons: HTMLElement): void {
         // Base URL setting
         new Setting(container)
-            .setName('Base URL')
+            .setName('Endpoint URL')
             .setDesc('Ollama API endpoint URL')
             .addText(text => text
                 .setPlaceholder('http://localhost:11434')
@@ -227,10 +227,10 @@ export class ProviderSettingsView {
 
         // Add refresh models button
         new Setting(container)
-            .setName('Available Models')
+            .setName('Available models')
             .setDesc('Select which models to show in the model selector')
             .addButton(button => button
-                .setButtonText('Refresh Models')
+                .setButtonText('Refresh models')
                 .onClick(async () => {
                     try {
                         // Show loading state
@@ -250,7 +250,7 @@ export class ProviderSettingsView {
                         }
                     } finally {
                         // Reset button state
-                        button.setButtonText('Refresh Models');
+                        button.setButtonText('Refresh models');
                         button.setDisabled(false);
                     }
                 }));
@@ -309,7 +309,7 @@ export class ProviderSettingsView {
         } else {
             // Show empty state
             const emptyState = container.createDiv('models-empty-state');
-            emptyState.setText('No models available. Click "Refresh Models" to load the available models.');
+            emptyState.setText('No models available. Click "Refresh models" to load the available models.');
         }
     }
 

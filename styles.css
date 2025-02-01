@@ -1069,9 +1069,6 @@
     left: 0;
     top: 0;
     bottom: 0;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
     background: var(--background-primary);
     border-right: 1px solid var(--background-modifier-border);
     width: 300px;
@@ -1079,10 +1076,14 @@
     z-index: 1000;
     transform: translateX(-100%);
     transition: transform 0.3s ease, visibility 0.3s ease, opacity 0.3s ease;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
     visibility: hidden;
     opacity: 0;
+
+    /* Keep the flex layout; remove the explicit height */
+    display: flex;
+    flex-direction: column;
+    /* Removed: height: 100vh; */
+    overflow-x: hidden; /* No horizontal scroll */
 }
 
 .flare-history-sidebar.is-visible {
@@ -1110,51 +1111,12 @@
     flex: 1;
 }
 
-.flare-history-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.flare-history-action-button {
-    background: none;
-    border: none;
-    padding: 4px;
-    color: var(--text-muted);
-    cursor: pointer;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    transition: all 0.15s ease;
-}
-
-.flare-history-action-button:hover {
-    background-color: var(--background-modifier-hover);
-    color: var(--text-normal);
-    transform: translateY(-1px);
-}
-
-/* Add loading state for refresh button */
-.flare-history-action-button.is-refreshing {
-    animation: spin 1s linear infinite;
-    color: var(--text-accent);
-    pointer-events: none;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
 .flare-history-search {
     flex-shrink: 0;
     padding: 12px 16px;
     border-bottom: 1px solid var(--background-modifier-border);
-    position: relative;
     background: var(--background-secondary-alt);
+    position: relative;
 }
 
 .flare-history-search-input {
@@ -1164,17 +1126,11 @@
     border: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
     font-size: 14px;
-    transition: all 0.15s ease;
-}
-
-.flare-history-search-input:focus {
-    border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 2px var(--background-modifier-border-hover);
 }
 
 .flare-history-search-clear {
     position: absolute;
-    right: 24px;
+    right: 20px; /* Adjusted from 24px */
     top: 50%;
     transform: translateY(-50%);
     display: none;
@@ -1185,35 +1141,49 @@
     transition: all 0.15s ease;
 }
 
+.flare-history-search-clear.is-visible {
+    display: flex;
+}
+
 .flare-history-search-clear:hover {
     background-color: var(--background-modifier-hover);
     color: var(--text-normal);
 }
 
-.flare-history-search-clear.is-visible {
-    display: flex;
-}
-
 .flare-history-tree {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 12px;
-    background: var(--background-primary);
+    -webkit-overflow-scrolling: touch;
+    /* Add padding to the container instead of individual items */
+    padding: 8px;
 }
 
-/* Tree Items */
+.flare-history-children {
+    margin-left: 16px; /* Reduced from 20px */
+    transition: all 0.2s ease;
+    /* Add a small margin-top to separate from parent */
+    margin-top: 2px;
+}
+
+.flare-history-item.is-collapsed > .flare-history-children {
+    display: none;
+}
+
 .flare-history-item {
-    border-radius: 6px;
-    margin-bottom: 2px;
+    border-radius: 4px; /* Reduced from 6px */
+    margin-bottom: 4px; /* Reduced from 12px */
     transition: all 0.15s ease;
+    width: 100%;
 }
 
 .flare-history-item-content {
     display: flex;
     align-items: center;
-    padding: 8px 12px;
-    gap: 8px;
-    border-radius: 6px;
+    /* Reduce vertical padding */
+    padding: 6px 8px; /* Reduced from 8px 12px */
+    gap: 6px; /* Reduced from 8px */
+    border-radius: 4px; /* Reduced from 6px */
     cursor: pointer;
     transition: all 0.15s ease;
 }
@@ -1254,16 +1224,6 @@
 
 .flare-history-item.folder > .flare-history-item-content .flare-history-icon {
     color: var(--text-accent);
-}
-
-.flare-history-children {
-    margin-left: 20px;
-    overflow: hidden;
-    transition: all 0.2s ease;
-}
-
-.flare-history-item.is-collapsed > .flare-history-children {
-    display: none;
 }
 
 /* Tree chevron rotation */
@@ -1985,9 +1945,9 @@
 
 /* Models List Styles */
 .models-list {
-    margin-top: 16px;
+    margin-top: 12px;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
+    border-radius: 4px;
     overflow: hidden;
     background: var(--background-primary);
 }
@@ -2007,6 +1967,7 @@
 
 .model-name-header {
     flex: 1;
+    padding-left: 4px;
 }
 
 .visibility-header {
@@ -2021,12 +1982,17 @@
     background: var(--background-primary);
 }
 
-.models-list .setting-item:last-child {
-    border-bottom: none;
+.models-list .setting-item-name {
+    padding-left: 4px;
 }
 
 .models-list .setting-item-control {
     justify-content: flex-end;
+    padding-right: 4px;
+}
+
+.models-list .setting-item:last-child {
+    border-bottom: none;
 }
 
 /* Empty state */
@@ -2080,145 +2046,61 @@
 
 /* Settings Tab Styles */
 .providers-section {
-    padding: 16px;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 0;
+    background: var(--background-primary);
 }
 
-.provider-selector {
-    background: var(--background-secondary-alt);
-    border-radius: 8px;
-    padding: 16px;
-    border: 1px solid var(--background-modifier-border);
-    margin-bottom: 16px;
-}
-
-.provider-selector .setting-item {
-    border: none;
-    padding: 0;
+.flare-provider-selector {
     margin: 0;
 }
 
-.provider-selector .setting-item-info {
-    margin-bottom: 12px;
+.flare-provider-selector .setting-item {
+    border: none;
+    padding: 0;
 }
 
-.provider-selector .setting-item-control {
+.flare-provider-selector .setting-item-control {
     display: flex;
     align-items: center;
     gap: 8px;
 }
 
-.provider-selector select {
-    flex: 1;
-    min-width: 200px;
-    padding: 8px 12px;
-    border-radius: 6px;
-    border: 1px solid var(--background-modifier-border);
+/* Remove all custom dropdown styling */
+.flare-dropdown {
+    width: 200px;
+}
+
+/* Collapsible sections spacing */
+.flare-section {
+    margin: 0;
+    border: none;
     background: var(--background-primary);
-    font-size: 14px;
 }
 
-.provider-selector .clickable-icon {
-    padding: 6px;
-    border-radius: 4px;
-    color: var(--text-muted);
-    transition: all 0.15s ease;
+.flare-section + .flare-section {
+    border-top: 1px solid var(--background-modifier-border);
 }
 
-.provider-selector .clickable-icon:hover {
-    background-color: var(--background-modifier-hover);
-    color: var(--text-normal);
-    transform: translateY(-1px);
+.flare-section-header {
+    padding: 12px 0;
+    background: var(--background-primary);
+    border-radius: 0;
 }
 
-.provider-selector .clickable-icon.disabled {
-    opacity: 0.5;
-    pointer-events: none;
+.flare-section-content {
+    padding: 0 0 12px 0;
+    border-top: none;
+    background: var(--background-primary);
 }
 
 /* Provider Settings */
 .provider-settings {
-    background: var(--background-secondary-alt);
-    border-radius: 8px;
-    padding: 16px;
-    border: 1px solid var(--background-modifier-border);
-}
-
-.provider-settings .flare-section {
-    margin: 20px 0;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
-    background: var(--background-secondary);
-    overflow: visible;
-}
-
-.provider-settings .flare-section:last-child {
-    margin-bottom: 0;
-}
-
-.provider-settings .flare-section-header {
-    display: flex;
-    align-items: center;
-    padding: 12px 16px;
-    background: var(--background-secondary-alt);
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-    border-radius: 8px 8px 0 0;
-}
-
-.provider-settings .flare-section-header:hover {
-    background: var(--background-modifier-hover);
-}
-
-.provider-settings .flare-section-header h4 {
-    margin: 0;
-    font-size: 1.1em;
-    font-weight: 600;
-    color: var(--text-normal);
-}
-
-.provider-settings .flare-section-header.is-collapsed {
-    border-bottom: none;
-    border-radius: 8px;
-}
-
-.provider-settings .flare-section-content {
-    padding: 16px;
-    border-top: 1px solid var(--background-modifier-border);
-    display: block;
-    transition: opacity 0.15s ease;
-    opacity: 1;
-    height: auto;
-    overflow: visible;
-}
-
-.provider-settings .flare-section-header.is-collapsed + .flare-section-content {
-    display: none;
-    opacity: 0;
-    height: 0;
-    overflow: hidden;
-}
-
-/* Add chevron to section headers */
-.provider-settings .flare-section-header::after {
-    content: '';
-    width: 16px;
-    height: 16px;
-    margin-left: auto;
-    background-color: var(--text-muted);
-    -webkit-mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
-    mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
-    -webkit-mask-size: contain;
-    mask-size: contain;
-    -webkit-mask-repeat: no-repeat;
-    mask-repeat: no-repeat;
-    transition: transform 0.15s ease;
-}
-
-.provider-settings .flare-section-header.is-collapsed::after {
-    transform: rotate(-90deg);
+    background: var(--background-primary);
+    padding: 0;
+    margin-top: 12px;
 }
 
 .provider-settings .setting-item {
@@ -2255,8 +2137,8 @@
 .provider-settings input[type="text"],
 .provider-settings input[type="password"] {
     width: 100%;
-    padding: 8px 32px 8px 12px;
-    border-radius: 6px;
+    padding: 4px 8px;
+    border-radius: 4px;
     border: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
     font-size: 14px;
@@ -2266,33 +2148,28 @@
 .provider-settings input[type="text"]:focus,
 .provider-settings input[type="password"]:focus {
     border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 2px var(--background-modifier-border-hover);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
 }
 
 /* Action Buttons */
 .flare-form-actions {
     display: none;
-    opacity: 0;
-    margin-top: 16px;
-    padding: 16px;
-    background: var(--background-secondary);
-    border-radius: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
     border-top: 1px solid var(--background-modifier-border);
-    justify-content: flex-end;
-    gap: 8px;
-    transition: opacity 0.15s ease;
 }
 
 .flare-form-actions.is-visible {
     display: flex;
-    opacity: 1;
+    justify-content: flex-end;
+    gap: 8px;
 }
 
 /* Models List Styles */
 .models-list {
-    margin-top: 16px;
+    margin-top: 12px;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
+    border-radius: 4px;
     overflow: hidden;
     background: var(--background-primary);
 }
@@ -2312,6 +2189,7 @@
 
 .model-name-header {
     flex: 1;
+    padding-left: 4px;
 }
 
 .visibility-header {
@@ -2326,12 +2204,17 @@
     background: var(--background-primary);
 }
 
-.models-list .setting-item:last-child {
-    border-bottom: none;
+.models-list .setting-item-name {
+    padding-left: 4px;
 }
 
 .models-list .setting-item-control {
     justify-content: flex-end;
+    padding-right: 4px;
+}
+
+.models-list .setting-item:last-child {
+    border-bottom: none;
 }
 
 /* Empty state */
@@ -2648,4 +2531,257 @@
 .flare-suggestions.is-visible {
     opacity: 1;
     pointer-events: auto;
+}
+
+/* Provider UI */
+.flare-provider-selector {
+    margin: 0;
+}
+
+.flare-provider-selector .setting-item {
+    border: none;
+    padding: 0;
+}
+
+.flare-provider-selector .setting-item-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Provider type selector */
+.provider-type-setting {
+    display: none;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.provider-type-setting.is-visible {
+    display: block;
+}
+
+.provider-type-setting .setting-item {
+    border: none;
+    padding: 0;
+}
+
+.provider-type-setting .setting-item-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Flare UI */
+.flare-dropdown-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.flare-dropdown-group .setting-item {
+    border: none;
+    padding: 0;
+    flex: 1;
+}
+
+.flare-dropdown-group .setting-item-info {
+    display: none;
+}
+
+.flare-dropdown-group .setting-item-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.flare-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.flare-buttons .clickable-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 4px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.flare-buttons .clickable-icon:hover {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.flare-buttons .clickable-icon.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Modal styles */
+.modal-button-container {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.modal-button-container button {
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.modal-button-container button.mod-warning {
+    background-color: var(--background-modifier-error);
+    color: var(--text-on-accent);
+}
+
+.modal-button-container button.mod-secondary {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* Provider settings */
+.provider-settings {
+    background: var(--background-primary);
+    padding: 0;
+    margin-top: 12px;
+}
+
+.provider-settings .setting-item {
+    border: none;
+    padding: 12px 0;
+}
+
+.provider-settings .setting-item:not(:last-child) {
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.provider-settings .setting-item-info {
+    margin-bottom: 8px;
+}
+
+.provider-settings .setting-item-name {
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.provider-settings .setting-item-description {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    margin-top: 4px;
+}
+
+.provider-settings .setting-item-control {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+    .modal-button-container button {
+        padding: 8px 16px;
+        font-size: 16px;
+        min-width: 80px;
+    }
+}
+
+/* Provider type selector */
+.provider-type-setting {
+    display: none;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.provider-type-setting.is-visible {
+    display: block;
+}
+
+.provider-type-setting .setting-item {
+    border: none;
+    padding: 0;
+}
+
+.provider-type-setting .setting-item-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Flare UI */
+.flare-dropdown-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.flare-dropdown-group .setting-item {
+    border: none;
+    padding: 0;
+    flex: 1;
+}
+
+.flare-dropdown-group .setting-item-info {
+    display: none;
+}
+
+.flare-dropdown-group .setting-item-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.flare-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.flare-buttons .clickable-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 4px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.flare-buttons .clickable-icon:hover {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.flare-buttons .clickable-icon.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Add these new styles to ensure header and search stay fixed */
+.flare-history-header,
+.flare-history-search {
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    background: var(--background-primary);
+    z-index: 2;
 }

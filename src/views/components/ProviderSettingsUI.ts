@@ -12,30 +12,46 @@ export class ProviderSettingsUI {
     ) {}
 
     display(): void {
-        const providersSection = this.container.createEl('div', { cls: 'providers-section' });
+        // Store original settings for revert
+        const originalSettings = JSON.parse(JSON.stringify(this.plugin.settings));
 
         // Provider selector with add/remove buttons
-        const selectorContainer = providersSection.createEl('div', { cls: 'provider-selector' });
+        const selectorContainer = this.container.createEl('div', { cls: 'flare-provider-selector' });
+        let dropdownRef: DropdownComponent;
         const dropdownContainer = new Setting(selectorContainer)
-            .setName('Provider')
-            .setDesc('Select a provider to configure');
+            .setName('Active provider')
+            .setDesc('Select a provider to configure')
+            .addDropdown(dropdown => {
+                dropdownRef = dropdown;
+                // Add placeholder option
+                dropdown.addOption('', 'Select a provider...');
+                
+                // Add existing providers
+                Object.entries(this.plugin.settings.providers)
+                    .sort(([, a], [, b]) => (a.name || '').localeCompare(b.name || ''))
+                    .forEach(([id, provider]) => {
+                        dropdown.addOption(id, provider.name || id);
+                    });
 
-        // Create the dropdown
-        const dropdown = new DropdownComponent(dropdownContainer.controlEl);
-        dropdown.selectEl.addClass('provider-dropdown');
-        
-        // Add placeholder option
-        dropdown.addOption('', 'Choose provider to configure...');
-        
-        // Add existing providers
-        Object.entries(this.plugin.settings.providers)
-            .sort(([, a], [, b]) => (a.name || '').localeCompare(b.name || ''))
-            .forEach(([id, provider]) => {
-                dropdown.addOption(id, provider.name || id);
+                dropdown.setValue(this.currentProvider || '');
+                dropdown.onChange(value => {
+                    this.currentProvider = value || null;
+                    this.onProviderChange(this.currentProvider);
+                    // Update delete button state
+                    if (!value) {
+                        deleteButton.addClass('disabled');
+                    } else {
+                        deleteButton.removeClass('disabled');
+                    }
+                    // Update provider type dropdown
+                    updateProviderType();
+                });
+
+                return dropdown;
             });
 
         // Add buttons container
-        const buttonsContainer = dropdownContainer.controlEl.createEl('div', { cls: 'provider-buttons' });
+        const buttonsContainer = dropdownContainer.controlEl.createEl('div', { cls: 'flare-provider-buttons' });
         
         // Add new provider button
         const addButton = buttonsContainer.createEl('button', {
@@ -43,21 +59,6 @@ export class ProviderSettingsUI {
             attr: { 'aria-label': 'Add new provider' }
         });
         setIcon(addButton, 'plus');
-        addButton.addEventListener('click', () => {
-            const id = `provider_${Date.now()}`;
-            this.plugin.settings.providers[id] = {
-                name: 'New Provider',
-                type: '',
-                enabled: true,
-                visibleModels: []
-            };
-            this.plugin.saveData(this.plugin.settings);
-            dropdown.addOption(id, 'New Provider');
-            dropdown.setValue(id);
-            this.currentProvider = id;
-            this.onProviderChange(id);
-            if (deleteButton) deleteButton.removeClass('disabled');
-        });
 
         // Add delete button
         const deleteButton = buttonsContainer.createEl('button', {
@@ -68,6 +69,79 @@ export class ProviderSettingsUI {
         if (!this.currentProvider) {
             deleteButton.addClass('disabled');
         }
+
+        // Add provider type setting
+        const providerTypeContainer = selectorContainer.createEl('div', { cls: 'provider-type-setting' });
+        let providerTypeDropdown: DropdownComponent;
+        const providerTypeSetting = new Setting(providerTypeContainer)
+            .setName('Provider type')
+            .setDesc('Select the type of provider')
+            .addDropdown(dropdown => {
+                providerTypeDropdown = dropdown;
+                // Add provider type options
+                dropdown.addOption('', 'Select a type...');
+                dropdown.addOption('openai', 'OpenAI');
+                dropdown.addOption('openrouter', 'OpenRouter');
+                dropdown.addOption('ollama', 'Ollama');
+
+                dropdown.onChange(async value => {
+                    if (!this.currentProvider) return;
+                    this.plugin.settings.providers[this.currentProvider].type = value;
+                    showActionButtons();
+                    // Trigger provider change to update the settings view
+                    this.onProviderChange(this.currentProvider);
+                });
+
+                return dropdown;
+            });
+
+        // Add action buttons container
+        const actionButtons = selectorContainer.createEl('div', { cls: 'flare-form-actions' });
+        new Setting(actionButtons)
+            .addButton(button => {
+                button
+                    .setButtonText('Save')
+                    .setCta()
+                    .onClick(async () => {
+                        await this.plugin.saveData(this.plugin.settings);
+                        hideActionButtons();
+                        new Notice('Provider settings saved');
+                    });
+            })
+            .addButton(button => {
+                button
+                    .setButtonText('Revert')
+                    .onClick(() => {
+                        if (!this.currentProvider) return;
+                        // Restore original provider type
+                        const originalProvider = originalSettings.providers[this.currentProvider];
+                        if (originalProvider) {
+                            this.plugin.settings.providers[this.currentProvider].type = originalProvider.type;
+                            providerTypeDropdown.setValue(originalProvider.type || '');
+                        }
+                        hideActionButtons();
+                        new Notice('Provider settings reverted');
+                    });
+            });
+
+        // Add event handlers
+        addButton.addEventListener('click', () => {
+            const id = `provider_${Date.now()}`;
+            this.plugin.settings.providers[id] = {
+                name: 'New Provider',
+                type: '',
+                enabled: true,
+                visibleModels: []
+            };
+            this.plugin.saveData(this.plugin.settings);
+            dropdownRef.addOption(id, 'New Provider');
+            dropdownRef.setValue(id);
+            this.currentProvider = id;
+            this.onProviderChange(id);
+            updateProviderType();
+            deleteButton.removeClass('disabled');
+        });
+
         deleteButton.addEventListener('click', async () => {
             if (!this.currentProvider) return;
             
@@ -75,7 +149,7 @@ export class ProviderSettingsUI {
             
             // Show confirmation dialog
             const modal = new Modal(this.plugin.app);
-            modal.titleEl.setText('Delete Provider');
+            modal.titleEl.setText('Delete provider');
             modal.contentEl.createEl('p', {
                 text: `Are you sure you want to delete the provider "${providerName}"? This action cannot be undone.`
             });
@@ -84,31 +158,29 @@ export class ProviderSettingsUI {
             const buttonContainer = modal.contentEl.createEl('div', { cls: 'modal-button-container' });
             
             // Cancel button
-            const cancelBtn = buttonContainer.createEl('button', {
+            buttonContainer.createEl('button', {
                 text: 'Cancel',
                 cls: 'mod-secondary'
-            });
-            cancelBtn.addEventListener('click', () => {
+            }).addEventListener('click', () => {
                 modal.close();
             });
             
             // Delete button
-            const deleteBtn = buttonContainer.createEl('button', {
+            buttonContainer.createEl('button', {
                 text: 'Delete',
                 cls: 'mod-warning'
-            });
-            deleteBtn.addEventListener('click', async () => {
+            }).addEventListener('click', async () => {
                 // Remove from settings
                 delete this.plugin.settings.providers[this.currentProvider!];
                 await this.plugin.saveData(this.plugin.settings);
                 
                 // Remove from dropdown
-                const option = dropdown.selectEl.querySelector(`option[value="${this.currentProvider}"]`);
+                const option = dropdownRef.selectEl.querySelector(`option[value="${this.currentProvider}"]`);
                 if (option) option.remove();
                 
                 // Reset selection
                 this.currentProvider = null;
-                dropdown.setValue('');
+                dropdownRef.setValue('');
                 this.onProviderChange(null);
                 
                 // Disable delete button
@@ -121,13 +193,25 @@ export class ProviderSettingsUI {
             modal.open();
         });
 
-        // Set initial value and handle changes
-        dropdown.setValue(this.currentProvider || '');
-        dropdown.onChange(value => {
-            this.currentProvider = value || null;
-            this.onProviderChange(this.currentProvider);
-            // Update delete button state
-            deleteButton.toggleClass('disabled', !value);
-        });
+        const showActionButtons = () => {
+            actionButtons.addClass('is-visible');
+        };
+
+        const hideActionButtons = () => {
+            actionButtons.removeClass('is-visible');
+        };
+
+        const updateProviderType = () => {
+            if (!this.currentProvider) {
+                providerTypeContainer.removeClass('is-visible');
+                hideActionButtons();
+                return;
+            }
+
+            const provider = this.plugin.settings.providers[this.currentProvider];
+            providerTypeContainer.addClass('is-visible');
+            providerTypeDropdown.setValue(provider.type || '');
+            hideActionButtons();
+        };
     }
 } 

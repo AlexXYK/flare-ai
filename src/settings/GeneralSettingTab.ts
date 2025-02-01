@@ -101,7 +101,7 @@ export class GeneralSettingTab extends PluginSettingTab {
         // Flares folder
         new Setting(containerEl)
             .setName('Flares location')
-            .setDesc('Where to store your Flare configurations')
+            .setDesc('Where to store your flare configurations')
             .addText(text => text
                 .setPlaceholder('FLAREai/flares')
                 .setValue(this.plugin.settings.flaresFolder)
@@ -148,7 +148,7 @@ export class GeneralSettingTab extends PluginSettingTab {
 
         // Enable auto-save
         new Setting(containerEl)
-            .setName('Enable Auto-save')
+            .setName('Enable auto-save')
             .setDesc('Automatically save chat history at regular intervals')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.autoSaveEnabled ?? true)
@@ -159,7 +159,7 @@ export class GeneralSettingTab extends PluginSettingTab {
 
         // Auto-save interval
         new Setting(containerEl)
-            .setName('Auto-save Interval')
+            .setName('Auto-save interval')
             .setDesc('How often to save chat history (in seconds)')
             .addText(text => text
                 .setPlaceholder('30')
@@ -174,7 +174,7 @@ export class GeneralSettingTab extends PluginSettingTab {
 
         // Max history files
         new Setting(containerEl)
-            .setName('Max History Files')
+            .setName('Max history files')
             .setDesc('Maximum number of history files to keep (0 for unlimited)')
             .addText(text => text
                 .setPlaceholder('100')
@@ -524,6 +524,9 @@ export class GeneralSettingTab extends PluginSettingTab {
     }
 
     private populateProviderDropdown(dropdown: DropdownComponent) {
+        // Add default option
+        dropdown.addOption('', 'Select a provider...');
+        
         Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
             if (provider.type && this.plugin.providers.has(provider.type)) {
                 dropdown.addOption(id, provider.name || id);
