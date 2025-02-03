@@ -436,7 +436,7 @@
     background-color: var(--background-primary);
     color: var(--text-normal);
     border: 1px solid var(--background-modifier-border);
-    padding: 6px 10px;
+    padding: 8px;
     border-radius: var(--message-radius);
 }
 
@@ -586,6 +586,221 @@
 /* Show actions on hover when not loading */
 .flare-message:not(.is-loading):hover .flare-message-actions {
     opacity: 1;
+}
+
+/* Always show reasoning toggle button */
+.flare-message:not(.is-loading) .flare-message-actions .flare-action-button[aria-label="Toggle reasoning"] {
+    opacity: 1;
+}
+
+/* Reasoning content styling */
+.flare-reasoning-content {
+    position: relative;
+    margin-top: var(--size-4-2);
+    padding: var(--size-4-2);
+    background: var(--background-secondary);
+    border-radius: var(--radius-m);
+    border-left: 2px solid var(--text-accent);
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
+    display: none;
+}
+
+.flare-reasoning-content.is-expanded {
+    display: block;
+    opacity: 1;
+    height: auto;
+}
+
+/* Response content styling */
+.flare-response-content {
+    position: relative;
+    width: 100%;
+    min-height: 0;
+    transition: min-height 0.3s ease;
+}
+
+.flare-response-content .markdown-rendered {
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+}
+
+/* Consistent markdown content spacing */
+.flare-markdown-content .markdown-rendered,
+.flare-response-content .markdown-rendered {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-markdown-content .markdown-rendered p,
+.flare-response-content .markdown-rendered p {
+    margin: 0;
+    line-height: 1.3;
+}
+
+.flare-markdown-content .markdown-rendered p:first-child,
+.flare-response-content .markdown-rendered p:first-child {
+    margin-top: 0;
+}
+
+.flare-markdown-content .markdown-rendered p:last-child,
+.flare-response-content .markdown-rendered p:last-child {
+    margin-bottom: 0;
+}
+
+/* Reduce spacing between code blocks and paragraphs */
+.flare-markdown-content .markdown-rendered pre,
+.flare-response-content .markdown-rendered pre {
+    margin: 0.15em 0;
+}
+
+.flare-markdown-content .markdown-rendered pre:first-child,
+.flare-response-content .markdown-rendered pre:first-child {
+    margin-top: 0;
+}
+
+.flare-markdown-content .markdown-rendered pre:last-child,
+.flare-response-content .markdown-rendered pre:last-child {
+    margin-bottom: 0;
+}
+
+/* Reduce spacing between list items */
+.flare-markdown-content .markdown-rendered ul,
+.flare-markdown-content .markdown-rendered ol,
+.flare-response-content .markdown-rendered ul,
+.flare-response-content .markdown-rendered ol {
+    margin: 0.5em 0;
+    padding-left: 1.5em;
+    list-style-type: disc;
+}
+
+.flare-markdown-content .markdown-rendered li,
+.flare-response-content .markdown-rendered li {
+    margin: 0.25em 0;
+    padding: 0;
+    line-height: 1.5;
+    display: list-item;
+}
+
+/* Headings */
+.flare-markdown-content .markdown-rendered h1,
+.flare-markdown-content .markdown-rendered h2,
+.flare-response-content .markdown-rendered h1,
+.flare-response-content .markdown-rendered h2 {
+    margin: 1.5em 0 0.5em 0;
+    line-height: 1.3;
+}
+
+.flare-markdown-content .markdown-rendered h1:first-child,
+.flare-response-content .markdown-rendered h1:first-child,
+.flare-markdown-content .markdown-rendered h2:first-child,
+.flare-response-content .markdown-rendered h2:first-child {
+    margin-top: 0;
+}
+
+/* Add spacing between sections */
+.flare-markdown-content .markdown-rendered h2 + ul,
+.flare-response-content .markdown-rendered h2 + ul {
+    margin-top: 0.5em;
+}
+
+/* Ensure proper bullet points */
+.flare-markdown-content .markdown-rendered ul,
+.flare-response-content .markdown-rendered ul {
+    list-style-type: disc !important;
+}
+
+.flare-markdown-content .markdown-rendered ul ul,
+.flare-response-content .markdown-rendered ul ul {
+    list-style-type: circle !important;
+}
+
+/* Remove extra spacing from paragraphs in lists */
+.flare-markdown-content .markdown-rendered li p,
+.flare-response-content .markdown-rendered li p {
+    margin: 0;
+    display: inline;
+}
+
+/* Handle line breaks consistently */
+.flare-markdown-content .markdown-rendered br,
+.flare-response-content .markdown-rendered br {
+    content: "";
+    display: none;
+}
+
+.flare-markdown-content .markdown-rendered br + br,
+.flare-response-content .markdown-rendered br + br {
+    display: block;
+    margin: 0.15em 0;
+}
+
+/* Remove any extra margins from markdown content */
+.flare-markdown-content .markdown-rendered > *:first-child,
+.flare-response-content .markdown-rendered > *:first-child {
+    margin-top: 0 !important;
+}
+
+.flare-markdown-content .markdown-rendered > *:last-child,
+.flare-response-content .markdown-rendered > *:last-child {
+    margin-bottom: 0 !important;
+}
+
+/* Message content transitions */
+.flare-markdown-content {
+    opacity: 1;
+    transition: opacity 0.2s ease;
+    min-height: 0;
+}
+
+.flare-markdown-content.is-empty {
+    opacity: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+/* Always show reasoning toggle button */
+.flare-message:not(.is-loading) .flare-message-actions .flare-action-button[aria-label="Toggle reasoning"] {
+    opacity: 1;
+    background: var(--background-modifier-hover);
+}
+
+/* Active state for reasoning toggle */
+.flare-action-button[aria-label="Toggle reasoning"].is-active {
+    color: var(--text-accent);
+    background: var(--background-modifier-hover);
+    transform: translateY(-1px);
+}
+
+/* Markdown content in reasoning */
+.flare-reasoning-content .markdown-rendered {
+    margin: 0;
+    padding: 0;
+}
+
+/* Dividers in reasoning content */
+.flare-reasoning-content hr {
+    margin: var(--size-4-1) 0;
+    border: none;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+    .flare-reasoning-content {
+        margin-top: var(--size-4-1);
+        padding: var(--size-4-1);
+    }
 }
 
 /* Hide actions when message is loading */
@@ -1770,27 +1985,156 @@
 
 /* Smooth content updates */
 .flare-markdown-content {
-    transition: opacity 0.1s ease;
+    position: relative;
+    opacity: 1;
+    transition: opacity 0.15s ease;
+    margin: 0;
+    padding: 0;
 }
 
-.flare-message.is-streaming .flare-markdown-content {
-    opacity: 0.9;
+.flare-markdown-content.is-empty {
+    opacity: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
 }
 
-/* Mobile optimizations for streaming */
-@media (max-width: 768px) {
-    .flare-send-button.is-streaming {
-        transform: scale(1.1);
-    }
-    
-    .flare-message.is-streaming .flare-message-content {
-        padding-right: 8px; /* Make room for spinner on mobile */
-    }
+.flare-markdown-content .markdown-rendered {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+    font-size: inherit;
+    color: inherit;
+    margin: 0;
+    padding: 0;
 }
 
-/* Ensure smooth scrolling */
+/* Optimize performance with hardware acceleration */
+.flare-message-content {
+    position: relative;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: transform, opacity;
+}
+
+.flare-content-wrapper {
+    position: relative;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.flare-system-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-markdown-content {
+    position: relative;
+    opacity: 1;
+    transition: opacity 0.15s ease;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-markdown-content.is-empty {
+    opacity: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-markdown-content:not(.is-empty) {
+    margin-top: 8px;
+}
+
+.flare-markdown-content .markdown-rendered {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+    font-size: inherit;
+    color: inherit;
+    margin: 0;
+    padding: 0;
+}
+
+/* Remove any extra margins from markdown content */
+.flare-markdown-content p:first-child,
+.flare-markdown-content pre:first-child,
+.flare-markdown-content ul:first-child,
+.flare-markdown-content ol:first-child,
+.flare-markdown-content blockquote:first-child {
+    margin-top: 0;
+}
+
+.flare-markdown-content p:last-child,
+.flare-markdown-content pre:last-child,
+.flare-markdown-content ul:last-child,
+.flare-markdown-content ol:last-child,
+.flare-markdown-content blockquote:last-child {
+    margin-bottom: 0;
+}
+
+/* Optimize scrolling */
 .flare-messages {
     scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: transform;
+}
+
+/* Loading state */
+.flare-message.is-loading {
+    position: relative;
+}
+
+.flare-message.is-loading .flare-markdown-content {
+    min-height: 0;
+}
+
+.flare-message.is-loading .flare-markdown-content:not(.is-empty) {
+    min-height: 24px;
+}
+
+/* Streaming content */
+.flare-markdown-content .markdown-rendered {
+    opacity: 1;
+    transition: opacity 0.15s ease;
+}
+
+.flare-markdown-content.is-empty .markdown-rendered {
+    opacity: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+/* Ensure proper spacing for content */
+.flare-markdown-content:not(.is-empty) {
+    margin-top: 8px;
+}
+
+/* Remove loading indicators except the essential ones */
+.loading .loading-indicator,
+.flare-ember,
+.flare-message.is-loading .flare-ember,
+.flare-message.is-loading::after,
+.flare-message.is-loading .flare-message-content::after,
+.flare-message.is-loading .flare-message-content::before,
+.flare-message.is-loading .loading-bar,
+.flare-message.is-loading .loading-progress,
+.is-loading::after,
+.model-container.loading::after,
+.flare-message.is-loading::before,
+.is-loading::before,
+.flare-history-sidebar.is-loading::after {
+    display: none !important;
 }
 
 .flare-send-button {
@@ -2448,12 +2792,15 @@
 .flare-reasoning-content {
     display: none;
     opacity: 0;
-    transition: opacity 0.2s ease;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
 }
 
 .flare-reasoning-content.is-expanded {
     display: block;
     opacity: 1;
+    height: auto;
 }
 
 /* Model dropup positioning */
@@ -2490,12 +2837,28 @@
 .flare-reasoning-content {
     display: none;
     opacity: 0;
-    transition: opacity 0.2s ease;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
 }
 
 .flare-reasoning-content.is-expanded {
     display: block;
     opacity: 1;
+    height: auto;
+}
+
+/* Response content transitions */
+.flare-response-content {
+    opacity: 1;
+    transition: opacity 0.2s ease;
+    min-height: 0;
+}
+
+.flare-response-content .markdown-rendered {
+    margin: 0;
+    padding: 0;
+    min-height: 0;
 }
 
 /* Message States */
@@ -2784,4 +3147,196 @@
     top: 0;
     background: var(--background-primary);
     z-index: 2;
+}
+
+/* Base message content styling */
+.flare-message-content,
+.flare-markdown-content .markdown-rendered,
+.flare-response-content .markdown-rendered {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0;
+}
+
+/* Paragraph and element spacing */
+.flare-message-content p,
+.flare-markdown-content .markdown-rendered p,
+.flare-response-content .markdown-rendered p {
+    margin: 0;
+    padding: 0;
+    line-height: 1.3;
+    display: inline-block;
+    width: 100%;
+}
+
+/* Lists */
+.flare-message-content ul,
+.flare-message-content ol,
+.flare-markdown-content .markdown-rendered ul,
+.flare-markdown-content .markdown-rendered ol,
+.flare-response-content .markdown-rendered ul,
+.flare-response-content .markdown-rendered ol {
+    margin: 0;
+    padding-left: 1.2em;
+    list-style-position: outside;
+}
+
+.flare-message-content li,
+.flare-markdown-content .markdown-rendered li,
+.flare-response-content .markdown-rendered li {
+    margin: 0;
+    padding: 0;
+    line-height: 1.3;
+    display: list-item;
+}
+
+.flare-message-content li p,
+.flare-markdown-content .markdown-rendered li p,
+.flare-response-content .markdown-rendered li p {
+    margin: 0;
+    padding: 0;
+    display: inline;
+    width: auto;
+}
+
+/* Code blocks */
+.flare-message-content pre,
+.flare-markdown-content .markdown-rendered pre,
+.flare-response-content .markdown-rendered pre {
+    margin: 0.15em 0;
+    padding: 0.5em;
+    display: block;
+}
+
+/* Headings */
+.flare-message-content h1,
+.flare-message-content h2,
+.flare-message-content h3,
+.flare-message-content h4,
+.flare-message-content h5,
+.flare-message-content h6,
+.flare-markdown-content .markdown-rendered h1,
+.flare-markdown-content .markdown-rendered h2,
+.flare-markdown-content .markdown-rendered h3,
+.flare-markdown-content .markdown-rendered h4,
+.flare-markdown-content .markdown-rendered h5,
+.flare-markdown-content .markdown-rendered h6,
+.flare-response-content .markdown-rendered h1,
+.flare-response-content .markdown-rendered h2,
+.flare-response-content .markdown-rendered h3,
+.flare-response-content .markdown-rendered h4,
+.flare-response-content .markdown-rendered h5,
+.flare-response-content .markdown-rendered h6 {
+    margin: 0.15em 0;
+    line-height: 1.3;
+    display: block;
+}
+
+/* Line breaks */
+.flare-message-content br,
+.flare-markdown-content .markdown-rendered br,
+.flare-response-content .markdown-rendered br {
+    display: none;
+}
+
+.flare-message-content br + br,
+.flare-markdown-content .markdown-rendered br + br,
+.flare-response-content .markdown-rendered br + br {
+    display: block;
+    margin: 0.15em 0;
+}
+
+/* Reasoning content container */
+.flare-reasoning-content {
+    position: relative;
+    margin-top: var(--size-4-2);
+    padding: var(--size-4-2);
+    background: var(--background-secondary);
+    border-radius: var(--radius-m);
+    border-left: 2px solid var(--text-accent);
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
+    display: none;
+}
+
+.flare-reasoning-content.is-expanded {
+    display: block;
+    opacity: 1;
+    height: auto;
+}
+
+/* Response content container */
+.flare-response-content {
+    position: relative;
+    width: 100%;
+    min-height: 0;
+    transition: min-height 0.3s ease;
+}
+
+/* Base markdown rendering */
+.markdown-rendered {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+}
+
+/* Headings */
+.markdown-rendered h1,
+.markdown-rendered h2 {
+    margin: 1.5em 0 0.5em 0;
+    line-height: 1.3;
+    display: block;
+}
+
+.markdown-rendered h1:first-child,
+.markdown-rendered h2:first-child {
+    margin-top: 0;
+}
+
+/* Lists */
+.markdown-rendered ul,
+.markdown-rendered ol {
+    margin: 0.5em 0;
+    padding-left: 1.5em;
+    list-style-type: disc;
+}
+
+.markdown-rendered ol {
+    list-style-type: decimal;
+}
+
+.markdown-rendered li {
+    margin: 0;
+    padding: 0;
+    line-height: 1.5;
+    display: list-item;
+}
+
+.markdown-rendered li p {
+    margin: 0;
+    display: inline;
+}
+
+/* Paragraphs */
+.markdown-rendered p {
+    margin: 0.5em 0;
+    line-height: 1.5;
+}
+
+/* Add spacing between sections */
+.markdown-rendered h2:not(:first-child) {
+    margin-top: 1.5em;
+}
+
+/* Remove margins from first/last elements */
+.markdown-rendered > *:first-child {
+    margin-top: 0;
+}
+
+.markdown-rendered > *:last-child {
+    margin-bottom: 0;
 }

@@ -1,6 +1,7 @@
 import { Setting, setIcon, Notice, Modal, App, DropdownComponent, TextComponent, TextAreaComponent, TFile, TAbstractFile } from 'obsidian';
 import type FlarePlugin from '../../main';
 import { FlareConfig } from './FlareConfig';
+import { getErrorMessage } from '../utils/errors';
 
 // Add ConfirmModal class
 class ConfirmModal extends Modal {
@@ -918,12 +919,15 @@ export class FlareManager {
             ]);
 
             return form;
-        } catch (error) {
-            console.error('Failed to show flare settings:', error);
+        } catch (error: unknown) {
+            if (error instanceof Error && error.message !== 'Operation cancelled') {
+                console.error('Error loading flare:', error);
+                new Notice('Error loading flare: ' + getErrorMessage(error));
+            }
             if (settingsArea) {
                 settingsArea.empty();
                 const errorMessage = settingsArea.createEl('div', {
-                    text: 'Failed to load flare settings. Please try again.',
+                    text: 'Failed to load flare settings: ' + getErrorMessage(error),
                     cls: 'flare-error-message'
                 });
                 
@@ -934,7 +938,7 @@ export class FlareManager {
                 });
                 retryButton.onclick = () => this.showFlareSettings(containerEl, flareName);
             }
-            throw error;
+            return null;
         } finally {
             // Clean up loading state
             containerEl.removeClass('loading');
@@ -1104,6 +1108,12 @@ export class FlareManager {
         const provider = this.plugin.settings.providers[providerId];
         if (!provider) return;
 
+        // Remove any existing model settings first
+        const existingModelSetting = container.querySelector('.flare-model-setting');
+        if (existingModelSetting) {
+            existingModelSetting.remove();
+        }
+
         const modelSettingContainer = container.createDiv('flare-model-setting');
         new Setting(modelSettingContainer)
             .setName('Model')
@@ -1117,7 +1127,7 @@ export class FlareManager {
                     let visibleModels = allModels;
                     if (provider.visibleModels && Array.isArray(provider.visibleModels)) {
                         visibleModels = allModels.filter(model => 
-                            provider.visibleModels && provider.visibleModels.includes(model)
+                            provider.visibleModels?.includes(model) ?? false
                         );
                     }
 
@@ -1151,16 +1161,32 @@ export class FlareManager {
                 } catch (error) {
                     console.error('Failed to load models:', error);
                     new Notice('Failed to load models');
+
+                    // Remove any existing error messages
+                    const existingError = container.querySelector('.flare-error-message');
+                    if (existingError) existingError.remove();
+
+                    // Create error message container
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'flare-error-message';
+                    errorDiv.textContent = 'Failed to load models. Please try again.';
                     
-                    // Add retry button
-                    new Setting(modelSettingContainer)
-                        .setDesc('Failed to load models')
-                        .addButton(button => button
-                            .setButtonText('Retry')
-                            .setWarning()
-                            .onClick(async () => {
-                                await this.updateModelDropdown(container, providerId);
-                            }));
+                    // Create retry button
+                    const retryButton = document.createElement('button');
+                    retryButton.className = 'mod-warning';
+                    retryButton.textContent = 'Retry';
+                    retryButton.onclick = () => {
+                        errorDiv.remove();
+                        this.updateModelDropdown(container, providerId);
+                    };
+                    
+                    // Add button to error message
+                    errorDiv.appendChild(retryButton);
+                    
+                    // Add error message to container
+                    if (container instanceof HTMLElement) {
+                        container.appendChild(errorDiv);
+                    }
                 }
             });
     }
@@ -1475,8 +1501,8 @@ export class FlareManager {
 
         try {
             return await promise;
-        } catch (error) {
-            if (error.message !== 'Operation cancelled') {
+        } catch (error: unknown) {
+            if (error instanceof Error && error.message !== 'Operation cancelled') {
                 console.error(`Operation ${operationId} failed:`, error);
                 new Notice(`Failed to ${operationId}. Please try again.`);
             }

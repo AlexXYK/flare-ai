@@ -1,5 +1,6 @@
 import { TFile, TFolder } from 'obsidian';
 import type FlarePlugin from '../../main';
+import { getErrorMessage } from '../utils/errors';
 
 interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
@@ -112,9 +113,8 @@ export class ChatHistoryManager {
 
             this.unsavedChanges = false;
             return this.currentHistory;
-        } catch (error) {
-            console.error('Error creating new history:', error);
-            throw new Error(`Failed to create new history: ${error.message}`);
+        } catch (error: unknown) {
+            throw new Error(`Failed to create new history: ${getErrorMessage(error)}`);
         }
     }
 
@@ -147,12 +147,12 @@ export class ChatHistoryManager {
 
             this.currentFile = file;
             this.unsavedChanges = false;
-        } catch (error) {
+        } catch (error: unknown) {
             console.error('Error loading history:', error);
             // Reset state on error
             this.currentHistory = null;
             this.currentFile = null;
-            throw error;
+            throw new Error('Failed to load history: ' + getErrorMessage(error));
         }
     }
 
@@ -426,9 +426,8 @@ export class ChatHistoryManager {
             }
             
             return finalTitle;
-        } catch (error) {
-            console.error('Error generating title:', error);
-            throw new Error('Failed to generate title: ' + error.message);
+        } catch (error: unknown) {
+            throw new Error('Failed to generate title: ' + getErrorMessage(error));
         }
     }
 

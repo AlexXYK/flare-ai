@@ -10,15 +10,16 @@ interface HistoryTreeItem {
 }
 
 export class HistoryModal extends Modal {
-    private searchInput: HTMLInputElement;
-    private treeContainer: HTMLElement;
+    private searchInput!: HTMLInputElement;
+    private treeContainer!: HTMLElement;
     private historyTree: HistoryTreeItem[] = [];
+    private plugin: FlarePlugin;
+    private onSelect: (file: TFile) => void;
 
-    constructor(
-        private plugin: FlarePlugin,
-        private onSelect: (file: TFile) => void
-    ) {
+    constructor(plugin: FlarePlugin, onSelect: (file: TFile) => void) {
         super(plugin.app);
+        this.plugin = plugin;
+        this.onSelect = onSelect;
     }
 
     async onOpen() {

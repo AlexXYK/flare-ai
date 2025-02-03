@@ -6,7 +6,7 @@ import { PluginSettings } from '../types/PluginSettings';
 export class GeneralSettingTab extends PluginSettingTab {
     private hasUnsavedChanges = false;
     private originalSettings: PluginSettings | null = null;
-    private titleModelDropdown: DropdownComponent;
+    private titleModelDropdown!: DropdownComponent;
     private sectionActionButtons: Map<string, HTMLElement> = new Map();
     private titleSettingsActionButtons: HTMLElement | null = null;
 

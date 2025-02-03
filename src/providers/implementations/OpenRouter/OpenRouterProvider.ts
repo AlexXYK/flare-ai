@@ -128,8 +128,7 @@ export class OpenRouterProvider extends BaseProvider {
                 stream: options?.stream ?? false
             };
 
-            const requestParams: RequestUrlParam = {
-                url: `${this.url}/chat/completions`,
+            const response = await fetch(`${this.url}/chat/completions`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${this.apiKey}`,
@@ -138,13 +137,11 @@ export class OpenRouterProvider extends BaseProvider {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(requestBody),
-                throw: false // Don't throw on non-200 responses
-            };
+                signal: this.abortController.signal
+            });
 
-            const response = await requestUrl(requestParams);
-
-            if (response.status !== 200) {
-                const errorText = response.text;
+            if (!response.ok) {
+                const errorText = await response.text();
                 try {
                     const error = JSON.parse(errorText);
                     throw new Error(`OpenRouter API error: ${error.error?.message || errorText}`);
@@ -153,48 +150,54 @@ export class OpenRouterProvider extends BaseProvider {
                 }
             }
 
-            const isStreamingResponse = response.headers['content-type']?.includes('text/event-stream');
-
-            if ((options?.stream && options.onToken) || isStreamingResponse) {
-                // Handle streaming response
-                const lines = response.text.split('\n');
+            if (options?.stream && options.onToken) {
                 let completeResponse = '';
+                const reader = response.body?.getReader();
+                const decoder = new TextDecoder();
 
-                for (const line of lines) {
-                    if (!line || line === ': OPENROUTER PROCESSING' || line.startsWith(':')) {
-                        continue;
-                    }
+                if (!reader) {
+                    throw new Error('Failed to get response reader');
+                }
 
-                    if (line.startsWith('data: ')) {
-                        const jsonStr = line.slice(6);
-                        if (jsonStr === '[DONE]') continue;
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
 
-                        try {
-                            const parsed = JSON.parse(jsonStr) as OpenRouterStreamResponse;
-                            const token = parsed.choices?.[0]?.delta?.content;
-                            if (token) {
-                                completeResponse += token;
-                                if (options?.onToken) {
-                                    options.onToken(token);
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n');
+
+                        for (const line of lines) {
+                            if (!line || line === ': OPENROUTER PROCESSING' || line.startsWith(':')) {
+                                continue;
+                            }
+
+                            if (line.startsWith('data: ')) {
+                                const jsonStr = line.slice(6);
+                                if (jsonStr === '[DONE]') continue;
+
+                                try {
+                                    const parsed = JSON.parse(jsonStr) as OpenRouterStreamResponse;
+                                    const token = parsed.choices?.[0]?.delta?.content;
+                                    if (token) {
+                                        completeResponse += token;
+                                        options.onToken(token);
+                                    }
+                                } catch (e) {
+                                    // Skip invalid JSON
                                 }
                             }
-                        } catch (e) {
-                            // Skip invalid JSON
                         }
                     }
+                } finally {
+                    reader.releaseLock();
                 }
 
                 return completeResponse;
-            }
-
-            const responseText = response.text;
-            const jsonMatch = responseText.match(/data: ({.*})/);
-            if (jsonMatch) {
-                const data = JSON.parse(jsonMatch[1]);
+            } else {
+                const data = await response.json();
                 return data.choices[0].message.content;
             }
-            const data = JSON.parse(responseText);
-            return data.choices[0].message.content;
         } catch (error) {
             throw error;
         } finally {

@@ -80,9 +80,27 @@ export class ProviderSettingsUI {
                 providerTypeDropdown = dropdown;
                 // Add provider type options
                 dropdown.addOption('', 'Select a type...');
-                dropdown.addOption('openai', 'OpenAI');
-                dropdown.addOption('openrouter', 'OpenRouter');
-                dropdown.addOption('ollama', 'Ollama');
+                
+                // Define available provider types
+                const providerTypes = {
+                    'openai': 'OpenAI',
+                    'openrouter': 'OpenRouter',
+                    'ollama': 'Ollama'
+                };
+                
+                // Get list of already configured provider types
+                const configuredTypes = new Set(
+                    Object.values(this.plugin.settings.providers)
+                        .map(p => p.type)
+                        .filter(Boolean)
+                );
+                
+                // Only add provider types that aren't already configured
+                Object.entries(providerTypes)
+                    .filter(([type]) => !configuredTypes.has(type))
+                    .forEach(([type, label]) => {
+                        dropdown.addOption(type, label);
+                    });
 
                 dropdown.onChange(async value => {
                     if (!this.currentProvider) return;

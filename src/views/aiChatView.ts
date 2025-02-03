@@ -8,30 +8,90 @@ import { HistorySidebar } from './components/HistorySidebar';
 import type { Moment } from 'moment';
 // @ts-ignore
 import moment from 'moment';
+import { getErrorMessage } from '../utils/errors';
 
+/**
+ * Settings for message processing and display
+ */
 interface MessageSettings {
+    /** The flare configuration name */
     flare?: string;
+    /** The AI provider ID */
     provider: string;
+    /** The model ID */
     model: string;
+    /** Temperature setting for generation */
     temperature: number;
+    /** Maximum tokens for generation */
     maxTokens?: number;
+    /** Whether to stream the response */
     stream?: boolean;
+    /** Whether this is a flare switch message */
     isFlareSwitch?: boolean;
+    /** Number of messages to include in history */
     historyWindow?: number;
+    /** Number of messages before handoff */
     handoffWindow?: number;
+    /** Whether the message was truncated */
     truncated?: boolean;
+    /** Tag for reasoning model thoughts */
     reasoningHeader?: string;
+    /** Whether this is a reasoning-capable model */
     isReasoningModel?: boolean;
 }
 
+/**
+ * Represents a chat message in the history
+ */
 interface ChatMessage {
+    /** The role of the message sender */
     role: 'user' | 'assistant' | 'system';
+    /** The message content */
     content: string;
+    /** Unix timestamp of the message */
     timestamp: number;
+    /** Message settings */
     settings?: MessageSettings;
 }
 
+/**
+ * Content structure for system messages
+ */
+interface SystemMessageContent {
+    /** Main message text */
+    main: string;
+    /** Optional metadata */
+    metadata?: {
+        /** Type of system message */
+        type?: 'model' | 'temperature';
+        /** Whether reasoning is enabled */
+        isReasoningModel?: boolean;
+        /** Reasoning header tag */
+        reasoningHeader?: string;
+        /** Additional metadata fields */
+        [key: string]: any;
+    };
+}
+
+/**
+ * Partial message settings type
+ */
+interface PartialMessageSettings extends Partial<MessageSettings> {
+    [key: string]: any;
+}
+
+/** View type identifier for the AI chat */
 export const VIEW_TYPE_AI_CHAT = 'ai-chat-view';
+
+// Constants
+const CONSTANTS = {
+    DEFAULT_TEMPERATURE: 0.7,
+    RENDER_DEBOUNCE_MS: 25,
+    DEFAULT_REASONING_HEADER: '<think>',
+    MAX_TITLE_LENGTH: 100,
+    SCROLL_THRESHOLD: 100,
+    MOBILE_BREAKPOINT: 768
+} as const;
 
 class WikiLinkSuggestModal extends SuggestModal<TFile> {
     constructor(
@@ -58,21 +118,43 @@ class WikiLinkSuggestModal extends SuggestModal<TFile> {
     }
 }
 
+/**
+ * Main view for the AI chat interface
+ * Handles message display, user input, and interaction with AI providers
+ */
 export class AIChatView extends ItemView {
-    public messagesEl: HTMLElement;
-    public inputEl: HTMLTextAreaElement;
-    public modelNameEl: HTMLElement;
-    public historySidebar: HistorySidebar;
+    /** Container for chat messages */
+    public messagesEl!: HTMLElement;
+    /** Text input for user messages */
+    public inputEl!: HTMLTextAreaElement;
+    /** Display element for model name */
+    public modelNameEl!: HTMLElement;
+    /** Sidebar for chat history */
+    public historySidebar!: HistorySidebar;
+    /** Current flare configuration */
     public currentFlare: FlareConfig | undefined;
-    public currentTemp: number = 0.7;
+    /** Current temperature setting */
+    public currentTemp: number = CONSTANTS.DEFAULT_TEMPERATURE;
+    /** Array of message history */
     public messageHistory: Array<{role: string; content: string; settings?: any}> = [];
+    /** Reference to the Obsidian app */
     public app: App;
-    private tempDisplayEl: HTMLElement;
-    private modelDisplayEl: HTMLElement;
+    /** Display element for temperature */
+    private tempDisplayEl!: HTMLElement;
+    /** Display element for model selection */
+    private modelDisplayEl!: HTMLElement;
+    /** Whether a response is currently streaming */
     private isStreaming: boolean = false;
-    private originalSendHandler: ((this: GlobalEventHandlers, ev: MouseEvent) => any) | null = null;
+    /** Original event handler for send button */
+    private originalSendHandler: ((event: MouseEvent) => Promise<void>) | null = null;
+    /** Set of message IDs with expanded reasoning */
     private expandedReasoningMessages: Set<string> = new Set();
-    private suggestionsEl: HTMLElement;
+    /** Container for suggestions */
+    private suggestionsEl!: HTMLElement;
+    /** Whether current streaming is aborted */
+    private isAborted: boolean = false;
+    // Add a new property to track title generation state
+    private isTitleGenerationInProgress: boolean = false;
 
     constructor(leaf: WorkspaceLeaf, private plugin: FlarePlugin) {
         super(leaf);
@@ -281,7 +363,7 @@ export class AIChatView extends ItemView {
         const sendBtn = this.containerEl.querySelector('.flare-send-button') as HTMLButtonElement | null;
         if (sendBtn) {
             // Store original handler
-            this.originalSendHandler = async () => {
+            this.originalSendHandler = async (event: MouseEvent) => {
                 if (this.isStreaming) {
                     // If streaming, stop the current request
                     if (this.currentFlare) {
@@ -340,7 +422,8 @@ export class AIChatView extends ItemView {
         // Handle flare chooser
         const flareChooser = this.containerEl.querySelector('.flare-chooser');
         if (flareChooser) {
-            flareChooser.addEventListener('click', async (event: MouseEvent) => {
+            flareChooser.addEventListener('click', (async function(this: AIChatView, event: Event) {
+                const mouseEvent = event as MouseEvent;
                 const menu = new Menu();
                 
                 try {
@@ -359,9 +442,9 @@ export class AIChatView extends ItemView {
                                         if (this.currentFlare) {
                                             await this.handleFlareSwitch(this.currentFlare);
                                         }
-                                    } catch (error) {
+                                    } catch (error: unknown) {
                                         console.error('Failed to load flare config:', error);
-                                        new Notice('Failed to load flare configuration');
+                                        new Notice(getErrorMessage(error));
                                     }
                                 });
                         });
@@ -369,14 +452,14 @@ export class AIChatView extends ItemView {
                     
                     // Show menu at click position
                     menu.showAtPosition({
-                        x: event.clientX,
-                        y: event.clientY
+                        x: mouseEvent.clientX,
+                        y: mouseEvent.clientY
                     });
-                } catch (error) {
+                } catch (error: unknown) {
                     console.error('Failed to load flares:', error);
-                    new Notice('Failed to load flares');
+                    new Notice('Failed to load flares: ' + getErrorMessage(error));
                 }
-            });
+            }).bind(this));
         }
         
         // Setup input handlers for flare suggestions
@@ -597,7 +680,8 @@ export class AIChatView extends ItemView {
                         e.preventDefault();
                         const sendBtn = this.containerEl.querySelector('.flare-send-button') as HTMLButtonElement;
                         if (sendBtn && this.originalSendHandler && !this.isStreaming) {
-                            await this.originalSendHandler.call(this);
+                            const boundHandler = this.originalSendHandler.bind(this);
+                            await boundHandler(new MouseEvent('click'));
                         }
                     }
                 }
@@ -686,7 +770,8 @@ export class AIChatView extends ItemView {
 
         } catch (error) {
             console.error('Error loading chat history:', error);
-            new Notice('Error loading chat history: ' + error.message);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            new Notice('Error loading chat history: ' + errorMessage);
             
             // Clear messages on error
             this.messagesEl.empty();
@@ -799,7 +884,8 @@ export class AIChatView extends ItemView {
                 new Notice('New chat created');
             } catch (error) {
                 console.error('Failed to create new chat:', error);
-                new Notice('Failed to create new chat: ' + error.message);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                new Notice('Failed to create new chat: ' + errorMessage);
             }
         }
     }
@@ -967,104 +1053,100 @@ export class AIChatView extends ItemView {
             
             // Show error notice after a small delay
             setTimeout(() => {
-                new Notice(`Error generating title: ${error.message}`);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                new Notice(`Error generating title: ${errorMessage}`);
             }, 100);
             return false;
         }
     }
 
     async handleMessage(content: string): Promise<boolean> {
-        // Check for title command
-        if (content === '/title') {
-            // Clear input field immediately
-            if (this.inputEl) {
-                this.inputEl.value = '';
-                this.inputEl.style.height = '';  // Reset to default height instead of forcing 24px
-            }
-            const success = await this.handleTitleGeneration();
-            if (!success) {
-                new Notice('Failed to generate title');
-            }
-            return true;
-        }
-
-        // First check if message starts with a flare switch
-        // Match both @flarename message and @flarename formats
-        const flareSwitchMatch = content.match(/^@(\w+)(?:\s+([\s\S]+))?$/);
-        if (flareSwitchMatch) {
-            const [_, flareName, actualMessage] = flareSwitchMatch;
-            
-            try {
-                // Check if flare exists before proceeding
-                const flareExists = await this.plugin.app.vault.adapter.exists(
-                    `${this.plugin.settings.flaresFolder}/${flareName}.md`
-                );
-                if (!flareExists) {
-                    new Notice(`Flare "${flareName}" does not exist. Please create it first.`);
-                    return false;
+        try {
+            // Check for title command
+            if (content === '/title') {
+                // Clear input field immediately
+                if (this.inputEl) {
+                    this.inputEl.value = '';
+                    this.inputEl.style.height = '';  // Reset to default height instead of forcing 24px
                 }
-
-                // Load and switch to the new flare
-                const newFlare = await this.plugin.flareManager.debouncedLoadFlare(flareName);
-                if (!newFlare) {
-                    throw new Error(`Failed to load flare configuration for ${flareName}`);
-                }
-
-                // Check provider configuration before switching
-                const provider = this.plugin.settings.providers[newFlare.provider];
-                if (!provider || !provider.enabled) {
-                    const providerName = provider?.name || newFlare.provider;
-                    throw new Error(`Provider ${providerName} is not configured or enabled. Please check settings.`);
-                }
-
-                if (!newFlare.model) {
-                    throw new Error(`No model selected for flare ${newFlare.name}. Please configure the flare.`);
-                }
-
-                // Wait for the flare switch to complete before processing message
-                await this.handleFlareSwitch(newFlare);
-
-                // Only process message if there is one
-                if (actualMessage?.trim()) {
-                    await this.processMessage(actualMessage.trim(), { 
-                        stream: newFlare.stream ?? true, 
-                        isFlareSwitch: true 
-                    });
+                const success = await this.handleTitleGeneration();
+                if (!success) {
+                    new Notice('Failed to generate title');
                 }
                 return true;
-            } catch (error) {
-                console.error('Failed to load flare config:', error);
-                new Notice(error.message);
+            }
+
+            // First check if message starts with a flare switch
+            // Match both @flarename message and @flarename formats
+            const flareSwitchMatch = content.match(/^@(\w+)(?:\s+([\s\S]+))?$/);
+            if (flareSwitchMatch) {
+                const [_, flareName, actualMessage] = flareSwitchMatch;
+                
+                try {
+                    // Check if flare exists before proceeding
+                    const flareExists = await this.plugin.app.vault.adapter.exists(
+                        `${this.plugin.settings.flaresFolder}/${flareName}.md`
+                    );
+                    if (!flareExists) {
+                        new Notice(`Flare "${flareName}" does not exist. Please create it first.`);
+                        return false;
+                    }
+
+                    // Load and switch to the new flare
+                    const newFlare = await this.plugin.flareManager.debouncedLoadFlare(flareName);
+                    if (!newFlare) {
+                        throw new Error(`Failed to load flare configuration for ${flareName}`);
+                    }
+
+                    // Check provider configuration before switching
+                    const provider = this.plugin.settings.providers[newFlare.provider];
+                    if (!provider || !provider.enabled) {
+                        const providerName = provider?.name || newFlare.provider;
+                        throw new Error(`Provider ${providerName} is not configured or enabled. Please check settings.`);
+                    }
+
+                    if (!newFlare.model) {
+                        throw new Error(`No model selected for flare ${newFlare.name}. Please configure the flare.`);
+                    }
+
+                    // Wait for the flare switch to complete before processing message
+                    await this.handleFlareSwitch(newFlare);
+
+                    // Only process message if there is one
+                    if (actualMessage?.trim()) {
+                        await this.processMessage(actualMessage.trim(), { 
+                            stream: newFlare.stream ?? true, 
+                            isFlareSwitch: true 
+                        });
+                    }
+                    return true;
+                } catch (error: unknown) {
+                    console.error('Failed to load flare config:', error);
+                    new Notice(getErrorMessage(error));
+                    return false;
+                }
+            }
+
+            // Verify we have a current flare
+            if (!this.currentFlare) {
+                new Notice('Please select a flare first');
                 return false;
             }
-        }
 
-        // Verify we have a current flare
-        if (!this.currentFlare) {
-            new Notice('Please select a flare first');
-            return false;
-        }
-
-        // Verify the current flare still exists
-        const currentFlareExists = await this.plugin.app.vault.adapter.exists(
-            `${this.plugin.settings.flaresFolder}/${this.currentFlare.name}.md`
-        );
-        if (!currentFlareExists) {
-            new Notice(`Current flare "${this.currentFlare.name}" no longer exists. Please select another flare.`);
-            this.currentFlare = undefined;
-            return false;
-        }
-
-        // Process message normally
-        try {
-            await this.processMessage(content, { 
-                stream: this.currentFlare?.stream ?? false,
-                isFlareSwitch: false 
-            });
-            return true;
-        } catch (error) {
-            console.error('Error processing message:', error);
-            new Notice('Error: ' + error.message);
+            // Process message normally
+            try {
+                await this.processMessage(content, { 
+                    stream: this.currentFlare?.stream ?? false,
+                    isFlareSwitch: false 
+                });
+                return true;
+            } catch (error: unknown) {
+                console.error('Error processing message:', error);
+                new Notice('Error: ' + getErrorMessage(error));
+                return false;
+            }
+        } catch (error: unknown) {
+            await this.handleError(error, 'Error sending message');
             return false;
         }
     }
@@ -1075,6 +1157,9 @@ export class AIChatView extends ItemView {
         options?: { stream?: boolean; isFlareSwitch?: boolean }
     ) {
         try {
+            // Reset abort state at the start of each message
+            this.isAborted = false;
+
             // Clear input field immediately and reset its height
             if (this.inputEl) {
                 this.inputEl.value = '';
@@ -1099,41 +1184,73 @@ export class AIChatView extends ItemView {
                 isReasoningModel: this.currentFlare?.isReasoningModel ?? false
             };
 
-            // Add user message to UI and history
+            // Create user message object (but don't add to history yet)
             const userMessage = {
                 role: 'user',
                 content: content,
                 settings
             };
-            
-            // Add to local history
-            this.messageHistory.push(userMessage);
-            
-            // Add to ChatHistoryManager
-            await this.plugin.chatHistoryManager.addMessage(userMessage);
 
-            // Add user message to UI
-            await this.addMessage('user', content, settings);
+            // Add user message to UI only
+            await this.addMessage('user', content, settings, false);
 
             // Create loading message
-            const loadingMsg = await this.addMessage('assistant', '', settings);
+            const loadingMsg = await this.addMessage('assistant', '', settings, false);
             if (loadingMsg) {
                 loadingMsg.addClass('is-loading');
+                const contentEl = loadingMsg.querySelector('.flare-message-content');
+                if (contentEl) {
+                    contentEl.empty();
+                    const contentWrapper = contentEl.createDiv('flare-content-wrapper');
+                    const mainText = contentWrapper.createDiv('flare-system-main');
+                    const flareName = mainText.createSpan('flare-name');
+                    const flameIcon = flareName.createSpan();
+                    setIcon(flameIcon, 'flame');
+                    flareName.createSpan().setText(`@${settings.flare}`);
+                    
+                    const metadataEl = flareName.createDiv('flare-metadata');
+                    const metadata = this.getFlareMetadata(settings);
+                    Object.entries(metadata).forEach(([key, value]) => {
+                        const item = metadataEl.createDiv('flare-metadata-item');
+                        item.createSpan('metadata-key').setText(key + ':');
+                        item.createSpan('metadata-value').setText(' ' + value);
+                    });
+
+                    // Create markdown container with proper structure
+                    const markdownContent = contentWrapper.createDiv('flare-markdown-content is-empty');
+                    if (settings.isReasoningModel) {
+                        // Create containers for reasoning and response content
+                        const reasoningContainer = markdownContent.createDiv('flare-reasoning-content');
+                        reasoningContainer.setAttribute('data-reasoning-blocks', '[]');
+                        reasoningContainer.setAttribute('data-partial-block', '');
+                        reasoningContainer.style.display = 'none';
+                        
+                        const responseContainer = markdownContent.createDiv('flare-response-content');
+                        responseContainer.createDiv('markdown-rendered');
+                    } else {
+                        // For non-reasoning models, just create the markdown container
+                        markdownContent.createDiv('markdown-rendered');
+                    }
+                }
             }
 
             let accumulatedContent = '';
-            let isInReasoning = false;
-            let displayedContent = '';
-            const reasoningHeader = settings.reasoningHeader;
-            const reasoningEndTag = reasoningHeader.replace('<', '</');
+            let lastRenderedLength = 0;
+            const renderDebounceMs = 25;
+            let lastRenderTime = 0;
+            let pendingRender: number | null = null;
+            let renderBuffer = '';
+            let response = '';
 
-            // Add an escaped version for partial parsing:
+            // Add header/tag variables for reasoning model
+            const reasoningHeader = settings.reasoningHeader || '<think>';
+            const reasoningEndTag = reasoningHeader.replace('<', '</');
             const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
             const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
 
             try {
                 // Send message to provider
-                const response = await this.plugin.handleMessage(content, {
+                response = await this.plugin.handleMessage(content, {
                     flare: settings.flare,
                     provider: settings.provider,
                     model: settings.model,
@@ -1143,72 +1260,45 @@ export class AIChatView extends ItemView {
                     historyWindow: settings.historyWindow,
                     stream: settings.stream,
                     onToken: (token: string) => {
-                        if (loadingMsg) {
+                        if (loadingMsg && !this.isAborted) {
                             accumulatedContent += token;
-                            const contentEl = loadingMsg.querySelector('.flare-message-content');
-                            if (contentEl) {
-                                let markdownContainer = contentEl.querySelector('.flare-markdown-content') as HTMLElement;
-                                if (!markdownContainer) {
-                                    // First token, set up the full structure
-                                    contentEl.empty();
-                                    const contentWrapper = contentEl.createDiv('flare-content-wrapper');
-                                    const mainText = contentWrapper.createDiv('flare-system-main');
-                                    const flareName = mainText.createSpan('flare-name');
-                                    const flameIcon = flareName.createSpan();
-                                    setIcon(flameIcon, 'flame');
-                                    flareName.createSpan().setText(`@${settings.flare}`);
-                                    
-                                    const metadataEl = flareName.createDiv('flare-metadata');
-                                    const metadata = this.getFlareMetadata(settings);
-                                    Object.entries(metadata).forEach(([key, value]) => {
-                                        const item = metadataEl.createDiv('flare-metadata-item');
-                                        item.createSpan('metadata-key').setText(key + ':');
-                                        item.createSpan('metadata-value').setText(' ' + value);
-                                    });
-
-                                    markdownContainer = contentWrapper.createDiv('flare-markdown-content');
-                                }
-                                
-                                if (settings.isReasoningModel) {
-                                    // Extract all reasoning blocks
-                                    const reasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
-                                    const reasoningBlocks: string[] = [];
-                                    let responsePart = accumulatedContent;
-                                    let match;
-
-                                    while ((match = reasoningRegex.exec(accumulatedContent)) !== null) {
-                                        const [fullMatch, reasoningContent] = match;
-                                        if (reasoningContent.trim()) {
-                                            reasoningBlocks.push(reasoningContent.trim());
-                                        }
-                                        // Remove this reasoning block from the response part
-                                        responsePart = responsePart.replace(fullMatch, '');
+                            renderBuffer += token;
+                            
+                            // Cancel any pending render
+                            if (pendingRender !== null) {
+                                window.clearTimeout(pendingRender);
+                            }
+                            
+                            const now = Date.now();
+                            const timeSinceLastRender = now - lastRenderTime;
+                            const hasSignificantContent = renderBuffer.length >= 10;
+                            
+                            // Render immediately if we have significant content and enough time has passed
+                            if (hasSignificantContent && timeSinceLastRender >= renderDebounceMs) {
+                                this.renderStreamingContent(loadingMsg, accumulatedContent, renderBuffer, settings);
+                                renderBuffer = '';
+                                lastRenderedLength = accumulatedContent.length;
+                                lastRenderTime = now;
+                            } else {
+                                // Schedule a new render
+                                pendingRender = window.setTimeout(() => {
+                                    if (!this.isAborted && renderBuffer.length > 0) {
+                                        this.renderStreamingContent(loadingMsg, accumulatedContent, renderBuffer, settings);
+                                        renderBuffer = '';
+                                        lastRenderedLength = accumulatedContent.length;
+                                        lastRenderTime = Date.now();
                                     }
-
-                                    // Only show the response part during streaming
-                                    markdownContainer.empty();
-                                    if (responsePart.trim()) {
-                                        MarkdownRenderer.renderMarkdown(
-                                            responsePart.trim(),
-                                            markdownContainer,
-                                            '',
-                                            this.plugin
-                                        );
-                                    }
-                                } else {
-                                    // Not a reasoning model, show everything
-                                    markdownContainer.empty();
-                                    MarkdownRenderer.renderMarkdown(
-                                        accumulatedContent,
-                                        markdownContainer,
-                                        '',
-                                        this.plugin
-                                    );
-                                }
+                                    pendingRender = null;
+                                }, renderDebounceMs);
                             }
                         }
                     }
                 });
+
+                // Now that we have a successful response, add both messages to history
+                // Add user message to histories
+                this.messageHistory.push(userMessage);
+                await this.plugin.chatHistoryManager.addMessage(userMessage);
 
                 // Add assistant response to histories
                 const assistantMessage = {
@@ -1226,49 +1316,38 @@ export class AIChatView extends ItemView {
                 // Add to ChatHistoryManager
                 await this.plugin.chatHistoryManager.addMessage(assistantMessage);
 
+                // Cancel any pending renders before final render
+                if (pendingRender !== null) {
+                    window.clearTimeout(pendingRender);
+                    pendingRender = null;
+                }
+
                 // Update loading message with final response
                 if (loadingMsg) {
-                    loadingMsg.removeClass('is-loading');
-                    await this.addMessage('assistant', settings.stream ? accumulatedContent : response, settings, false);
-                    loadingMsg.remove();
+                    await this.finalizeMessageRender(
+                        loadingMsg,
+                        settings.stream ? accumulatedContent : response,
+                        settings
+                    );
                 }
-
-                // Save history after each message exchange
-                await this.plugin.chatHistoryManager.saveCurrentHistory();
-                
-                // Check if we should auto-generate title
-                const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
-                const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
-                if (titleEl && currentFile && titleEl.textContent === 'New Chat') {
-                    const titleSettings = this.plugin.settings.titleSettings;
-                    // Only proceed if auto-generate is enabled
-                    if (titleSettings.autoGenerate) {
-                        // Calculate number of complete message pairs (user + assistant)
-                        const messagePairs = Math.floor(this.messageHistory.filter(m => m.role !== 'system').length / 2);
-                        if (messagePairs >= (titleSettings.autoGenerateAfterPairs || 2)) {
-                            // Generate title in the background
-                            this.handleTitleGeneration().catch(error => {
-                                console.error('Auto title generation failed:', error);
-                            });
-                        }
-                    }
-                }
-
-                // Refresh history sidebar if it exists
-                if (this.plugin.historySidebar) {
-                    await this.plugin.historySidebar.refresh();
-                }
-
-            } catch (error) {
+            } catch (error: unknown) {
                 // If we have accumulated content and this was a streaming request that was stopped
-                if (accumulatedContent && settings.stream && error.name === 'AbortError') {
+                if (accumulatedContent && settings.stream && error instanceof Error && error.name === 'AbortError') {
+                    this.isAborted = true;
+                    
+                    // Cancel any pending render
+                    if (pendingRender !== null) {
+                        window.clearTimeout(pendingRender);
+                        pendingRender = null;
+                    }
+
                     // Create assistant message with the truncated response
                     const assistantMessage = {
                         role: 'assistant',
                         content: accumulatedContent,
                         settings: {
                             ...settings,
-                            truncated: true // Mark this response as truncated
+                            truncated: true
                         }
                     };
                     
@@ -1279,14 +1358,24 @@ export class AIChatView extends ItemView {
                     await this.plugin.chatHistoryManager.addMessage(assistantMessage);
                     await this.plugin.chatHistoryManager.saveCurrentHistory();
 
-                    // Update loading message with truncated response
+                    // Update loading message with final content
                     if (loadingMsg) {
                         loadingMsg.removeClass('is-loading');
-                        await this.addMessage('assistant', accumulatedContent, settings, false);
-                        loadingMsg.remove();
+                        const contentEl = loadingMsg.querySelector('.flare-message-content');
+                        if (contentEl) {
+                            const markdownContainer = contentEl.querySelector('.flare-markdown-content') as HTMLElement;
+                            if (markdownContainer) {
+                                markdownContainer.empty();
+                                await MarkdownRenderer.renderMarkdown(
+                                    accumulatedContent,
+                                    markdownContainer,
+                                    '',
+                                    this.plugin
+                                );
+                            }
+                        }
                     }
 
-                    // Don't show error notice for intentional stops
                     return;
                 }
 
@@ -1301,65 +1390,237 @@ export class AIChatView extends ItemView {
                     new Notice(`Unable to connect to ${settings.provider}. Please check your connection and provider settings.`);
                 } else {
                     console.error('Error processing message:', error);
-                    new Notice('Error: ' + error.message);
+                    new Notice('Error: ' + getErrorMessage(error));
                 }
             }
-        } catch (error) {
-            console.error('Error processing message:', error);
-            new Notice('Error: ' + error.message);
+
+            // After streaming completes:
+            if (loadingMsg) {
+                await this.finalizeMessageRender(
+                    loadingMsg,
+                    settings.stream ? accumulatedContent : response,
+                    settings
+                );
+            }
+        } catch (error: unknown) {
+            const err: unknown = error;
+            console.error('Error processing message:', err);
+            if (err instanceof Error && err.name === 'AbortError') {
+                return;
+            }
+            new Notice('Error: ' + getErrorMessage(err));
         }
     }
 
+    // Add this new method to handle content rendering
+    private renderStreamingContent(
+        loadingMsg: HTMLElement,
+        fullContent: string,
+        newContent: string,
+        settings: MessageSettings
+    ): void {
+        // 1. Grab the main message content area from the loading message
+        const contentEl = loadingMsg.querySelector('.flare-message-content');
+        if (!contentEl) return;
+
+        // 2. Grab the "flare-markdown-content" container (for normal streaming text)
+        const markdownContainer = contentEl.querySelector('.flare-markdown-content');
+        if (!(markdownContainer instanceof HTMLElement)) return;
+
+        // 3. If this is a reasoning-capable model, we need to split reasoning vs. normal text.
+        if (settings.isReasoningModel) {
+            // a) Find or create the separate containers for reasoning and normal/response content.
+            let reasoningContainer = contentEl.querySelector('.flare-reasoning-content') as HTMLElement | null;
+            let responseContainer = contentEl.querySelector('.flare-response-content') as HTMLElement | null;
+
+            // Create them once if needed
+            if (!reasoningContainer) {
+                reasoningContainer = markdownContainer.createDiv({ cls: 'flare-reasoning-content' });
+                reasoningContainer.setAttribute('data-reasoning-blocks', '[]');
+                reasoningContainer.setAttribute('data-partial-block', '');
+                reasoningContainer.style.display = 'none'; // hidden until user expands
+            }
+            if (!responseContainer) {
+                responseContainer = markdownContainer.createDiv({ cls: 'flare-response-content' });
+                // Create markdown container for response if it doesn't exist
+                if (!responseContainer.querySelector('.markdown-rendered')) {
+                    responseContainer.createDiv('markdown-rendered');
+                }
+            }
+
+            // b) Retrieve the partial-block state, previously-detected reasoning blocks, etc.
+            const existingBlocksStr = reasoningContainer.getAttribute('data-reasoning-blocks') || '[]';
+            const existingBlocks = JSON.parse(existingBlocksStr) as string[];
+            const partialBlock = reasoningContainer.getAttribute('data-partial-block') || '';
+
+            // Combine the old partial plus the new tokens
+            let currentContent = partialBlock + newContent;
+
+            // c) Regex set for reasoning start/end
+            const reasoningHeader = settings.reasoningHeader || '<think>';
+            const reasoningEndTag = reasoningHeader.replace('<', '</');
+            const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
+            const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
+            const allReasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
+
+            let lastIndex = 0;
+            let match: RegExpExecArray | null;
+            let remainingContent = '';
+            let newPartialBlock = '';
+
+            // d) Loop through all reasoning blocks within currentContent
+            while ((match = allReasoningRegex.exec(currentContent)) !== null) {
+                // Everything before this block is normal text
+                if (match.index > lastIndex) {
+                    remainingContent += currentContent.slice(lastIndex, match.index);
+                }
+                // The reasoning content (match[1]) is fully complete, so store it
+                if (match[1]) {
+                    existingBlocks.push(match[1]);
+                }
+                lastIndex = match.index + match[0].length;
+            }
+
+            // e) Add leftover text after the final block
+            if (lastIndex < currentContent.length) {
+                const tail = currentContent.slice(lastIndex);
+                // If we see a new reasoning-header but no matching end tag, store that as partial
+                const headerPos = tail.indexOf(reasoningHeader);
+                if (headerPos >= 0 && !tail.includes(reasoningEndTag)) {
+                    // means we started a reasoning block but didn't finish
+                    newPartialBlock = tail.slice(headerPos);
+                    remainingContent += tail.slice(0, headerPos);
+                } else {
+                    // it's normal text
+                    remainingContent += tail;
+                }
+            }
+
+            // f) Update the stored states
+            reasoningContainer.setAttribute('data-reasoning-blocks', JSON.stringify(existingBlocks));
+            reasoningContainer.setAttribute('data-partial-block', newPartialBlock);
+
+            // g) Only show response content if we have any
+            if (remainingContent.trim()) {
+                markdownContainer.removeClass('is-empty');
+                const currentResponseDiv = responseContainer.querySelector('.markdown-rendered') as HTMLElement;
+                if (currentResponseDiv) {
+                    // Instead of clearing, just append plain text for partial streaming
+                    const existingText = currentResponseDiv.textContent || '';
+                    currentResponseDiv.textContent = existingText + remainingContent;
+                }
+            }
+
+            // h) If we have at least one complete reasoning block, ensure we show the plus toggle
+            if (existingBlocks.length > 0) {
+                const actions = loadingMsg.querySelector('.flare-message-actions');
+                if (actions && !actions.querySelector('[aria-label="Toggle reasoning"]')) {
+                    // Add toggle button
+                    const messageId = loadingMsg.getAttribute('data-message-id') || `message-${Date.now()}`;
+                    loadingMsg.setAttribute('data-message-id', messageId);
+
+                    const expandBtn = actions.createEl('button', {
+                        cls: 'flare-action-button',
+                        attr: { 'aria-label': 'Toggle reasoning' }
+                    });
+                    setIcon(expandBtn, 'plus-circle');
+                    
+                    expandBtn.onclick = () => {
+                        const isExpanded = this.expandedReasoningMessages.has(messageId);
+                        if (isExpanded) {
+                            // Hide reasoning
+                            this.expandedReasoningMessages.delete(messageId);
+                            reasoningContainer?.classList.remove('is-expanded');
+                            expandBtn.classList.remove('is-active');
+                            setIcon(expandBtn, 'plus-circle');
+                            // Wait a moment before visually hiding
+                            setTimeout(() => {
+                                if (!this.expandedReasoningMessages.has(messageId)) {
+                                    reasoningContainer!.style.display = 'none';
+                                }
+                            }, 300);
+                        } else {
+                            // Expand
+                            reasoningContainer!.style.display = 'block';
+                            // Force reflow
+                            void reasoningContainer!.offsetHeight;
+                            // Render the reasoning blocks if not already done
+                            if (!reasoningContainer?.querySelector('.markdown-rendered')) {
+                                const joinedReasoning = existingBlocks.join('\n\n---\n\n');
+                                MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
+                            }
+                            this.expandedReasoningMessages.add(messageId);
+                            reasoningContainer!.classList.add('is-expanded');
+                            expandBtn.classList.add('is-active');
+                            setIcon(expandBtn, 'minus-circle');
+                        }
+                    };
+                }
+            }
+        } else {
+            // i) Normal (non-reasoning) streaming: just append partial text
+            markdownContainer.removeClass('is-empty');
+            let currentContent = markdownContainer.querySelector('.markdown-rendered');
+            if (!currentContent) {
+                currentContent = markdownContainer.createDiv('markdown-rendered');
+            }
+            if (!(currentContent instanceof HTMLElement)) return;
+
+            const existingText = currentContent.textContent || '';
+            currentContent.textContent = existingText + newContent;
+        }
+
+        // 4. Scroll to bottom if user is near bottom
+        requestAnimationFrame(() => {
+            if (this.messagesEl instanceof HTMLElement) {
+                const shouldScroll = this.messagesEl.scrollHeight - this.messagesEl.scrollTop <= CONSTANTS.SCROLL_THRESHOLD;
+                if (shouldScroll) {
+                    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+                }
+            }
+        });
+    }
+
     // Add a helper method for getting flare metadata
-    private getFlareMetadata(settings?: MessageSettings): Record<string, string> {
+    private getFlareMetadata(settings?: PartialMessageSettings): Record<string, string> {
         const metadata: Record<string, string> = {};
         
-        // Add provider and model info
-        const provider = settings?.provider ? this.plugin.settings.providers[settings.provider] : undefined;
-        metadata.provider = provider?.name || settings?.provider || 'default';
-        metadata.model = settings?.model ? this.truncateModelName(settings.model) : 'default';
-        
-        // Only show history window info if explicitly set
-        if (settings?.historyWindow !== undefined) {
-            if (settings.historyWindow === -1) {
-                metadata['chat history'] = 'all';
-            } else if (settings.historyWindow === 0) {
-                metadata['chat history'] = 'none';
-            } else {
-                metadata['chat history'] = `${settings.historyWindow} messages`;
-            }
+        if (!settings) return metadata;
+
+        // Add flare name if present
+        if (settings.flare) {
+            metadata['Flare'] = settings.flare;
         }
 
-        // Only show handoff window info if explicitly set
-        if (settings?.handoffWindow !== undefined) {
-            if (settings.handoffWindow === -1) {
-                metadata['handoff history'] = 'all';
-            } else if (settings.handoffWindow === 0) {
-                metadata['handoff history'] = 'none';
-            } else {
-                metadata['handoff history'] = `${settings.handoffWindow} messages`;
-            }
+        // Add provider if present, using the common name
+        if (settings.provider) {
+            const providerSettings = this.plugin.settings.providers[settings.provider];
+            metadata['Provider'] = providerSettings?.name || settings.provider;
         }
 
-        // Add temperature
-        metadata.temperature = settings?.temperature?.toFixed(2) || '0.70';
-
-        // Add streaming info - default to true if undefined
-        metadata.stream = settings?.stream !== false ? 'yes' : 'no';
-
-        // Add reasoning model info - only if explicitly set
-        if (settings?.isReasoningModel !== undefined) {
-            metadata.reasoning = settings.isReasoningModel ? 'yes' : 'no';
-            if (settings.isReasoningModel && settings.reasoningHeader) {
-                metadata['reasoning header'] = settings.reasoningHeader;
-            }
+        // Add model if present
+        if (settings.model) {
+            metadata['Model'] = this.truncateModelName(settings.model);
         }
 
-        if (this.plugin.settings.debugLoggingEnabled) {
-            console.log('Metadata Generation:', {
-                input: settings,
-                output: metadata
-            });
+        // Add temperature if present
+        if (typeof settings.temperature === 'number') {
+            metadata['Temperature'] = settings.temperature.toFixed(2);
+        }
+
+        // Add max tokens if present
+        if (settings.maxTokens) {
+            metadata['Max Tokens'] = settings.maxTokens.toString();
+        }
+
+        // Add history window if present
+        if (typeof settings.historyWindow === 'number') {
+            metadata['History Window'] = settings.historyWindow.toString();
+        }
+
+        // Add handoff window if present
+        if (typeof settings.handoffWindow === 'number') {
+            metadata['Handoff Window'] = settings.handoffWindow.toString();
         }
 
         return metadata;
@@ -1896,7 +2157,7 @@ export class AIChatView extends ItemView {
         }
     }
 
-    private async updateSystemMessage(messageEl: HTMLElement, content: any) {
+    private async updateSystemMessage(messageEl: HTMLElement, content: SystemMessageContent) {
         const contentEl = messageEl.querySelector('.flare-message-content');
         if (contentEl) {
             contentEl.empty();
@@ -1908,7 +2169,8 @@ export class AIChatView extends ItemView {
             const mainText = contentWrapper.createDiv('flare-system-main');
             
             // Handle different types of system messages
-            if (content.metadata?.type === 'model') {
+            const metadata = content.metadata || {};
+            if (metadata.type === 'model') {
                 // For model changes, use circuit icon
                 const modelText = mainText.createSpan('flare-name');
                 const circuitIcon = modelText.createSpan();
@@ -1917,13 +2179,13 @@ export class AIChatView extends ItemView {
 
                 // Add metadata for model changes too
                 const metadataEl = modelText.createDiv('flare-metadata');
-                const metadata = this.getFlareMetadata({
-                    ...content.metadata,
+                const flareMetadata = this.getFlareMetadata({
+                    ...metadata,
                     model: content.main,
                     isReasoningModel: this.currentFlare?.isReasoningModel,
                     reasoningHeader: this.currentFlare?.reasoningHeader
                 });
-                Object.entries(metadata).forEach(([key, value]) => {
+                Object.entries(flareMetadata).forEach(([key, value]) => {
                     const item = metadataEl.createDiv('flare-metadata-item');
                     item.createSpan('metadata-key').setText(key + ':');
                     item.createSpan('metadata-value').setText(' ' + value);
@@ -1937,36 +2199,33 @@ export class AIChatView extends ItemView {
                 
                 // Create metadata container with complete metadata
                 const metadataEl = flareName.createDiv('flare-metadata');
-                
-                // Get metadata directly from the content
-                const metadata = this.getFlareMetadata({
-                    ...content.metadata,
+                const flareMetadata = this.getFlareMetadata({
+                    ...metadata,
                     flare: content.main.replace('@', ''),
-                    isReasoningModel: content.metadata.isReasoningModel,
-                    reasoningHeader: content.metadata.reasoningHeader
+                    isReasoningModel: this.currentFlare?.isReasoningModel,
+                    reasoningHeader: this.currentFlare?.reasoningHeader
                 });
-                
-                Object.entries(metadata).forEach(([key, value]) => {
+                Object.entries(flareMetadata).forEach(([key, value]) => {
                     const item = metadataEl.createDiv('flare-metadata-item');
                     item.createSpan('metadata-key').setText(key + ':');
                     item.createSpan('metadata-value').setText(' ' + value);
                 });
             } else {
-                // For temperature changes and others, show the text with metadata
-                const tempText = mainText.createSpan('flare-name');
-                const tempIcon = tempText.createSpan();
+                // For temperature changes
+                const tempDisplay = mainText.createSpan('flare-name');
+                const tempIcon = tempDisplay.createSpan();
                 setIcon(tempIcon, 'thermometer');
-                tempText.createSpan().setText(content.main);
-
+                tempDisplay.createSpan().setText(content.main);
+                
                 // Add metadata for temperature changes too
-                const metadataEl = tempText.createDiv('flare-metadata');
-                const metadata = this.getFlareMetadata({
-                    ...content.metadata,
+                const metadataEl = tempDisplay.createDiv('flare-metadata');
+                const flareMetadata = this.getFlareMetadata({
+                    ...metadata,
                     temperature: parseFloat(content.main),
                     isReasoningModel: this.currentFlare?.isReasoningModel,
                     reasoningHeader: this.currentFlare?.reasoningHeader
                 });
-                Object.entries(metadata).forEach(([key, value]) => {
+                Object.entries(flareMetadata).forEach(([key, value]) => {
                     const item = metadataEl.createDiv('flare-metadata-item');
                     item.createSpan('metadata-key').setText(key + ':');
                     item.createSpan('metadata-value').setText(' ' + value);
@@ -2104,6 +2363,7 @@ export class AIChatView extends ItemView {
         button: HTMLButtonElement, 
         originalHandler?: ((this: GlobalEventHandlers, ev: MouseEvent) => any) | null
     ): void {
+        this.isAborted = true;  // Set abort state when stopping
         setIcon(button, 'send');
         button.setAttribute('aria-label', 'Send message');
         button.onclick = originalHandler || null;
@@ -2212,6 +2472,163 @@ export class AIChatView extends ItemView {
             // ... existing code ...
         } catch (error) {
             console.error('Error saving chat:', error);
+        }
+    }
+
+    private async handleError(error: unknown, message: string) {
+        console.error(message, error);
+        new Notice(message + ': ' + getErrorMessage(error));
+    }
+
+    private async finalizeMessageRender(
+        loadingMsg: HTMLElement,
+        content: string,
+        settings: MessageSettings
+    ) {
+        loadingMsg.removeClass('is-loading');
+        const contentEl = loadingMsg.querySelector('.flare-message-content');
+        if (!contentEl) return;
+
+        const markdownContainer = contentEl.querySelector('.flare-markdown-content');
+        if (!(markdownContainer instanceof HTMLElement)) return;
+
+        if (settings.isReasoningModel) {
+            // Get reasoning container and response container
+            const reasoningContainer = markdownContainer.querySelector('.flare-reasoning-content') as HTMLElement;
+            const responseContainer = markdownContainer.querySelector('.flare-response-content') as HTMLElement;
+            
+            if (reasoningContainer && responseContainer) {
+                // Extract reasoning blocks and response content
+                const reasoningHeader = settings.reasoningHeader || '<think>';
+                const reasoningEndTag = reasoningHeader.replace('<', '</');
+                const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
+                const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
+                const allReasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
+                
+                const reasoningBlocks: string[] = [];
+                let responsePart = content;
+                let match;
+
+                // First collect all reasoning blocks
+                while ((match = allReasoningRegex.exec(content)) !== null) {
+                    if (match[1]) {
+                        reasoningBlocks.push(match[1].trim());
+                    }
+                }
+
+                // Then remove all reasoning blocks from response
+                responsePart = content.replace(allReasoningRegex, '').trim();
+
+                // Store reasoning blocks for later rendering
+                reasoningContainer.setAttribute('data-reasoning-blocks', JSON.stringify(reasoningBlocks));
+                reasoningContainer.style.display = 'none';
+                reasoningContainer.classList.remove('is-expanded');
+
+                // Only render the response part
+                const responseDiv = responseContainer.querySelector('.markdown-rendered') as HTMLElement;
+                if (responseDiv) {
+                    responseDiv.empty();
+                    await MarkdownRenderer.renderMarkdown(
+                        responsePart,
+                        responseDiv,
+                        '',
+                        this.plugin
+                    );
+                }
+
+                // Add toggle button if we have reasoning blocks
+                if (reasoningBlocks.length > 0) {
+                    const actions = loadingMsg.querySelector('.flare-message-actions');
+                    if (actions && !actions.querySelector('[aria-label="Toggle reasoning"]')) {
+                        const messageId = loadingMsg.getAttribute('data-message-id') || `message-${Date.now()}`;
+                        loadingMsg.setAttribute('data-message-id', messageId);
+
+                        const expandBtn = actions.createEl('button', {
+                            cls: 'flare-action-button',
+                            attr: { 'aria-label': 'Toggle reasoning' }
+                        });
+                        setIcon(expandBtn, 'plus-circle');
+                        
+                        expandBtn.onclick = () => {
+                            const isExpanded = this.expandedReasoningMessages.has(messageId);
+                            if (isExpanded) {
+                                // Hide reasoning
+                                this.expandedReasoningMessages.delete(messageId);
+                                reasoningContainer.classList.remove('is-expanded');
+                                expandBtn.classList.remove('is-active');
+                                setIcon(expandBtn, 'plus-circle');
+                                // Wait a moment before visually hiding
+                                setTimeout(() => {
+                                    if (!this.expandedReasoningMessages.has(messageId)) {
+                                        reasoningContainer.style.display = 'none';
+                                    }
+                                }, 300);
+                            } else {
+                                // Expand
+                                reasoningContainer.style.display = 'block';
+                                // Force reflow
+                                void reasoningContainer.offsetHeight;
+                                // Render the reasoning blocks if not already done
+                                if (!reasoningContainer.querySelector('.markdown-rendered')) {
+                                    const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
+                                    MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
+                                }
+                                this.expandedReasoningMessages.add(messageId);
+                                reasoningContainer.classList.add('is-expanded');
+                                expandBtn.classList.add('is-active');
+                                setIcon(expandBtn, 'minus-circle');
+                            }
+                        };
+                    }
+                }
+            }
+        } else {
+            // For non-reasoning models, just render the full content
+            markdownContainer.empty();
+            await MarkdownRenderer.renderMarkdown(
+                content,
+                markdownContainer,
+                '',
+                this.plugin
+            );
+        }
+
+        // Save history after each message exchange
+        await this.plugin.chatHistoryManager.saveCurrentHistory();
+        
+        // Check if we should auto-generate title
+        const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
+        const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
+        if (titleEl && 
+            currentFile && 
+            titleEl.textContent === 'New Chat' && 
+            !this.isTitleGenerationInProgress) {
+            const titleSettings = this.plugin.settings.titleSettings;
+            // Only proceed if auto-generate is enabled
+            if (titleSettings.autoGenerate) {
+                // Calculate number of complete message pairs (user + assistant)
+                const messagePairs = Math.floor(this.messageHistory.filter(m => 
+                    m.role !== 'system' && !m.settings?.truncated
+                ).length / 2);
+                
+                if (messagePairs >= (titleSettings.autoGenerateAfterPairs || 2)) {
+                    // Set flag before starting generation
+                    this.isTitleGenerationInProgress = true;
+                    try {
+                        await this.handleTitleGeneration();
+                    } catch (error) {
+                        console.error('Auto title generation failed:', error);
+                    } finally {
+                        // Reset flag after completion (success or failure)
+                        this.isTitleGenerationInProgress = false;
+                    }
+                }
+            }
+        }
+
+        // Refresh history sidebar if it exists
+        if (this.plugin.historySidebar) {
+            await this.plugin.historySidebar.refresh();
         }
     }
 } 

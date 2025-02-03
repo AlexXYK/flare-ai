@@ -1,4 +1,4 @@
-import { App, Plugin, WorkspaceLeaf, Notice, TFile } from 'obsidian';
+import { App, Plugin, WorkspaceLeaf, Notice, TFile, sanitizeHTMLToDom } from 'obsidian';
 import { GeneralSettingTab } from './src/settings/GeneralSettingTab';
 import { AIChatView, VIEW_TYPE_AI_CHAT } from './src/views/aiChatView';
 import { 
@@ -20,6 +20,7 @@ import {
 } from './src/utils/constants';
 import { OpenRouterManager } from './src/providers/implementations/OpenRouter/OpenRouterManager';
 import { ChatHistoryManager } from './src/history/ChatHistoryManager';
+import { MarkdownRenderer } from 'obsidian';
 
 interface DataviewApi {
     queryMarkdown(query: string, sourcePath: string): Promise<string>;
@@ -45,12 +46,12 @@ interface ObsidianPlugins {
 }
 
 export default class FlarePlugin extends Plugin {
-    settings: PluginSettings;
+    settings!: PluginSettings;
     providers: Map<string, ProviderManager> = new Map();
-    providerManager: MainProviderManager;
+    providerManager!: MainProviderManager;
     activeProvider: AIProvider | null = null;
-    flareManager: FlareManager;
-    chatHistoryManager: ChatHistoryManager;
+    flareManager!: FlareManager;
+    chatHistoryManager!: ChatHistoryManager;
     private flareWatcher: NodeJS.Timer | null = null;
     flares: Array<{ name: string; path: string }> = [];
     isFlareSwitchActive: boolean = false;
@@ -719,7 +720,7 @@ export default class FlarePlugin extends Plugin {
             return await Promise.race([modelFetch, timeout]);
         } catch (error) {
             console.error('Failed to get models:', error);
-            if (error.message === 'Request timed out') {
+            if (error instanceof Error && error.message === 'Request timed out') {
                 throw new Error('Failed to load models: Request timed out. Please check your connection and try again.');
             }
             throw error;
@@ -965,57 +966,19 @@ export default class FlarePlugin extends Plugin {
                             // Execute the JS code and get results
                             const component = await dataviewPlugin.api.executeJs(code, file.path);
                             if (component?.container?.innerHTML) {
-                                // Create a temporary container to safely handle the HTML content
+                                // Create a temporary container
                                 const tempContainer = document.createElement('div');
-                                // Parse the HTML content into DOM elements
-                                const parser = new DOMParser();
-                                const doc = parser.parseFromString(component.container.innerHTML, 'text/html');
-                                // Only copy over safe elements and attributes
-                                const safeElements = ['p', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'strong', 'em', 'code', 'pre'];
-                                const safeAttributes = ['class', 'id', 'style'];
                                 
-                                const sanitizeNode = (node: Node): Node | null => {
-                                    if (node.nodeType === Node.TEXT_NODE) {
-                                        return node.cloneNode(true);
-                                    }
-                                    if (node.nodeType === Node.ELEMENT_NODE) {
-                                        const el = node as Element;
-                                        if (!safeElements.includes(el.tagName.toLowerCase())) {
-                                            return document.createTextNode(el.textContent || '');
-                                        }
-                                        const newEl = document.createElement(el.tagName.toLowerCase());
-                                        // Copy safe attributes
-                                        for (const attr of safeAttributes) {
-                                            if (el.hasAttribute(attr)) {
-                                                newEl.setAttribute(attr, el.getAttribute(attr)!);
-                                            }
-                                        }
-                                        // Recursively sanitize child nodes
-                                        for (const child of Array.from(el.childNodes)) {
-                                            const sanitizedChild = sanitizeNode(child);
-                                            if (sanitizedChild) {
-                                                newEl.appendChild(sanitizedChild);
-                                            }
-                                        }
-                                        return newEl;
-                                    }
-                                    return null;
-                                };
-
-                                // Sanitize the content
-                                for (const node of Array.from(doc.body.childNodes)) {
-                                    const sanitizedNode = sanitizeNode(node);
-                                    if (sanitizedNode) {
-                                        tempContainer.appendChild(sanitizedNode);
-                                    }
-                                }
-
-                                // Use the sanitized content
-                                const sanitizedContent = tempContainer.outerHTML;
-                                processedContent = processedContent.replace(block, sanitizedContent);
+                                // Use Obsidian's sanitization utility
+                                const sanitizedContent = sanitizeHTMLToDom(component.container.innerHTML);
+                                tempContainer.appendChild(sanitizedContent);
+                                
+                                // Replace the original block with the sanitized content
+                                processedContent = processedContent.replace(block, tempContainer.innerHTML);
                             }
                         } catch (err) {
                             // Keep the original block if evaluation fails
+                            console.warn('Failed to process dataviewjs block:', err);
                         }
                     }
                 }
