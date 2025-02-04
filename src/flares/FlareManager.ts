@@ -679,16 +679,30 @@ export class FlareManager {
                     this.markAsChanged();
                 }));
 
-        // Context window
+        // Context Window (formerly History Window)
         new Setting(flareContainer)
             .setName('Context Window')
-            .setDesc('Number of previous messages to include')
+            .setDesc('Maximum number of conversation pairs to maintain during chat (-1 for all)')
             .addText(text => text
-                .setValue(String(settings.historyWindow || 10))
+                .setValue(String(settings.historyWindow))
                 .onChange(value => {
                     const num = parseInt(value);
-                    if (!isNaN(num) && num >= 0) {
+                    if (!isNaN(num) && (num > 0 || num === -1)) {
                         settings.historyWindow = num;
+                        this.markAsChanged();
+                    }
+                }));
+
+        // Handoff Context (formerly Handoff Window)
+        new Setting(flareContainer)
+            .setName('Handoff Context')
+            .setDesc('Number of conversation pairs to carry over when switching to this flare (-1 for all)')
+            .addText(text => text
+                .setValue(String(settings.handoffWindow ?? -1))
+                .onChange(value => {
+                    const num = parseInt(value);
+                    if (!isNaN(num) && (num > 0 || num === -1)) {
+                        settings.handoffWindow = num;
                         this.markAsChanged();
                     }
                 }));
@@ -1256,10 +1270,10 @@ export class FlareManager {
                         return text;
                     });
 
-                // History window
+                // Context Window (formerly History Window)
                 new Setting(advancedSection)
-                    .setName('History Window')
-                    .setDesc('Maximum number of message pairs to keep in context (-1 for all)')
+                    .setName('Context Window')
+                    .setDesc('Maximum number of conversation pairs to maintain during chat (-1 for all)')
                     .addText(text => {
                         if (!this.currentFlareConfig) return text;
                         text.setValue(String(this.currentFlareConfig.historyWindow))
@@ -1277,10 +1291,10 @@ export class FlareManager {
                         return text;
                     });
 
-                // Handoff window
+                // Handoff Context (formerly Handoff Window)
                 new Setting(advancedSection)
-                    .setName('Handoff Window')
-                    .setDesc('Number of message pairs to inherit when switching to this flare (-1 for all)')
+                    .setName('Handoff Context')
+                    .setDesc('Number of conversation pairs to carry over when switching to this flare (-1 for all)')
                     .addText(text => {
                         if (!this.currentFlareConfig) return text;
                         text.setValue(String(this.currentFlareConfig.handoffWindow ?? -1))
@@ -1372,23 +1386,28 @@ export class FlareManager {
                 reasoningHeader: this.currentFlareConfig.reasoningHeader
             });
 
-            // Format the flare content with ALL fields
-            const content = [
+            // Format frontmatter
+            const frontmatter = [
                 '---',
-                `provider: "${this.currentFlareConfig.provider}"`,
-                `model: "${this.currentFlareConfig.model}"`,
+                `provider: ${this.currentFlareConfig.provider}`,
+                `model: ${this.currentFlareConfig.model}`,
+                `enabled: ${this.currentFlareConfig.enabled}`,
+                `description: "${this.currentFlareConfig.description}"`,
                 `temperature: ${this.currentFlareConfig.temperature}`,
-                this.currentFlareConfig.maxTokens ? `maxTokens: ${this.currentFlareConfig.maxTokens}` : null,
-                `enabled: ${this.currentFlareConfig.enabled ?? true}`,
-                this.currentFlareConfig.description ? `description: "${this.currentFlareConfig.description}"` : null,
-                `historyWindow: ${this.currentFlareConfig.historyWindow ?? -1}`,
-                `handoffWindow: ${this.currentFlareConfig.handoffWindow ?? -1}`,
-                `stream: ${this.currentFlareConfig.stream ?? false}`,
-                `isReasoningModel: ${this.currentFlareConfig.isReasoningModel ?? false}`,
-                `reasoningHeader: "${this.currentFlareConfig.reasoningHeader || '<think>'}"`,
-                '---\n',
-                this.currentFlareConfig.systemPrompt || ''
-            ].filter(Boolean).join('\n');
+                `maxTokens: ${this.currentFlareConfig.maxTokens}`,
+                `historyWindow: ${this.currentFlareConfig.historyWindow}  # Context Window: number of pairs to maintain during chat`,
+                `handoffWindow: ${this.currentFlareConfig.handoffWindow}  # Handoff Context: number of pairs to carry over when switching flares`,
+                `stream: ${this.currentFlareConfig.stream}`,
+                `isReasoningModel: ${this.currentFlareConfig.isReasoningModel}`,
+                `reasoningHeader: "${this.currentFlareConfig.reasoningHeader}"`,
+                '---'
+            ].join('\n');
+
+            // Get system prompt (everything after frontmatter)
+            const systemPrompt = this.currentFlareConfig.systemPrompt || '';
+
+            // Format the flare content with ALL fields
+            const content = frontmatter + '\n\n' + systemPrompt;
 
             // Get file path
             const filePath = `${this.plugin.settings.flaresFolder}/${flareName}.md`;
@@ -1437,7 +1456,7 @@ export class FlareManager {
                 reasoningHeader: '<think>'
             };
 
-            // Create frontmatter
+            // Format frontmatter
             const frontmatter = [
                 '---',
                 `provider: ${flare.provider}`,
@@ -1446,7 +1465,8 @@ export class FlareManager {
                 `description: "${flare.description}"`,
                 `temperature: ${flare.temperature}`,
                 `maxTokens: ${flare.maxTokens}`,
-                `historyWindow: ${flare.historyWindow}`,
+                `historyWindow: ${flare.historyWindow}  # Context Window: number of pairs to maintain during chat`,
+                `handoffWindow: ${flare.handoffWindow}  # Handoff Context: number of pairs to carry over when switching flares`,
                 `stream: ${flare.stream}`,
                 `isReasoningModel: ${flare.isReasoningModel}`,
                 `reasoningHeader: "${flare.reasoningHeader}"`,

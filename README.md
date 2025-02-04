@@ -72,8 +72,8 @@ provider: ollama-default
 model: llama3.1
 temperature: 0.7
 maxTokens: 2048
-historyWindow: 3
-handoffWindow: 1
+contextWindow: 3  # Number of conversation pairs to maintain during chat
+handoffContext: 1  # Number of pairs to carry over when switching flares
 stream: true
 enabled: true
 isReasoningModel: false

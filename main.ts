@@ -318,7 +318,7 @@ export default class FlarePlugin extends Plugin {
                 throw new Error(`Failed to load flare: ${newFlareName}`);
             }
 
-            // Determine if this is a flare switch
+            // Handle context windows for flare switches differently
             let isFlareSwitch = false;
             if (options?.messageHistory?.length) {
                 // Check if any of the last N messages used a different flare
@@ -397,13 +397,13 @@ export default class FlarePlugin extends Plugin {
                 const systemMessages = historyToSend.filter(m => m.role === 'system');
                 const nonSystemMessages = historyToSend.filter(m => m.role !== 'system');
 
-                // For flare switches, first apply handoff window
+                // For flare switches, first apply handoff context
                 const handoffSize = flareConfig.handoffWindow ?? -1;
                 if (handoffSize === -1) {
                     // If handoff is -1, use all messages
                     historyToSend = [...systemMessages, ...nonSystemMessages];
                 } else {
-                    // Group into pairs for handoff
+                    // Get the last N complete pairs based on handoff context
                     const pairs: Array<Array<{role: string; content: string; settings?: any}>> = [];
                     let currentPair: Array<{role: string; content: string; settings?: any}> = [];
                     
@@ -420,23 +420,19 @@ export default class FlarePlugin extends Plugin {
                         }
                     }
 
-                    // Get the last N complete pairs based on handoff window
-                    const handoffPairs = pairs.slice(-handoffSize);
-                    const handoffMessages = handoffPairs.flat();
-
-                    // Now check if history window is smaller than handoff
-                    const historySize = flareConfig.historyWindow ?? -1;
-                    if (historySize === -1) {
-                        // If history is -1, use all handoff messages
-                        historyToSend = [...systemMessages, ...handoffMessages];
-                    } else if (historySize < handoffSize) {
-                        // If history window is smaller, get the last N pairs from handoff
-                        const historyPairs = handoffPairs.slice(-historySize);
+                    // Now check if context window is smaller than handoff
+                    const contextSize = flareConfig.historyWindow ?? -1;
+                    if (contextSize === -1) {
+                        // If context window is -1, use all handoff messages
+                        historyToSend = [...systemMessages, ...historyToSend];
+                    } else if (contextSize < handoffSize) {
+                        // If context window is smaller, get the last N pairs from handoff
+                        const historyPairs = pairs.slice(-contextSize);
                         historyToSend = [...systemMessages, ...historyPairs.flat()];
                     } else {
-                        // If history window is larger or equal, use all handoff messages
-                        // The history window will build up from the handoff size as more messages come in
-                        historyToSend = [...systemMessages, ...handoffMessages];
+                        // If context window is larger or equal, use all handoff messages
+                        // The context window will build up from the handoff size as more messages come in
+                        historyToSend = [...systemMessages, ...historyToSend];
                     }
                 }
             } else if (!isFlareSwitch) {
@@ -445,7 +441,7 @@ export default class FlarePlugin extends Plugin {
                 if (historySize !== -1) {
                     const systemMessages = historyToSend.filter(m => m.role === 'system');
                     const nonSystemMessages = historyToSend.filter(m => m.role !== 'system');
-                    const windowedNonSystem = this.applyHistoryWindow(nonSystemMessages, historySize);
+                    const windowedNonSystem = this.applyContextWindow(nonSystemMessages, historySize);
                     historyToSend = [...systemMessages, ...windowedNonSystem];
                 }
             }
@@ -792,7 +788,7 @@ export default class FlarePlugin extends Plugin {
         });
     }
 
-    public applyHistoryWindow(messages: Array<{role: string; content: string; settings?: any}>, window: number): Array<{role: string; content: string; settings?: any}> {
+    public applyContextWindow(messages: Array<{role: string; content: string; settings?: any}>, window: number): Array<{role: string; content: string; settings?: any}> {
         // If window is -1 or no messages, return as is
         if (window === -1 || !messages.length) return messages;
         
@@ -845,7 +841,7 @@ export default class FlarePlugin extends Plugin {
         return result;
     }
 
-    private applyHandoffSlicing(messages: Array<{role: string; content: string; settings?: any}>, window: number): Array<{role: string; content: string; settings?: any}> {
+    private applyHandoffContext(messages: Array<{role: string; content: string; settings?: any}>, window: number): Array<{role: string; content: string; settings?: any}> {
         // Keep system message if it exists
         const systemMessage = messages.find(msg => msg.role === 'system');
         const nonSystemMessages = messages.filter(msg => msg.role !== 'system');

@@ -477,15 +477,33 @@
 }
 
 /* Lists */
-.flare-message-content .markdown-rendered ul,
-.flare-message-content .markdown-rendered ol {
-    margin: 1em 0;
-    padding-left: 1.4em;
+.flare-message-content ul,
+.flare-message-content ol,
+.flare-markdown-content .markdown-rendered ul,
+.flare-markdown-content .markdown-rendered ol,
+.flare-response-content .markdown-rendered ul,
+.flare-response-content .markdown-rendered ol {
+    margin: 0.15em 0;
+    padding-left: 1.5em;
+    list-style-position: outside;
 }
 
-.flare-message-content .markdown-rendered li {
-    margin: 0.3em 0;
-    line-height: 1.5;
+.flare-message-content li,
+.flare-markdown-content .markdown-rendered li,
+.flare-response-content .markdown-rendered li {
+    margin: 0;
+    padding: 0;
+    line-height: 1.4;
+    display: list-item;
+    position: relative;
+}
+
+.flare-message-content li p,
+.flare-markdown-content .markdown-rendered li p,
+.flare-response-content .markdown-rendered li p {
+    margin: 0;
+    padding: 0;
+    display: inline;
 }
 
 /* Code blocks */
@@ -722,6 +740,8 @@
 .flare-markdown-content .markdown-rendered ul ul,
 .flare-response-content .markdown-rendered ul ul {
     list-style-type: circle !important;
+    margin-top: 0;
+    margin-bottom: 0;
 }
 
 /* Remove extra spacing from paragraphs in lists */
@@ -732,7 +752,7 @@
 }
 
 /* Handle line breaks consistently */
-.flare-markdown-content .markdown-rendered br,
+/*.flare-markdown-content .markdown-rendered br,
 .flare-response-content .markdown-rendered br {
     content: "";
     display: none;
@@ -747,12 +767,12 @@
 /* Remove any extra margins from markdown content */
 .flare-markdown-content .markdown-rendered > *:first-child,
 .flare-response-content .markdown-rendered > *:first-child {
-    margin-top: 0 !important;
+    margin-top: 0;
 }
 
 .flare-markdown-content .markdown-rendered > *:last-child,
 .flare-response-content .markdown-rendered > *:last-child {
-    margin-bottom: 0 !important;
+    margin-bottom: 0;
 }
 
 /* Message content transitions */
@@ -3167,8 +3187,7 @@
     margin: 0;
     padding: 0;
     line-height: 1.3;
-    display: inline-block;
-    width: 100%;
+    display: block;
 }
 
 /* Lists */
@@ -3178,8 +3197,8 @@
 .flare-markdown-content .markdown-rendered ol,
 .flare-response-content .markdown-rendered ul,
 .flare-response-content .markdown-rendered ol {
-    margin: 0;
-    padding-left: 1.2em;
+    margin: 0.15em 0;
+    padding-left: 1.5em;
     list-style-position: outside;
 }
 
@@ -3188,8 +3207,9 @@
 .flare-response-content .markdown-rendered li {
     margin: 0;
     padding: 0;
-    line-height: 1.3;
+    line-height: 1.4;
     display: list-item;
+    position: relative;
 }
 
 .flare-message-content li p,
@@ -3198,145 +3218,83 @@
     margin: 0;
     padding: 0;
     display: inline;
-    width: auto;
 }
 
-/* Code blocks */
-.flare-message-content pre,
-.flare-markdown-content .markdown-rendered pre,
-.flare-response-content .markdown-rendered pre {
-    margin: 0.15em 0;
-    padding: 0.5em;
-    display: block;
-}
-
-/* Headings */
-.flare-message-content h1,
-.flare-message-content h2,
-.flare-message-content h3,
-.flare-message-content h4,
-.flare-message-content h5,
-.flare-message-content h6,
-.flare-markdown-content .markdown-rendered h1,
-.flare-markdown-content .markdown-rendered h2,
-.flare-markdown-content .markdown-rendered h3,
-.flare-markdown-content .markdown-rendered h4,
-.flare-markdown-content .markdown-rendered h5,
-.flare-markdown-content .markdown-rendered h6,
-.flare-response-content .markdown-rendered h1,
-.flare-response-content .markdown-rendered h2,
-.flare-response-content .markdown-rendered h3,
-.flare-response-content .markdown-rendered h4,
-.flare-response-content .markdown-rendered h5,
-.flare-response-content .markdown-rendered h6 {
-    margin: 0.15em 0;
-    line-height: 1.3;
-    display: block;
-}
-
-/* Line breaks */
+/* Remove all special line break handling from CSS */
 .flare-message-content br,
 .flare-markdown-content .markdown-rendered br,
 .flare-response-content .markdown-rendered br {
     display: none;
 }
 
-.flare-message-content br + br,
-.flare-markdown-content .markdown-rendered br + br,
-.flare-response-content .markdown-rendered br + br {
-    display: block;
-    margin: 0.15em 0;
+/* Streaming content */
+.flare-markdown-content .markdown-rendered {
+    opacity: 1;
+    transition: opacity 0.15s ease;
 }
 
-/* Reasoning content container */
-.flare-reasoning-content {
-    position: relative;
-    margin-top: var(--size-4-2);
-    padding: var(--size-4-2);
-    background: var(--background-secondary);
-    border-radius: var(--radius-m);
-    border-left: 2px solid var(--text-accent);
+.flare-markdown-content.is-empty .markdown-rendered {
     opacity: 0;
-    height: 0;
-    overflow: hidden;
-    transition: opacity 0.3s ease, height 0.3s ease;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+/* Ensure proper spacing for content */
+.flare-markdown-content:not(.is-empty) {
+    margin-top: 0;
+}
+
+/* Ensure proper bullet points */
+.flare-markdown-content .markdown-rendered ul,
+.flare-response-content .markdown-rendered ul {
+    list-style-type: disc !important;
+}
+
+.flare-markdown-content .markdown-rendered ul ul,
+.flare-response-content .markdown-rendered ul ul {
+    list-style-type: circle !important;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* Ensure proper list spacing */
+.flare-markdown-content .markdown-rendered li + li,
+.flare-response-content .markdown-rendered li + li {
+    margin-top: 0.1em;
+}
+
+/* Handle line breaks */
+.flare-message-content br,
+.flare-markdown-content .markdown-rendered br,
+.flare-response-content .markdown-rendered br {
     display: none;
 }
 
-.flare-reasoning-content.is-expanded {
-    display: block;
-    opacity: 1;
-    height: auto;
-}
-
-/* Response content container */
-.flare-response-content {
-    position: relative;
-    width: 100%;
-    min-height: 0;
-    transition: min-height 0.3s ease;
-}
-
-/* Base markdown rendering */
-.markdown-rendered {
-    white-space: pre-wrap;
-    word-break: break-word;
-    line-height: 1.5;
-}
-
-/* Headings */
-.markdown-rendered h1,
-.markdown-rendered h2 {
-    margin: 1.5em 0 0.5em 0;
-    line-height: 1.3;
-    display: block;
-}
-
-.markdown-rendered h1:first-child,
-.markdown-rendered h2:first-child {
-    margin-top: 0;
-}
-
-/* Lists */
-.markdown-rendered ul,
-.markdown-rendered ol {
-    margin: 0.5em 0;
-    padding-left: 1.5em;
-    list-style-type: disc;
-}
-
-.markdown-rendered ol {
-    list-style-type: decimal;
-}
-
-.markdown-rendered li {
+/* Ensure proper list item continuation */
+.flare-markdown-content .markdown-rendered li > p,
+.flare-response-content .markdown-rendered li > p {
+    display: inline-block;
     margin: 0;
     padding: 0;
-    line-height: 1.5;
-    display: list-item;
 }
 
-.markdown-rendered li p {
-    margin: 0;
-    display: inline;
-}
-
-/* Paragraphs */
-.markdown-rendered p {
-    margin: 0.5em 0;
-    line-height: 1.5;
-}
-
-/* Add spacing between sections */
-.markdown-rendered h2:not(:first-child) {
-    margin-top: 1.5em;
-}
-
-/* Remove margins from first/last elements */
-.markdown-rendered > *:first-child {
+/* Remove extra margins from lists */
+.flare-markdown-content .markdown-rendered ul:first-child,
+.flare-markdown-content .markdown-rendered ol:first-child,
+.flare-response-content .markdown-rendered ul:first-child,
+.flare-response-content .markdown-rendered ol:first-child {
     margin-top: 0;
 }
 
-.markdown-rendered > *:last-child {
+.flare-markdown-content .markdown-rendered ul:last-child,
+.flare-markdown-content .markdown-rendered ol:last-child,
+.flare-response-content .markdown-rendered ul:last-child,
+.flare-response-content .markdown-rendered ol:last-child {
     margin-bottom: 0;
+}
+
+/* Ensure proper spacing for content */
+.flare-markdown-content:not(.is-empty) {
+    margin-top: 0;
 }

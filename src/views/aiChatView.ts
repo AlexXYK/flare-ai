@@ -384,12 +384,13 @@ export class AIChatView extends ItemView {
                         // Clear input field immediately
                         if (this.inputEl) {
                             this.inputEl.value = '';
-                            this.inputEl.style.height = '';  // Reset to default height instead of forcing 24px
+                            this.inputEl.style.height = '';  // Reset to default height
                         }
-                        const success = await this.handleTitleGeneration();
-                        if (!success) {
+                        // Run title generation in the background without affecting send button state
+                        this.handleTitleGeneration().catch(error => {
+                            console.error('Failed to generate title:', error);
                             new Notice('Failed to generate title');
-                        }
+                        });
                         return;
                     }
                     
@@ -400,12 +401,16 @@ export class AIChatView extends ItemView {
                     sendBtn.setAttribute('aria-label', 'Stop streaming');
                     
                     try {
+                        // Clear input before sending - this is the only place we should clear it
+                        const inputValue = this.inputEl.value;
+                        this.inputEl.value = '';
+                        this.inputEl.style.height = '';  // Reset to default height
+                        
                         // Try to send the message
                         const success = await this.handleMessage(content);
-                        // Only clear input if message was sent successfully
-                        if (success) {
-                            this.inputEl.value = '';
-                            this.inputEl.style.height = '';  // Reset to default height instead of forcing 24px
+                        // If message failed to send, restore the input
+                        if (!success) {
+                            this.inputEl.value = inputValue;
                         }
                     } finally {
                         // Reset streaming state
@@ -1064,20 +1069,15 @@ export class AIChatView extends ItemView {
         try {
             // Check for title command
             if (content === '/title') {
-                // Clear input field immediately
-                if (this.inputEl) {
-                    this.inputEl.value = '';
-                    this.inputEl.style.height = '';  // Reset to default height instead of forcing 24px
-                }
-                const success = await this.handleTitleGeneration();
-                if (!success) {
+                // Run title generation in the background without affecting send button state
+                this.handleTitleGeneration().catch(error => {
+                    console.error('Failed to generate title:', error);
                     new Notice('Failed to generate title');
-                }
+                });
                 return true;
             }
 
             // First check if message starts with a flare switch
-            // Match both @flarename message and @flarename formats
             const flareSwitchMatch = content.match(/^@(\w+)(?:\s+([\s\S]+))?$/);
             if (flareSwitchMatch) {
                 const [_, flareName, actualMessage] = flareSwitchMatch;
@@ -1419,6 +1419,84 @@ export class AIChatView extends ItemView {
         newContent: string,
         settings: MessageSettings
     ): void {
+        // Helper function to smooth out line breaks and handle sentence boundaries
+        const smoothContent = (text: string, existingText: string = ''): string => {
+            // Normalize all newlines
+            let normalized = text.replace(/\r\n/g, '\n');
+            
+            // If this is the start of streaming, trim any leading newlines
+            if (!existingText) {
+                normalized = normalized.trimStart();
+            }
+            
+            // Split into lines and process each one
+            const lines = normalized.split('\n');
+            const processedLines = lines.map((line, i) => {
+                // Trim the line
+                line = line.trimStart();
+                
+                // Skip empty lines between list items
+                if (!line && i > 0 && i < lines.length - 1) {
+                    const prevIsListItem = lines[i-1].match(/^[-*]\s|^\d+\.\s/);
+                    const nextIsListItem = lines[i+1].match(/^[-*]\s|^\d+\.\s/);
+                    if (prevIsListItem && nextIsListItem) return '';
+                }
+                
+                // Handle list items and headings
+                if (line.match(/^[-*]\s/)) {
+                    // Ensure single space after list marker
+                    return line.replace(/^([-*])\s+/, '$1 ');
+                }
+                if (line.match(/^\d+\.\s/)) {
+                    // Ensure single space after number
+                    return line.replace(/^(\d+\.)\s+/, '$1 ');
+                }
+                if (line.match(/^#{1,6}\s/)) {
+                    // Ensure proper spacing around headings
+                    return (!existingText ? '\n' : '') + line;
+                }
+                
+                // Handle list item continuation
+                if (i > 0) {
+                    const prevLine = lines[i-1];
+                    if (prevLine.match(/^[-*]\s|^\d+\.\s/)) {
+                        // This is a continuation of a list item
+                        return '  ' + line;
+                    }
+                }
+                
+                return line;
+            });
+            
+            // Join lines and handle sentence continuation
+            let result = processedLines.filter(line => line !== undefined).join('\n');
+            
+            // If we're continuing a sentence, handle the spacing
+            if (existingText && 
+                !existingText.trim().endsWith('.') && 
+                !existingText.trim().endsWith('!') && 
+                !existingText.trim().endsWith('?') && 
+                !existingText.trim().endsWith(':') && 
+                !result.match(/^[-*]\s|^\d+\.\s|^#{1,6}\s/)) {
+                // If the existing text ends with a newline and we're not starting a list item or heading,
+                // preserve the newline
+                if (existingText.endsWith('\n')) {
+                    result = result.trimStart();
+                } else {
+                    // Otherwise add a space between sentences
+                    result = ' ' + result.trimStart();
+                }
+            }
+            
+            // Clean up multiple newlines
+            result = result
+                .replace(/\n{3,}/g, '\n\n')
+                .replace(/\n\n(#{1,6}\s)/g, '\n$1')
+                .replace(/(#{1,6}[^\n]+)\n\n/g, '$1\n');
+            
+            return result;
+        };
+
         // 1. Grab the main message content area from the loading message
         const contentEl = loadingMsg.querySelector('.flare-message-content');
         if (!contentEl) return;
@@ -1476,7 +1554,9 @@ export class AIChatView extends ItemView {
                 }
                 // The reasoning content (match[1]) is fully complete, so store it
                 if (match[1]) {
-                    existingBlocks.push(match[1]);
+                    // Clean up the reasoning block content
+                    const cleanedBlock = match[1].trim().replace(/\n{3,}/g, '\n\n');
+                    existingBlocks.push(cleanedBlock);
                 }
                 lastIndex = match.index + match[0].length;
             }
@@ -1505,9 +1585,10 @@ export class AIChatView extends ItemView {
                 markdownContainer.removeClass('is-empty');
                 const currentResponseDiv = responseContainer.querySelector('.markdown-rendered') as HTMLElement;
                 if (currentResponseDiv) {
-                    // Instead of clearing, just append plain text for partial streaming
+                    // Get existing text and smooth out the new content
                     const existingText = currentResponseDiv.textContent || '';
-                    currentResponseDiv.textContent = existingText + remainingContent;
+                    const smoothedContent = smoothContent(remainingContent, existingText);
+                    currentResponseDiv.textContent = existingText + smoothedContent;
                 }
             }
 
@@ -1525,7 +1606,7 @@ export class AIChatView extends ItemView {
                     });
                     setIcon(expandBtn, 'plus-circle');
                     
-                    expandBtn.onclick = () => {
+                    expandBtn.onclick = async () => {
                         const isExpanded = this.expandedReasoningMessages.has(messageId);
                         if (isExpanded) {
                             // Hide reasoning
@@ -1547,7 +1628,9 @@ export class AIChatView extends ItemView {
                             // Render the reasoning blocks if not already done
                             if (!reasoningContainer?.querySelector('.markdown-rendered')) {
                                 const joinedReasoning = existingBlocks.join('\n\n---\n\n');
-                                MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
+                                if (reasoningContainer) {  // Add null check
+                                    await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
+                                }
                             }
                             this.expandedReasoningMessages.add(messageId);
                             reasoningContainer!.classList.add('is-expanded');
@@ -1558,7 +1641,7 @@ export class AIChatView extends ItemView {
                 }
             }
         } else {
-            // i) Normal (non-reasoning) streaming: just append partial text
+            // For non-reasoning models, just append text while preserving appropriate newlines
             markdownContainer.removeClass('is-empty');
             let currentContent = markdownContainer.querySelector('.markdown-rendered');
             if (!currentContent) {
@@ -1566,8 +1649,10 @@ export class AIChatView extends ItemView {
             }
             if (!(currentContent instanceof HTMLElement)) return;
 
+            // Get existing text and smooth out the new content
             const existingText = currentContent.textContent || '';
-            currentContent.textContent = existingText + newContent;
+            const smoothedContent = smoothContent(newContent, existingText);
+            currentContent.textContent = existingText + smoothedContent;
         }
 
         // 4. Scroll to bottom if user is near bottom
@@ -1613,14 +1698,14 @@ export class AIChatView extends ItemView {
             metadata['Max Tokens'] = settings.maxTokens.toString();
         }
 
-        // Add history window if present
+        // Update history window to context window in metadata
         if (typeof settings.historyWindow === 'number') {
-            metadata['History Window'] = settings.historyWindow.toString();
+            metadata['Context Window'] = settings.historyWindow.toString();
         }
 
-        // Add handoff window if present
+        // Update handoff window to handoff context in metadata
         if (typeof settings.handoffWindow === 'number') {
-            metadata['Handoff Window'] = settings.handoffWindow.toString();
+            metadata['Handoff Context'] = settings.handoffWindow.toString();
         }
 
         return metadata;
@@ -1797,7 +1882,7 @@ export class AIChatView extends ItemView {
                         attr: { 'aria-label': 'Toggle reasoning' }
                     });
                     setIcon(expandBtn, this.expandedReasoningMessages.has(messageId) ? 'minus-circle' : 'plus-circle');
-                    expandBtn.onclick = () => {
+                    expandBtn.onclick = async () => {
                         const isExpanded = this.expandedReasoningMessages.has(messageId);
                         if (isExpanded) {
                             this.expandedReasoningMessages.delete(messageId);
@@ -2492,6 +2577,53 @@ export class AIChatView extends ItemView {
         const markdownContainer = contentEl.querySelector('.flare-markdown-content');
         if (!(markdownContainer instanceof HTMLElement)) return;
 
+        // Helper function to clean up content before rendering
+        const cleanContent = (text: string): string => {
+            // Normalize line endings
+            let cleaned = text.replace(/\r\n/g, '\n');
+            
+            // Fix list item spacing and remove extra newlines between list items
+            cleaned = cleaned.replace(/^([-*])\s+/gm, '$1 ');  // Unordered lists
+            cleaned = cleaned.replace(/^(\d+\.)\s+/gm, '$1 '); // Ordered lists
+            
+            // Handle headings - ensure exactly one newline before and after
+            cleaned = cleaned.replace(/\n{2,}(#{1,6}\s)/g, '\n$1');  // Before headings
+            cleaned = cleaned.replace(/(#{1,6}[^\n]+)\n{2,}/g, '$1\n'); // After headings
+            
+            // Split into lines for more complex processing
+            const lines = cleaned.split('\n');
+            const result = lines.map((line, i): string => {
+                // Trim each line
+                line = line.trimStart();
+                
+                // Skip empty lines between list items
+                if (!line && i > 0 && i < lines.length - 1) {
+                    const prevIsListItem = lines[i-1].match(/^[-*]\s|^\d+\.\s/);
+                    const nextIsListItem = lines[i+1].match(/^[-*]\s|^\d+\.\s/);
+                    if (prevIsListItem && nextIsListItem) return '';
+                }
+                
+                // Handle list item continuations
+                if (i > 0 && !line.match(/^[-*]\s|^\d+\.\s|^#{1,6}\s/) && 
+                    lines[i-1].match(/^[-*]\s|^\d+\.\s/)) {
+                    return '  ' + line;
+                }
+                
+                return line;
+            });
+            
+            // Join lines and clean up multiple newlines
+            cleaned = result.filter(line => line !== undefined).join('\n');
+            
+            // Final cleanup of multiple newlines, preserving at most double newlines
+            cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+            
+            // Ensure single newline after list items unless it's the end of a list
+            cleaned = cleaned.replace(/^([-*]|\d+\.)\s[^\n]+\n{2,}(?=[-*]|\d+\.)/gm, '$&\n');
+            
+            return cleaned.trim();
+        };
+
         if (settings.isReasoningModel) {
             // Get reasoning container and response container
             const reasoningContainer = markdownContainer.querySelector('.flare-reasoning-content') as HTMLElement;
@@ -2528,8 +2660,10 @@ export class AIChatView extends ItemView {
                 const responseDiv = responseContainer.querySelector('.markdown-rendered') as HTMLElement;
                 if (responseDiv) {
                     responseDiv.empty();
+                    // Clean up the response content before rendering
+                    const cleanedResponse = cleanContent(responsePart);
                     await MarkdownRenderer.renderMarkdown(
-                        responsePart,
+                        cleanedResponse,
                         responseDiv,
                         '',
                         this.plugin
@@ -2571,7 +2705,9 @@ export class AIChatView extends ItemView {
                                 // Render the reasoning blocks if not already done
                                 if (!reasoningContainer.querySelector('.markdown-rendered')) {
                                     const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
-                                    MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
+                                    // Clean up the reasoning content before rendering
+                                    const cleanedReasoning = cleanContent(joinedReasoning);
+                                    MarkdownRenderer.renderMarkdown(cleanedReasoning, reasoningContainer, '', this.plugin);
                                 }
                                 this.expandedReasoningMessages.add(messageId);
                                 reasoningContainer.classList.add('is-expanded');
@@ -2585,8 +2721,10 @@ export class AIChatView extends ItemView {
         } else {
             // For non-reasoning models, just render the full content
             markdownContainer.empty();
+            // Clean up the content before rendering
+            const cleanedContent = cleanContent(content);
             await MarkdownRenderer.renderMarkdown(
-                content,
+                cleanedContent,
                 markdownContainer,
                 '',
                 this.plugin
@@ -2614,14 +2752,14 @@ export class AIChatView extends ItemView {
                 if (messagePairs >= (titleSettings.autoGenerateAfterPairs || 2)) {
                     // Set flag before starting generation
                     this.isTitleGenerationInProgress = true;
-                    try {
-                        await this.handleTitleGeneration();
-                    } catch (error) {
-                        console.error('Auto title generation failed:', error);
-                    } finally {
-                        // Reset flag after completion (success or failure)
-                        this.isTitleGenerationInProgress = false;
-                    }
+                    // Run title generation in the background
+                    this.handleTitleGeneration()
+                        .catch(error => {
+                            console.error('Auto title generation failed:', error);
+                        })
+                        .finally(() => {
+                            this.isTitleGenerationInProgress = false;
+                        });
                 }
             }
         }
