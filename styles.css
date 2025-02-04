@@ -491,19 +491,19 @@
 .flare-message-content li,
 .flare-markdown-content .markdown-rendered li,
 .flare-response-content .markdown-rendered li {
-    margin: 0;
+    display: list-item;     /* Ensure these stay as proper list items */
+    margin: 0.25em 0;       /* Some vertical spacing */
     padding: 0;
     line-height: 1.4;
-    display: list-item;
     position: relative;
 }
 
 .flare-message-content li p,
 .flare-markdown-content .markdown-rendered li p,
 .flare-response-content .markdown-rendered li p {
-    margin: 0;
+    display: block;         /* Preserve paragraph breaks inside list items */
+    margin: 0.35em 0;       /* Add a little spacing, tweak as needed */
     padding: 0;
-    display: inline;
 }
 
 /* Code blocks */
@@ -565,8 +565,10 @@
 }
 
 /* Handle line breaks */
-.flare-message-content br {
-    display: none;
+.flare-message-content br,
+.flare-markdown-content .markdown-rendered br,
+.flare-response-content .markdown-rendered br {
+    display: inline;        /* Default behavior for manual line breaks */
 }
 
 .flare-message-content br + br {
@@ -638,6 +640,8 @@
     width: 100%;
     min-height: 0;
     transition: min-height 0.3s ease;
+    margin: 0;
+    padding: 0;
 }
 
 .flare-response-content .markdown-rendered {
@@ -654,15 +658,15 @@
 .flare-response-content .markdown-rendered {
     white-space: pre-wrap;
     word-break: break-word;
-    line-height: 1.5;
+    line-height: 1.4;
     margin: 0;
     padding: 0;
 }
 
 .flare-markdown-content .markdown-rendered p,
 .flare-response-content .markdown-rendered p {
-    margin: 0;
-    line-height: 1.3;
+    margin: 0.15em 0;
+    line-height: 1.4;
 }
 
 .flare-markdown-content .markdown-rendered p:first-child,
@@ -678,7 +682,8 @@
 /* Reduce spacing between code blocks and paragraphs */
 .flare-markdown-content .markdown-rendered pre,
 .flare-response-content .markdown-rendered pre {
-    margin: 0.15em 0;
+    margin: 0.25em 0;
+    padding: 0.5em;
 }
 
 .flare-markdown-content .markdown-rendered pre:first-child,
@@ -696,17 +701,15 @@
 .flare-markdown-content .markdown-rendered ol,
 .flare-response-content .markdown-rendered ul,
 .flare-response-content .markdown-rendered ol {
-    margin: 0.5em 0;
+    margin: 0.15em 0;
     padding-left: 1.5em;
-    list-style-type: disc;
 }
 
 .flare-markdown-content .markdown-rendered li,
 .flare-response-content .markdown-rendered li {
-    margin: 0.25em 0;
+    margin: 0.1em 0;
     padding: 0;
-    line-height: 1.5;
-    display: list-item;
+    line-height: 1.4;
 }
 
 /* Headings */
@@ -2022,7 +2025,7 @@
 .flare-markdown-content .markdown-rendered {
     white-space: pre-wrap;
     word-break: break-word;
-    line-height: 1.5;
+    line-height: 1.4;
     font-size: inherit;
     color: inherit;
     margin: 0;
@@ -2076,7 +2079,7 @@
 .flare-markdown-content .markdown-rendered {
     white-space: pre-wrap;
     word-break: break-word;
-    line-height: 1.5;
+    line-height: 1.4;
     font-size: inherit;
     color: inherit;
     margin: 0;
@@ -3173,128 +3176,263 @@
 .flare-message-content,
 .flare-markdown-content .markdown-rendered,
 .flare-response-content .markdown-rendered {
+    margin: 0;
+    padding: 0;
     white-space: pre-wrap;
     word-break: break-word;
-    line-height: 1.5;
-    margin: 0;
-    padding: 0;
-}
-
-/* Paragraph and element spacing */
-.flare-message-content p,
-.flare-markdown-content .markdown-rendered p,
-.flare-response-content .markdown-rendered p {
-    margin: 0;
-    padding: 0;
-    line-height: 1.3;
-    display: block;
-}
-
-/* Lists */
-.flare-message-content ul,
-.flare-message-content ol,
-.flare-markdown-content .markdown-rendered ul,
-.flare-markdown-content .markdown-rendered ol,
-.flare-response-content .markdown-rendered ul,
-.flare-response-content .markdown-rendered ol {
-    margin: 0.15em 0;
-    padding-left: 1.5em;
-    list-style-position: outside;
-}
-
-.flare-message-content li,
-.flare-markdown-content .markdown-rendered li,
-.flare-response-content .markdown-rendered li {
-    margin: 0;
-    padding: 0;
     line-height: 1.4;
-    display: list-item;
+}
+
+/* Reasoning content styling - this has the nice formatting we want to match */
+.flare-reasoning-content {
     position: relative;
-}
-
-.flare-message-content li p,
-.flare-markdown-content .markdown-rendered li p,
-.flare-response-content .markdown-rendered li p {
-    margin: 0;
-    padding: 0;
-    display: inline;
-}
-
-/* Remove all special line break handling from CSS */
-.flare-message-content br,
-.flare-markdown-content .markdown-rendered br,
-.flare-response-content .markdown-rendered br {
+    margin-top: var(--size-4-2);
+    padding: var(--size-4-2);
+    background: var(--background-secondary);
+    border-radius: var(--radius-m);
+    border-left: 2px solid var(--text-accent);
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
     display: none;
 }
 
-/* Streaming content */
-.flare-markdown-content .markdown-rendered {
+.flare-reasoning-content.is-expanded {
+    display: block;
     opacity: 1;
-    transition: opacity 0.15s ease;
+    height: auto;
 }
 
-.flare-markdown-content.is-empty .markdown-rendered {
+/* Response content styling - match the nice formatting */
+.flare-response-content {
+    position: relative;
+    width: 100%;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+/* Markdown content styling - consistent for all types */
+.flare-markdown-content {
+    position: relative;
+    opacity: 1;
+    margin: 0;
+    padding: 0;
+}
+
+/* Common markdown content styles */
+.flare-markdown-content .markdown-rendered,
+.flare-response-content .markdown-rendered,
+.flare-reasoning-content {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.3;
+    margin: 0;
+    padding: 0;
+}
+
+/* Paragraph spacing */
+.flare-markdown-content .markdown-rendered p,
+.flare-response-content .markdown-rendered p,
+.flare-reasoning-content p {
+    margin: 0.05em 0;
+    line-height: 1.3;
+}
+
+/* List spacing */
+.flare-markdown-content .markdown-rendered ul,
+.flare-markdown-content .markdown-rendered ol,
+.flare-response-content .markdown-rendered ul,
+.flare-response-content .markdown-rendered ol,
+.flare-reasoning-content ul,
+.flare-reasoning-content ol {
+    margin: 0.05em 0;
+    padding-left: 1.2em;
+    list-style-position: outside;
+}
+
+/* List items */
+.flare-markdown-content .markdown-rendered li,
+.flare-response-content .markdown-rendered li,
+.flare-reasoning-content li {
+    margin: 0.02em 0;
+    padding: 0;
+    line-height: 1.3;
+}
+
+/* List item paragraphs */
+.flare-markdown-content .markdown-rendered li p,
+.flare-response-content .markdown-rendered li p,
+.flare-reasoning-content li p {
+    display: inline;
+    margin: 0;
+    padding: 0;
+}
+
+/* Code blocks */
+.flare-markdown-content .markdown-rendered pre,
+.flare-response-content .markdown-rendered pre,
+.flare-reasoning-content pre {
+    margin: 0.1em 0;
+    padding: 0.3em;
+}
+
+/* Headings */
+.flare-markdown-content .markdown-rendered h1,
+.flare-markdown-content .markdown-rendered h2,
+.flare-markdown-content .markdown-rendered h3,
+.flare-markdown-content .markdown-rendered h4,
+.flare-markdown-content .markdown-rendered h5,
+.flare-markdown-content .markdown-rendered h6,
+.flare-response-content .markdown-rendered h1,
+.flare-response-content .markdown-rendered h2,
+.flare-response-content .markdown-rendered h3,
+.flare-response-content .markdown-rendered h4,
+.flare-response-content .markdown-rendered h5,
+.flare-response-content .markdown-rendered h6,
+.flare-reasoning-content h1,
+.flare-reasoning-content h2,
+.flare-reasoning-content h3,
+.flare-reasoning-content h4,
+.flare-reasoning-content h5,
+.flare-reasoning-content h6 {
+    margin: 0.2em 0 0.1em 0;
+    line-height: 1.2;
+}
+
+/* Remove margins from first/last elements */
+.flare-markdown-content .markdown-rendered > *:first-child,
+.flare-response-content .markdown-rendered > *:first-child,
+.flare-reasoning-content > *:first-child {
+    margin-top: 0;
+}
+
+.flare-markdown-content .markdown-rendered > *:last-child,
+.flare-response-content .markdown-rendered > *:last-child,
+.flare-reasoning-content > *:last-child {
+    margin-bottom: 0;
+}
+
+/* Element spacing */
+.flare-markdown-content .markdown-rendered > * + *,
+.flare-response-content .markdown-rendered > * + *,
+.flare-reasoning-content > * + * {
+    margin-top: 0.08em;
+}
+
+/* Line breaks */
+.flare-markdown-content .markdown-rendered br,
+.flare-response-content .markdown-rendered br,
+.flare-reasoning-content br {
+    display: block;
+    content: "";
+    margin: 0.02em 0;
+}
+
+/* Remove double line breaks */
+.flare-markdown-content .markdown-rendered br + br,
+.flare-response-content .markdown-rendered br + br,
+.flare-reasoning-content br + br {
+    display: none;
+}
+
+/* Empty state */
+.flare-markdown-content.is-empty {
     opacity: 0;
     min-height: 0;
     margin: 0;
     padding: 0;
 }
 
-/* Ensure proper spacing for content */
-.flare-markdown-content:not(.is-empty) {
-    margin-top: 0;
+/* Base message content styling */
+.markdown-rendered {
+    margin: 0;
+    padding: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.3;
 }
 
-/* Ensure proper bullet points */
-.flare-markdown-content .markdown-rendered ul,
-.flare-response-content .markdown-rendered ul {
-    list-style-type: disc !important;
+.markdown-rendered p {
+    margin: 0;
+    padding: 0;
+    line-height: 1.3;
 }
 
-.flare-markdown-content .markdown-rendered ul ul,
-.flare-response-content .markdown-rendered ul ul {
-    list-style-type: circle !important;
-    margin-top: 0;
-    margin-bottom: 0;
+.markdown-rendered ul,
+.markdown-rendered ol {
+    margin: 0;
+    padding-left: 1.2em;
 }
 
-/* Ensure proper list spacing */
-.flare-markdown-content .markdown-rendered li + li,
-.flare-response-content .markdown-rendered li + li {
-    margin-top: 0.1em;
+.markdown-rendered li {
+    margin: 0;
+    padding: 0;
+    line-height: 1.3;
 }
 
-/* Handle line breaks */
-.flare-message-content br,
-.flare-markdown-content .markdown-rendered br,
-.flare-response-content .markdown-rendered br {
-    display: none;
-}
-
-/* Ensure proper list item continuation */
-.flare-markdown-content .markdown-rendered li > p,
-.flare-response-content .markdown-rendered li > p {
-    display: inline-block;
+.markdown-rendered li p {
+    display: inline;
     margin: 0;
     padding: 0;
 }
 
-/* Remove extra margins from lists */
-.flare-markdown-content .markdown-rendered ul:first-child,
-.flare-markdown-content .markdown-rendered ol:first-child,
-.flare-response-content .markdown-rendered ul:first-child,
-.flare-response-content .markdown-rendered ol:first-child {
-    margin-top: 0;
+.markdown-rendered pre {
+    margin: 0.1em 0;
+    padding: 0.3em;
 }
 
-.flare-markdown-content .markdown-rendered ul:last-child,
-.flare-markdown-content .markdown-rendered ol:last-child,
-.flare-response-content .markdown-rendered ul:last-child,
-.flare-response-content .markdown-rendered ol:last-child {
-    margin-bottom: 0;
+.markdown-rendered br {
+    display: none;
 }
 
-/* Ensure proper spacing for content */
-.flare-markdown-content:not(.is-empty) {
-    margin-top: 0;
+/* Only special styling needed for reasoning container itself */
+.flare-reasoning-content {
+    position: relative;
+    margin-top: var(--size-4-2);
+    padding: var(--size-4-2);
+    background: var(--background-secondary);
+    border-radius: var(--radius-m);
+    border-left: 2px solid var(--text-accent);
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
+    display: none;
+}
+
+.flare-reasoning-content.is-expanded {
+    display: block;
+    opacity: 1;
+    height: auto;
+}
+
+/* Remove ALL duplicate styles and just keep the essential base styling */
+.markdown-rendered {
+    margin: 0;
+    padding: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Only special styling needed for reasoning container appearance */
+.flare-reasoning-content {
+    position: relative;
+    margin-top: var(--size-4-2);
+    padding: var(--size-4-2);
+    background: var(--background-secondary);
+    border-radius: var(--radius-m);
+    border-left: 2px solid var(--text-accent);
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
+    display: none;
+}
+
+.flare-reasoning-content.is-expanded {
+    display: block;
+    opacity: 1;
+    height: auto;
 }
