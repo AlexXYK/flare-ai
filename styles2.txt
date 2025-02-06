@@ -1,0 +1,2473 @@
+--- START OF FILE styles.css ---
+
+/* =================
+ * FLARE.ai Plugin CSS - CLEANED & OPTIMIZED (Revision 2 - UI Focused)
+ * =================
+ *
+ * This CSS file has been revised to be less aggressive in cleanup, focusing on
+ * removing *redundant* styles and consolidating common patterns while preserving
+ * the original UI's intended appearance.
+ *
+ * Sections:
+ * 1. Variables and Root Settings
+ * 2. Core Layout Components
+ * 3. Message Styles
+ * 4. Settings Tab Styles
+ * 5. History Components
+ * 6. Mobile & Touch Optimizations
+ * 7. Utility Classes
+ */
+
+/* 1. Variables and Root Settings
+   ----------------------------- */
+:root {
+    /* Message styling */
+    --message-max-width: 95%;
+    --message-padding: 8px 12px;
+    --message-radius: 8px;
+    --message-gap: 2px;
+
+    /* User message specific */
+    --user-bg: var(--interactive-accent);
+    --user-color: var(--text-on-accent);
+
+    /* Assistant message specific */
+    --assistant-bg: var(--background-primary-alt);
+    --assistant-color: var(--text-normal);
+    --assistant-border: var(--background-modifier-border-hover);
+}
+
+/* 2. Core Layout Components
+   ------------------------ */
+.flare-chat-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    width: 100%;
+    position: relative;
+    z-index: 1;
+    padding: 0;
+    margin: 0;
+}
+
+.flare-main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    height: 100%;
+    position: relative;
+    transition: margin-left 0.3s ease;
+    z-index: 1;
+}
+
+.flare-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: relative;
+    isolation: isolate;
+    contain: layout;
+    -webkit-overflow-scrolling: touch;
+}
+
+.flare-toolbar {
+    display: flex;
+    align-items: center;
+    padding: 2px 4px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary-alt);
+    gap: 4px;
+    min-height: 32px;
+}
+
+.flare-toolbar-left,
+.flare-toolbar-center,
+.flare-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.flare-toolbar-left {
+    flex: 0 0 auto;
+}
+
+.flare-toolbar-center {
+    flex: 1;
+    justify-content: center;
+    min-width: 0;
+    margin: 0 8px;
+}
+
+.flare-toolbar-right {
+    flex: 0 0 auto;
+}
+
+.flare-toolbar-center h2 {
+    font-size: 1.1em;
+    margin: 0;
+    padding: 0;
+    line-height: 1.2;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.flare-toolbar .flare-toolbar-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    width: 24px;
+    height: 24px;
+    padding: 4px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+}
+
+.flare-toolbar .flare-toolbar-button:hover {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.flare-chat-container .flare-composer {
+    padding: 16px;
+    border-top: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+}
+
+.flare-chat-container .flare-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 2px;
+    margin: 0;
+}
+
+.flare-chat-container .flare-input {
+    flex-grow: 1;
+    min-height: 24px;
+    max-height: 200px;
+    padding: 6px 8px;
+    border: none;
+    background: transparent;
+    resize: none;
+    font-family: inherit;
+    line-height: 1.5;
+    width: 100%;
+    margin: 0;
+    box-sizing: border-box;
+    overflow-y: hidden;
+}
+
+.flare-chat-container .flare-input:focus {
+    outline: none;
+}
+
+.flare-chat-container .flare-chooser {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    width: 36px;
+    height: 36px;
+    padding: 8px;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-accent);
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+}
+
+.flare-chat-container .flare-chooser:hover {
+    background-color: var(--background-modifier-hover);
+    color: var(--interactive-accent);
+}
+
+.flare-chat-container .flare-send-button {
+    background-color: transparent !important;
+}
+
+/* Footer */
+.flare-footer {
+    flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 1px 1px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    min-height: 36px;
+}
+
+.flare-footer-left,
+.flare-footer-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 80px;
+    justify-content: flex-start;
+}
+
+.flare-footer-right {
+    justify-content: flex-end;
+}
+
+/* Temperature Control and Model Control */
+.flare-temp-control,
+.flare-model-control {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    background: var(--background-modifier-hover);
+    min-width: 60px;
+}
+
+.flare-temp-control:hover,
+.flare-model-control:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-accent);
+}
+
+.flare-temp-control .flare-temp-icon,
+.flare-model-control .flare-model-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+}
+
+.flare-temp-control .flare-temp-value,
+.flare-model-control .flare-model-value {
+    font-family: var(--font-monospace);
+    font-size: 0.9em;
+    color: var(--text-muted);
+}
+
+.flare-temp-control:hover .flare-temp-icon,
+.flare-temp-control:hover .flare-temp-value,
+.flare-model-control:hover .flare-model-icon,
+.flare-model-control:hover .flare-model-value {
+    color: var(--text-accent);
+}
+
+/* Temperature Control Disabled State */
+.flare-temp-control.is-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.flare-temp-control.is-disabled .flare-temp-icon,
+.flare-temp-control.is-disabled .flare-temp-value,
+.flare-model-control.is-disabled .flare-model-icon,
+.flare-model-control.is-disabled .flare-model-value {
+    color: var(--text-muted);
+}
+
+/* 3. Message Styles
+   ---------------- */
+/* Base message container */
+.flare-message {
+    display: flex;
+    flex-direction: column;
+    gap: var(--message-gap);
+    max-width: var(--message-max-width);
+    position: relative;
+    margin: 1px 0;
+}
+
+.flare-message.is-loading {
+    opacity: 0.7;
+}
+
+/* User message styling */
+.flare-message.user {
+    align-self: flex-end;
+    margin-left: 16px;
+    line-height: 1.1;
+}
+
+/* Target the auto paragraph directly and ensure no margin */
+.flare-markdown-content p[dir="auto"],
+.markdown-rendered p[dir="auto"] {
+    margin: 4;
+    padding: 0;
+    line-height: inherit;
+    display: inline;
+}
+
+/* User message specific styles */
+.flare-message.user .flare-message-content {
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    padding: 2px 6px;
+    border-radius: 12px;
+    display: inline;
+}
+
+/* Assistant message styling */
+.flare-message.assistant {
+    align-self: flex-start;
+    margin-right: 16px;
+}
+
+.flare-message.assistant .flare-message-content {
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+    padding: 2px 6px;
+    border-radius: 12px;
+    display: inline-block;
+}
+
+.flare-message.assistant .flare-markdown-content p[dir="auto"] {
+    margin: 0;
+    padding: 0;
+    line-height: inherit;
+    display: inline;
+}
+
+.flare-message.assistant .flare-content-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.flare-message.assistant .flare-system-main {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+}
+
+/* Message content */
+.flare-message-content {
+    display: inline-flex;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-content-wrapper {
+    display: inline-flex;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+}
+
+/* Message metadata */
+.flare-message-meta {
+    font-size: 0.75em;
+    opacity: 0.7;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding: 0 6px;
+    margin-top: 1px;
+    margin-bottom: 1px;
+    color: var(--text-muted);
+    position: relative;
+    z-index: 1;
+}
+
+/* Message actions */
+.flare-message-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    margin-left: 4px;
+    position: relative;
+    z-index: 30;
+}
+
+/* Show actions on hover when not loading */
+.flare-message:not(.is-loading):hover .flare-message-actions {
+    opacity: 1;
+}
+
+/* Always show reasoning toggle button */
+.flare-message:not(.is-loading) .flare-message-actions .flare-action-button[aria-label="Toggle reasoning"] {
+    opacity: 1;
+}
+
+/* Reasoning content styling */
+.flare-reasoning-content {
+    position: relative;
+    margin-top: var(--size-4-2);
+    padding: var(--size-4-2);
+    background: var(--background-secondary);
+    border-radius: var(--radius-m);
+    border-left: 2px solid var(--text-accent);
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
+    display: none;
+}
+
+.flare-reasoning-content.is-expanded {
+    display: block;
+    opacity: 1;
+    height: auto;
+}
+
+/* Message content transitions */
+.flare-markdown-content {
+    opacity: 1;
+    transition: opacity 0.2s ease;
+    min-height: 0;
+}
+
+.flare-markdown-content.is-empty {
+    opacity: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+/* Always show reasoning toggle button */
+.flare-message:not(.is-loading) .flare-message-actions .flare-action-button[aria-label="Toggle reasoning"] {
+    opacity: 1;
+    background: var(--background-modifier-hover);
+}
+
+/* Active state for reasoning toggle */
+.flare-action-button[aria-label="Toggle reasoning"].is-active {
+    color: var(--text-accent);
+    background: var(--background-modifier-hover);
+    transform: translateY(-1px);
+}
+
+/* Markdown content in reasoning */
+.flare-reasoning-content .markdown-rendered {
+    display: inline;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.1;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-reasoning-content .markdown-rendered > * {
+    display: inline;
+    margin: 0;
+    padding: 0;
+}
+
+/* Dividers in reasoning content */
+.flare-reasoning-content hr {
+    margin: var(--size-4-1) 0;
+    border: none;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Action button styling */
+.flare-action-button {
+    background: none;
+    border: none;
+    padding: 2px;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 4px;
+    opacity: 0.8;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    position: relative;
+    z-index: 31;
+}
+
+.flare-action-button:hover {
+    opacity: 1;
+    background-color: var(--background-modifier-hover);
+    color: var(--text-accent);
+    transform: translateY(-1px);
+}
+
+.flare-action-button.delete:hover {
+    color: var(--text-error);
+}
+
+/* Flare name and metadata */
+.flare-name {
+    color: var(--text-accent);
+    cursor: pointer;
+    position: relative;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background-color: var(--background-modifier-hover);
+    transition: all 0.2s ease;
+    z-index: 2;
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.flare-name:hover {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-accent);
+}
+
+.flare-name .flare-metadata {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 8px;
+    margin-top: 4px;
+    box-shadow: var(--shadow-s);
+    z-index: 999999; /* Highest z-index */
+    font-size: 0.85em;
+    min-width: 200px;
+    color: var(--text-normal);
+}
+
+/* Message flare info */
+.flare-message-flare {
+    display: inline;
+    font-size: 0.8em;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background-color: var(--background-modifier-hover);
+    transition: all 0.2s ease;
+    position: relative;
+    z-index: 2;
+    pointer-events: auto;
+}
+
+.flare-message-flare .flare-metadata {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 8px;
+    margin-top: 4px;
+    box-shadow: var(--shadow-s);
+    z-index: 999999; /* Highest z-index */
+    font-size: 0.85em;
+    min-width: 200px;
+    color: var(--text-normal);
+}
+
+/* System message flare */
+.flare-system-main .flare-name .flare-metadata {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 100000;
+    /* Ensure fully opaque background and no blending with underlying elements: */
+    background-color: var(--background-primary) !important;
+    opacity: 1 !important;
+    mix-blend-mode: normal;
+    background-blend-mode: normal;
+    /* If needed, also remove or override any alpha or transparency in box-shadow: */
+    /* box-shadow: var(--shadow-s, 0 2px 8px rgba(0,0,0,0.2)); */
+}
+
+/* Hover states - keep these separate and specific */
+.flare-name:hover > .flare-metadata {
+    display: block !important;
+}
+
+.flare-message-flare:hover > .flare-metadata {
+    display: block !important;
+}
+
+.flare-system-main .flare-name:hover > .flare-metadata {
+    display: block !important;
+}
+
+/* Mobile states */
+@media (hover: none) {
+    .is-mobile .flare-name.is-active > .flare-metadata,
+    .is-mobile .flare-message-flare.is-active > .flare-metadata {
+        display: block !important;
+    }
+}
+
+/* Mobile optimizations for tooltips */
+@media (max-width: 768px) {
+    /* System message and flare nametag tooltips */
+    .flare-name .flare-metadata,
+    .flare-message-flare .flare-metadata,
+    .flare-system-main .flare-name .flare-metadata {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        margin: 0;
+        width: 90%;
+        max-width: 320px;
+        max-height: 80vh;
+        overflow-y: auto;
+        border-radius: 12px;
+        padding: 12px;
+        box-shadow: 0 2px 20px rgba(0, 0, 0, 0.2);
+        z-index: 999999;
+        background: var(--background-primary);
+        border: 1px solid var(--background-modifier-border);
+        animation: tooltipFadeIn 0.2s ease-out;
+    }
+
+    /* Special positioning for assistant message flare tooltips */
+    .flare-message.assistant .flare-name .flare-metadata {
+        left: 0;
+        transform: translateY(-50%);
+        margin-left: 16px; /* Add some spacing from the flare name */
+    }
+
+    /* Add backdrop when tooltip is shown */
+    .flare-name.is-active::before,
+    .flare-message-flare.is-active::before,
+    .flare-system-main .flare-name.is-active::before {
+        content: '';
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.3);
+        z-index: 999998; /* Just below the tooltip but above everything else */
+        animation: backdropFadeIn 0.2s ease-out;
+    }
+
+    /* Adjust animation for assistant message tooltips */
+    .flare-message.assistant .flare-name .flare-metadata {
+        animation: tooltipFadeInRight 0.2s ease-out;
+    }
+
+    /* Ensure metadata items are well-spaced and readable */
+    .flare-metadata-item {
+        padding: 8px;
+        margin: 4px 0;
+        border-radius: 6px;
+        background: var(--background-modifier-hover);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.95em;
+        gap: 8px;
+    }
+
+    .flare-metadata-item .metadata-key {
+        color: var(--text-muted);
+        font-size: 0.9em;
+    }
+
+    .flare-metadata-item .metadata-value {
+        color: var(--text-normal);
+        font-weight: 500;
+        text-align: right;
+    }
+}
+
+@keyframes tooltipFadeIn {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -45%);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%);
+    }
+}
+
+@keyframes backdropFadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 0.3;
+    }
+}
+
+/* Add new animation for assistant tooltips */
+@keyframes tooltipFadeInRight {
+    from {
+        opacity: 0;
+        transform: translate(0, -45%);
+    }
+    to {
+        opacity: 1;
+        transform: translate(0, -50%);
+    }
+}
+
+/* 4. Settings Tab Styles
+   ---------------------- */
+/* (Settings Tab Styles - No Changes in this Revision, Keeping Original) */
+.providers-section {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    background: var(--background-primary);
+}
+
+.flare-provider-selector {
+    margin: 0;
+}
+
+.flare-provider-selector .setting-item {
+    border: none;
+    padding: 0;
+}
+
+.flare-provider-selector .setting-item-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Remove all custom dropdown styling */
+.flare-dropdown {
+    width: 200px;
+}
+
+/* Collapsible sections spacing */
+.flare-section {
+    margin: 0;
+    border: none;
+    background: var(--background-primary);
+}
+
+.flare-section + .flare-section {
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.flare-section-header {
+    padding: 12px 0;
+    background: var(--background-primary);
+    border-radius: 0;
+}
+
+.flare-section-content {
+    padding: 0 0 12px 0;
+    border-top: none;
+    background: var(--background-primary);
+}
+
+/* Provider Settings */
+.provider-settings {
+    background: var(--background-primary);
+    padding: 0;
+    margin-top: 12px;
+}
+
+.provider-settings .setting-item {
+    border: none;
+    padding: 12px 0;
+}
+
+.provider-settings .setting-item:not(:last-child) {
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.provider-settings .setting-item-info {
+    margin-bottom: 8px;
+}
+
+.provider-settings .setting-item-name {
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.provider-settings .setting-item-description {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    margin-top: 4px;
+}
+
+.provider-settings .setting-item-control {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.provider-settings input[type="text"],
+.provider-settings input[type="password"] {
+    width: 100%;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    font-size: 14px;
+    transition: all 0.15s ease;
+}
+
+.provider-settings input[type="text"]:focus,
+.provider-settings input[type="password"]:focus {
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+/* Action Buttons */
+.flare-form-actions {
+    display: none;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.flare-form-actions.is-visible {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* Models List Styles */
+.models-list {
+    margin-top: 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--background-primary);
+}
+
+.models-list-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    background: var(--background-secondary-alt);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.model-header {
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.model-name-header {
+    flex: 1;
+    padding-left: 4px;
+}
+
+.visibility-header {
+    width: 60px;
+    text-align: center;
+}
+
+.models-list .setting-item {
+    margin: 0;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+}
+
+.models-list .setting-item-name {
+    padding-left: 4px;
+}
+
+.models-list .setting-item-control {
+    justify-content: flex-end;
+    padding-right: 4px;
+}
+
+.models-list .setting-item:last-child {
+    border-bottom: none;
+}
+
+/* Empty state */
+.models-empty-state {
+    margin-top: 16px;
+    padding: 16px;
+    text-align: center;
+    color: var(--text-muted);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    font-size: 0.9em;
+}
+
+/* Loading state */
+.setting-item-control button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* 5. History Components
+   --------------------- */
+/* (History Components - No Changes in this Revision, Keeping Original) */
+.flare-history-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: var(--background-primary);
+    border-right: 1px solid var(--background-modifier-border);
+    width: 300px;
+    max-width: 300px;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease, visibility 0.3s ease, opacity 0.3s ease;
+    visibility: hidden;
+    opacity: 0;
+
+    /* Keep the flex layout; remove the explicit height */
+    display: flex;
+    flex-direction: column;
+    /* Removed: height: 100vh; */
+    overflow-x: hidden; /* No horizontal scroll */
+}
+
+.flare-history-sidebar.is-visible {
+    transform: translateX(0);
+    box-shadow: var(--shadow-s);
+    visibility: visible;
+    opacity: 1;
+}
+
+.flare-history-header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary-alt);
+}
+
+.flare-history-header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-normal);
+    flex: 1;
+}
+
+.flare-history-search {
+    flex-shrink: 0;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary-alt);
+    position: relative;
+}
+
+.flare-history-search-input {
+    width: 100%;
+    padding: 8px 32px 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    font-size: 14px;
+}
+
+.flare-history-search-clear {
+    position: absolute;
+    right: 20px; /* Adjusted from 24px */
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+}
+
+.flare-history-search-clear.is-visible {
+    display: flex;
+}
+
+.flare-history-search-clear:hover {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.flare-history-tree {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    /* Add padding to the container instead of individual items */
+    padding: 8px;
+}
+
+.flare-history-children {
+    margin-left: 16px; /* Reduced from 20px */
+    transition: all 0.2s ease;
+    /* Add a small margin-top to separate from parent */
+    margin-top: 2px;
+}
+
+.flare-history-item.is-collapsed > .flare-history-children {
+    display: none;
+}
+
+.flare-history-item {
+    border-radius: 4px; /* Reduced from 6px */
+    margin-bottom: 4px; /* Reduced from 12px */
+    transition: all 0.15s ease;
+    width: 100%;
+}
+
+.flare-history-item-content {
+    display: flex;
+    align-items: center;
+    /* Reduce vertical padding */
+    padding: 6px 8px; /* Reduced from 8px 12px */
+    gap: 6px; /* Reduced from 8px */
+    border-radius: 4px; /* Reduced from 6px */
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.flare-history-item:hover > .flare-history-item-content {
+    background-color: var(--background-modifier-hover);
+}
+
+.flare-history-item.is-active > .flare-history-item-content {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-accent);
+}
+
+.flare-history-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.flare-history-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    line-height: 1.4;
+    color: var(--text-normal);
+}
+
+/* Folder specific styles */
+.flare-history-item.folder > .flare-history-item-content {
+    font-weight: 500;
+}
+
+.flare-history-item.folder > .flare-history-item-content .flare-history-icon {
+    color: var(--text-accent);
+}
+
+/* Tree chevron rotation */
+.flare-history-icon svg {
+    transition: transform 0.15s ease;
+}
+
+.flare-history-item.is-collapsed .flare-history-icon svg {
+    transform: rotate(-90deg);
+}
+
+/* Tree item indentation */
+.flare-history-item {
+    --indent-level: 0;
+    padding-left: var(--indent-level);
+}
+
+/* Context menu positioning */
+.flare-history-context-menu {
+    --menu-x: 0;
+    --menu-y: 0;
+    position: fixed;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    padding: 4px;
+    box-shadow: var(--shadow-s);
+    z-index: 1001;
+    min-width: 160px;
+    opacity: 0;
+    transform: translate(var(--menu-x), var(--menu-y));
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+}
+
+.flare-history-context-menu.is-positioned {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Action buttons visibility */
+.flare-action-buttons {
+    display: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.flare-action-buttons.is-visible {
+    display: flex;
+    opacity: 1;
+}
+
+/* Context menu item styling */
+.flare-context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+    color: var(--text-normal);
+}
+
+.flare-context-menu-item:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.flare-context-menu-item.is-danger {
+    color: var(--text-error);
+}
+
+.flare-context-menu-item.is-danger:hover {
+    background-color: var(--background-modifier-error);
+    color: var(--text-on-accent);
+}
+
+.flare-context-menu-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    color: inherit;
+}
+
+/* Empty State */
+.flare-history-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 32px;
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.flare-history-empty-icon {
+    font-size: 32px;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+.flare-history-empty p {
+    margin: 4px 0;
+    line-height: 1.4;
+}
+
+.flare-history-empty-hint {
+    font-size: 0.9em;
+    opacity: 0.7;
+}
+
+/* 6. Mobile & Touch Optimizations
+   ----------------------------- */
+/* (Mobile & Touch Optimizations - No Changes in this Revision, Keeping Original) */
+@media (max-width: 768px) {
+    .flare-history-sidebar {
+        width: 280px;
+    }
+
+    .flare-history-header {
+        padding: 10px 12px;
+    }
+
+    .flare-history-search {
+        padding: 8px 12px;
+    }
+
+    .flare-history-item-content {
+        padding: 10px;
+        min-height: 44px; /* Larger touch target */
+    }
+
+    .flare-context-menu-item {
+        padding: 10px 12px;
+        min-height: 44px; /* Larger touch target */
+    }
+}
+
+/* 7. Utility Classes & Dynamic States
+   ---------------------------------- */
+/* (Utility Classes & Dynamic States - No Changes in this Revision, Keeping Original) */
+/* Dynamic States */
+.is-hidden {
+    display: none !important;
+}
+
+.is-visible {
+    display: block !important;
+}
+
+/* Input height states */
+.flare-input {
+    height: auto;
+    min-height: 24px;
+    transition: height 0.15s ease;
+}
+
+.flare-input.is-empty {
+    height: auto !important;
+}
+
+.flare-input.is-measuring {
+    height: 0 !important;
+    overflow: hidden;
+}
+
+.flare-input.has-content {
+    height: var(--content-height) !important;
+}
+
+/* Suggestions positioning */
+.flare-suggestions {
+    --container-width: 100%;
+    --left-offset: 0;
+    --max-height: 200px;
+    --bottom-offset: 0;
+    --top-offset: 0;
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: var(--left-offset);
+    right: 0;
+    max-height: var(--max-height);
+    overflow-y: auto;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    box-shadow: var(--shadow-s);
+    z-index: 1000;
+    padding: 4px;
+    margin: 0 8px;
+    width: var(--container-width);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.flare-suggestions.position-bottom {
+    top: var(--bottom-offset);
+    bottom: auto;
+}
+
+.flare-suggestions.position-top {
+    bottom: var(--top-offset);
+    top: auto;
+}
+
+.flare-suggestions.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Context menu positioning */
+.flare-history-context-menu {
+    --menu-x: 0;
+    --menu-y: 0;
+    transform: translate(var(--menu-x), var(--menu-y));
+}
+
+/* Tree indentation */
+.flare-history-item {
+    --indent-level: 0;
+    padding-left: var(--indent-level);
+}
+
+/* Reasoning states */
+.flare-reasoning-content {
+    display: none;
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
+}
+
+.flare-reasoning-content.is-expanded {
+    display: block;
+    opacity: 1;
+    height: auto;
+}
+
+/* Model dropup positioning */
+.flare-model-dropup {
+    --bottom-pos: 0;
+    --left-pos: 0;
+    --width: 100%;
+    bottom: var(--bottom-pos);
+    left: var(--left-pos);
+    width: var(--width);
+}
+
+/* Input States */
+.flare-input {
+    height: auto;
+    min-height: 24px;
+    transition: height 0.15s ease;
+}
+
+.flare-input.is-empty {
+    height: auto !important;
+}
+
+.flare-input.is-measuring {
+    height: 0 !important;
+    overflow: hidden;
+}
+
+.flare-input.has-content {
+    height: var(--content-height) !important;
+}
+
+/* Reasoning Container States */
+.flare-reasoning-content {
+    display: none;
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, height 0.3s ease;
+}
+
+.flare-reasoning-content.is-expanded {
+    display: block;
+    opacity: 1;
+    height: auto;
+}
+
+/* Response content transitions */
+.flare-response-content {
+    opacity: 1;
+    transition: opacity 0.2s ease;
+    min-height: 0;
+}
+
+.flare-response-content .markdown-rendered {
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+}
+
+/* Message States */
+.flare-message {
+    opacity: 1;
+    transition: opacity 0.2s ease;
+}
+
+.flare-message.is-loading {
+    opacity: 0.7;
+}
+
+.flare-message.is-streaming .flare-markdown-content {
+    opacity: 0.9;
+}
+
+/* Dynamic States */
+.is-hidden {
+    display: none !important;
+}
+
+.is-visible {
+    display: block !important;
+}
+
+/* Suggestions States */
+.flare-suggestions {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.flare-suggestions.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Provider UI */
+.flare-provider-selector {
+    margin: 0;
+}
+
+.flare-provider-selector .setting-item {
+    border: none;
+    padding: 0;
+}
+
+.flare-provider-selector .setting-item-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Provider type selector */
+.provider-type-setting {
+    display: none;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.provider-type-setting.is-visible {
+    display: block;
+}
+
+.provider-type-setting .setting-item {
+    border: none;
+    padding: 0;
+}
+
+.provider-type-setting .setting-item-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Flare UI */
+.flare-dropdown-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.flare-dropdown-group .setting-item {
+    border: none;
+    padding: 0;
+    flex: 1;
+}
+
+.flare-dropdown-group .setting-item-info {
+    display: none;
+}
+
+.flare-dropdown-group .setting-item-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.flare-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.flare-buttons .clickable-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 4px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.flare-buttons .clickable-icon:hover {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.flare-buttons .clickable-icon.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Modal styles */
+.modal-button-container {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.modal-button-container button {
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.modal-button-container button.mod-warning {
+    background-color: var(--background-modifier-error);
+    color: var(--text-on-accent);
+}
+
+.modal-button-container button.mod-secondary {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+/* Provider settings */
+.provider-settings {
+    background: var(--background-primary);
+    padding: 0;
+    margin-top: 12px;
+}
+
+.provider-settings .setting-item {
+    border: none;
+    padding: 12px 0;
+}
+
+.provider-settings .setting-item:not(:last-child) {
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.provider-settings .setting-item-info {
+    margin-bottom: 8px;
+}
+
+.provider-settings .setting-item-name {
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.provider-settings .setting-item-description {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    margin-top: 4px;
+}
+
+.provider-settings .setting-item-control {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Flare Suggestion Menu */
+.flare-suggestions {
+    --container-width: 100%;
+    --left-offset: 0;
+    --max-height: 200px;
+    --bottom-offset: 0;
+    --top-offset: 0;
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: var(--left-offset);
+    right: 0;
+    max-height: var(--max-height);
+    overflow-y: auto;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    box-shadow: var(--shadow-s);
+    z-index: 1000;
+    padding: 4px;
+    margin: 0 8px;
+    width: var(--container-width);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.flare-suggestions.position-bottom {
+    top: var(--bottom-offset);
+    bottom: auto;
+}
+
+.flare-suggestions.position-top {
+    bottom: var(--top-offset);
+    top: auto;
+}
+
+.flare-suggestions.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.flare-suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--text-normal);
+    transition: all 0.15s ease;
+    min-height: 36px;
+}
+
+.flare-suggestion-item:hover,
+.flare-suggestion-item.is-selected {
+    background: var(--background-modifier-hover);
+    color: var(--text-accent);
+}
+
+.flare-suggestion-item .suggestion-icon {
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+}
+
+.flare-suggestion-item .suggestion-name {
+    flex: 1;
+    font-size: 0.95em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.flare-suggestion-item .suggestion-hint {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    opacity: 0.8;
+}
+
+/* Flare Suggestion Menu - Mobile Optimizations */
+@media (max-width: 768px) {
+    .flare-suggestions.mobile {
+        position: absolute;
+        bottom: 100%; /* Position above the input */
+        left: -8px; /* Compensate for parent padding */
+        right: -8px; /* Compensate for parent padding */
+        width: auto; /* Let left/right positioning control width */
+        max-height: 50vh;
+        margin: 0;
+        padding: 8px;
+        border-radius: 12px;
+        background: var(--background-primary);
+        box-shadow: 0 2px 20px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+        transform: none;
+    }
+
+    /* Container for the input and suggestions */
+    .flare-input-wrapper {
+        position: relative; /* Important for absolute positioning of suggestions */
+    }
+
+    .flare-suggestions-container {
+        /* Remove separate scrolling here */
+        max-height: none;
+        overflow: visible;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    /* Make the suggestions container itself scrollable */
+    .flare-suggestions.mobile {
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Larger touch targets */
+    .flare-suggestion-item {
+        padding: 12px;
+        min-height: 48px;
+    }
+
+    /* Rest of the styles remain the same */
+}
+
+/* Additional iOS-specific fixes */
+@supports (-webkit-touch-callout: none) {
+    .flare-suggestions.mobile {
+        /* Prevent any iOS-specific positioning issues */
+        position: fixed !important;
+        transform: translate(-50%, -50%) !important;
+    }
+}
+
+/* Ensure suggestions are visible in both light and dark themes */
+.theme-light .flare-suggestions {
+    background: var(--background-primary);
+    border-color: var(--background-modifier-border);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.theme-dark .flare-suggestions {
+    background: var(--background-primary);
+    border-color: var(--background-modifier-border);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Consistent metadata item styling */
+.flare-metadata-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    gap: 12px;
+}
+
+.flare-metadata-item:not(:last-child) {
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.flare-metadata-item .metadata-key {
+    color: var(--text-muted);
+    font-size: 0.85em;
+}
+
+.flare-metadata-item .metadata-value {
+    color: var(--text-normal);
+    font-weight: 500;
+}
+
+/* Message content z-index adjustments */
+.flare-message-content {
+    position: relative;
+    z-index: 1;
+    pointer-events: auto;
+}
+
+.flare-system-message {
+    position: relative;
+    z-index: 9999;
+    margin: 4px auto;
+}
+
+.flare-system-message .flare-system-main {
+    position: relative;
+}
+
+.flare-system-message .flare-name {
+    position: relative;
+}
+
+.flare-system-message .flare-name .flare-metadata {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 100000;
+    /* Ensure fully opaque background and no blending with underlying elements: */
+    background-color: var(--background-primary) !important;
+    opacity: 1 !important;
+    mix-blend-mode: normal;
+    background-blend-mode: normal;
+    /* If needed, also remove or override any alpha or transparency in box-shadow: */
+    /* box-shadow: var(--shadow-s, 0 2px 8px rgba(0,0,0,0.2)); */
+}
+
+.flare-system-message .flare-name .flare-metadata-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    gap: 12px;
+}
+
+.flare-system-message .flare-name .flare-metadata-item:not(:last-child) {
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.flare-system-message .flare-name .flare-metadata-item .metadata-key {
+    color: var(--text-muted);
+    font-size: 0.85em;
+}
+
+.flare-system-message .flare-name .flare-metadata-item .metadata-value {
+    color: var(--text-normal);
+    font-weight: 500;
+}
+
+/* Show metadata on hover */
+.flare-system-message .flare-name:hover .flare-metadata {
+    display: block;
+}
+
+/* Hover effect */
+.flare-system-message .flare-name:hover {
+    background: var(--background-secondary-alt);
+}
+
+/* Active state for touch */
+.flare-system-message .flare-name.is-active {
+    background: var(--background-secondary-alt);
+}
+
+/* Z-index hierarchy for messages and tooltips */
+.flare-message {
+    position: relative;
+    z-index: 10;
+}
+
+.flare-message-content {
+    position: relative;
+    z-index: 20;
+}
+
+.flare-name,
+.flare-message-flare {
+    position: relative;
+    z-index: 30;
+}
+
+.flare-metadata {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 8px;
+    margin-top: 4px;
+    box-shadow: var(--shadow-s);
+    z-index: 999999; /* Highest z-index */
+    font-size: 0.85em;
+    min-width: 200px;
+    color: var(--text-normal);
+    pointer-events: auto;
+}
+
+/* Mobile optimizations for system messages */
+@media (max-width: 768px) {
+    .flare-system-message {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        padding: 4px 16px;
+        box-sizing: border-box;
+    }
+
+    .flare-system-message .flare-system-main {
+        max-width: 400px;
+        width: 100%;
+        display: flex;
+        justify-content: center;
+    }
+
+    .flare-system-message .flare-name {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+    }
+}
+
+/* Loading state for flare name */
+.flare-message.assistant.is-loading .flare-message-content .flare-name {
+    margin-right: 24px; /* Make room for the loading indicator */
+}
+
+.flare-message.assistant.is-loading .flare-message-content .flare-name::after {
+    content: '';
+    position: absolute;
+    right: -24px;
+    top: 50%;
+    margin-top: -6px; /* Half of height to center it */
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--text-muted);
+    border-top-color: var(--text-accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Remove the ::before pseudo-element since we don't need it */
+.flare-message.assistant.is-loading .flare-message-content .flare-name::before {
+    display: none;
+}
+
+/* Remove ALL loading indicators except the essential ones */
+.loading .loading-indicator,
+.flare-ember,
+.flare-message.is-loading .flare-ember,
+.flare-message.is-loading::after,
+.flare-message.is-loading .flare-message-content::after,
+.flare-message.is-loading .flare-message-content::before,
+.flare-message.is-loading .loading-bar,
+.flare-message.is-loading .loading-progress,
+.is-loading::after,
+.model-container.loading::after,
+.flare-message.is-loading::before,
+.is-loading::before,
+.flare-history-sidebar.is-loading::after {
+    display: none !important;
+}
+
+/* Smooth content updates */
+.flare-markdown-content {
+    position: relative;
+    opacity: 1;
+    transition: opacity 0.15s ease;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-markdown-content.is-empty {
+    opacity: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-markdown-content .markdown-rendered {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+    font-size: inherit;
+    color: inherit;
+    margin: 0;
+    padding: 0;
+}
+
+/* Optimize performance with hardware acceleration */
+.flare-message-content {
+    position: relative;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: transform, opacity;
+}
+
+.flare-content-wrapper {
+    position: relative;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.flare-system-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-markdown-content {
+    position: relative;
+    opacity: 1;
+    transition: opacity 0.15s ease;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-markdown-content.is-empty {
+    opacity: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+.flare-markdown-content:not(.is-empty) {
+    margin-top: 8px;
+}
+
+.flare-markdown-content .markdown-rendered {
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+    font-size: inherit;
+    color: inherit;
+    margin: 0;
+    padding: 0;
+}
+
+/* Remove any extra margins from markdown content */
+.flare-markdown-content .markdown-rendered > *:first-child {
+    margin-top: 0;
+}
+
+.flare-markdown-content .markdown-rendered > *:last-child {
+    margin-bottom: 0;
+}
+
+/* Optimize scrolling */
+.flare-messages {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    will-change: transform;
+}
+
+/* Loading state */
+.flare-message.is-loading {
+    position: relative;
+}
+
+.flare-message.is-loading .flare-markdown-content {
+    min-height: 0;
+}
+
+.flare-message.is-loading .flare-markdown-content:not(.is-empty) {
+    min-height: 24px;
+}
+
+/* Streaming content */
+.flare-markdown-content .markdown-rendered {
+    opacity: 1;
+    transition: opacity 0.15s ease;
+}
+
+.flare-markdown-content.is-empty .markdown-rendered {
+    opacity: 0;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+/* Ensure proper spacing for content */
+.flare-markdown-content:not(.is-empty) {
+    margin-top: 8px;
+}
+
+/* Remove loading indicators except the essential ones */
+.loading .loading-indicator,
+.flare-ember,
+.flare-message.is-loading .flare-ember,
+.flare-message.is-loading::after,
+.flare-message.is-loading .flare-message-content::after,
+.flare-message.is-loading .flare-message-content::before,
+.flare-message.is-loading .loading-bar,
+.flare-message.is-loading .loading-progress,
+.is-loading::after,
+.model-container.loading::after,
+.flare-message.is-loading::before,
+.is-loading::before,
+.flare-history-sidebar.is-loading::after {
+    display: none !important;
+}
+
+.flare-send-button {
+    background-color: transparent !important;
+}
+
+/* Mobile optimizations */
+@media (max-width: 768px) {
+    .flare-chat-container {
+        min-height: 100%;
+        overflow-x: hidden;
+    }
+
+    .flare-bottom-container {
+        position: sticky;
+        bottom: 0;
+        width: 100%;
+        background: var(--background-primary);
+        z-index: 10;
+    }
+
+    .flare-composer {
+        padding: 4px;
+        width: 100%;
+    }
+
+    .flare-input-wrapper {
+        padding: 4px;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .flare-chat-container .flare-input {
+        font-size: 16px;
+        padding: 8px 8px; /* Increased top/bottom padding for better vertical centering */
+        line-height: 1.3; /* Slightly tighter line height on mobile */
+        min-height: 36px;
+        margin: 0;
+        flex: 1;
+    }
+}
+
+/* Additional iOS-specific fixes */
+@supports (-webkit-touch-callout: none) {
+    .flare-chat-container {
+        /* Fix for iOS Safari's quirks */
+        height: -webkit-fill-available;
+    }
+
+    .flare-bottom-container {
+        /* Ensure it stays above keyboard on iOS */
+        position: sticky;
+        bottom: 0;
+        /* Prevent it from getting stuck under keyboard */
+        transform: translateZ(0);
+    }
+}
+
+/* Force the Obsidian content area to have zero bottom padding,
+   so your pinned footer sits flush at the actual bottom. */
+
+.view-content {
+    padding-bottom: 0 !important;
+}
+
+/* If your plugin is nested, you could also ensure the containing
+   .view-content or .mod-root has 100% height: */
+.view-content,
+.mod-root {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.password-visibility-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+}
+
+.password-visibility-toggle:hover {
+    opacity: 1;
+}
+
+.provider-settings input[type="password"],
+.provider-settings input[type="text"] {
+    padding: 4px 8px;
+    width: calc(100% - 28px); /* Adjust for smaller button */
+    background-color: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+}
+
+.provider-settings input[type="password"]:focus,
+.provider-settings input[type="text"]:focus {
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.setting-item-control {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.password-visibility-toggle {
+    position: relative;
+    background-color: var(--background-modifier-hover);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 2px;
+    opacity: 0.8;
+    transition: all 0.15s ease;
+    min-width: 24px;
+    min-height: 24px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.password-visibility-toggle:hover {
+    opacity: 1;
+    background-color: var(--background-modifier-hover-alt);
+}
+
+/* Models List Styles */
+.models-list {
+    margin-top: 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--background-primary);
+}
+
+.models-list-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    background: var(--background-secondary-alt);
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.model-header {
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.model-name-header {
+    flex: 1;
+    padding-left: 4px;
+}
+
+.visibility-header {
+    width: 60px;
+    text-align: center;
+}
+
+.models-list .setting-item {
+    margin: 0;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+}
+
+.models-list .setting-item-name {
+    padding-left: 4px;
+}
+
+.models-list .setting-item-control {
+    justify-content: flex-end;
+    padding-right: 4px;
+}
+
+.models-list .setting-item:last-child {
+    border-bottom: none;
+}
+
+/* Empty state */
+.models-empty-state {
+    margin-top: 16px;
+    padding: 16px;
+    text-align: center;
+    color: var(--text-muted);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    font-size: 0.9em;
+}
+
+/* Loading state */
+.setting-item-control button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+/* Settings Tab Styles - Sections */
+.flare-section {
+    margin: 20px 0;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    background: var(--background-secondary);
+    overflow: visible;
+}
+
+.flare-section-header {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--background-secondary-alt);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    border-radius: 8px 8px 0 0;
+}
+
+.flare-section-header:hover {
+    background: var(--background-modifier-hover);
+}
+
+.flare-section-header h4 {
+    margin: 0;
+    font-size: 1.1em;
+    font-weight: 600;
+    color: var(--text-normal);
+}
+
+.flare-section-header.is-collapsed {
+    border-bottom: none;
+    border-radius: 8px;
+}
+
+.flare-section-content {
+    padding: 16px;
+    border-top: 1px solid var(--background-modifier-border);
+    display: block;
+    transition: opacity 0.15s ease;
+    opacity: 1;
+    height: auto;
+    overflow: visible;
+}
+
+.flare-section-header.is-collapsed + .flare-section-content {
+    display: none;
+    opacity: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+/* Add chevron to section headers */
+.flare-section-header::after {
+    content: '';
+    width: 16px;
+    height: 16px;
+    margin-left: auto;
+    background-color: var(--text-muted);
+    -webkit-mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
+    mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    transition: transform 0.15s ease;
+}
+
+.flare-section-header.is-collapsed::after {
+    transform: rotate(-90deg);
+}
+
+/* Temperature Dialog */
+.flare-temp-dialog {
+    max-width: 400px;
+    width: 90vw;
+}
+
+.flare-temp-dialog .setting-item {
+    border: none;
+    padding: 0;
+}
+
+.flare-temp-dialog .setting-item-control {
+    justify-content: center;
+    padding: 12px 0;
+}
+
+.flare-temp-dialog input {
+    width: 100px;
+    text-align: center;
+    font-size: 1.1em;
+    font-family: var(--font-monospace);
+}
+
+.flare-temp-dialog .modal-button-container {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 1em;
+}
+
+.flare-temp-dialog .flare-temp-button {
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+/* Flare Suggestion Menu */
+.flare-suggestions {
+    --container-width: 100%;
+    --left-offset: 0;
+    --max-height: 200px;
+    --bottom-offset: 0;
+    --top-offset: 0;
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: var(--left-offset);
+    right: 0;
+    max-height: var(--max-height);
+    overflow-y: auto;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    box-shadow: var(--shadow-s);
+    z-index: 1000;
+    padding: 4px;
+    margin: 0 8px;
+    width: var(--container-width);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.flare-suggestions.position-bottom {
+    top: var(--bottom-offset);
+    bottom: auto;
+}
+
+.flare-suggestions.position-top {
+    bottom: var(--top-offset);
+    top: auto;
+}
+
+.flare-suggestions.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.flare-suggestion-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--text-normal);
+    transition: all 0.15s ease;
+    min-height: 36px;
+}
+
+.flare-suggestion-item:hover,
+.flare-suggestion-item.is-selected {
+    background: var(--background-modifier-hover);
+    color: var(--text-accent);
+}
+
+.flare-suggestion-item .suggestion-icon {
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+}
+
+.flare-suggestion-item .suggestion-name {
+    flex: 1;
+    font-size: 0.95em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.flare-suggestion-item .suggestion-hint {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    opacity: 0.8;
+}

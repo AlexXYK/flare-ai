@@ -1429,20 +1429,26 @@ export class AIChatView extends ItemView {
 
         // 3. If this is a reasoning-capable model, we need to split reasoning vs. normal text.
         if (settings.isReasoningModel) {
-            // Get or create the separate containers for reasoning and normal/response content.
+            // a) Find or create the separate containers for reasoning and normal/response content.
             let reasoningContainer = contentEl.querySelector('.flare-reasoning-content') as HTMLElement | null;
             let responseContainer = contentEl.querySelector('.flare-response-content') as HTMLElement | null;
 
-            if (!reasoningContainer || !responseContainer) return;
+            // Create them once if needed
+            if (!reasoningContainer) {
+                reasoningContainer = markdownContainer.createDiv({ cls: 'flare-reasoning-content' });
+                reasoningContainer.setAttribute('data-reasoning-blocks', '[]');
+                reasoningContainer.setAttribute('data-partial-block', '');
+                reasoningContainer.style.display = 'none'; // hidden until user expands
+            }
+            if (!responseContainer) {
+                responseContainer = markdownContainer.createDiv({ cls: 'flare-response-content' });
+                // Create markdown container for response if it doesn't exist
+                if (!responseContainer.querySelector('.markdown-rendered')) {
+                    responseContainer.createDiv('markdown-rendered');
+                }
+            }
 
-            // Extract reasoning blocks and response content
-            const reasoningHeader = settings.reasoningHeader || '<think>';
-            const reasoningEndTag = reasoningHeader.replace('<', '</');
-            const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
-            const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
-            const allReasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
-
-            // Get existing blocks and partial block
+            // b) Retrieve the partial-block state, previously-detected reasoning blocks, etc.
             const existingBlocksStr = reasoningContainer.getAttribute('data-reasoning-blocks') || '[]';
             const existingBlocks = JSON.parse(existingBlocksStr) as string[];
             const partialBlock = reasoningContainer.getAttribute('data-partial-block') || '';
@@ -1450,60 +1456,111 @@ export class AIChatView extends ItemView {
             // Combine the old partial plus the new tokens
             let currentContent = partialBlock + newContent;
 
+            // c) Regex set for reasoning start/end
+            const reasoningHeader = settings.reasoningHeader || '<think>';
+            const reasoningEndTag = reasoningHeader.replace('<', '</');
+            const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
+            const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
+            const allReasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
+
             let lastIndex = 0;
             let match: RegExpExecArray | null;
             let remainingContent = '';
             let newPartialBlock = '';
 
-            // Process reasoning blocks
+            // d) Loop through all reasoning blocks within currentContent
             while ((match = allReasoningRegex.exec(currentContent)) !== null) {
+                // Everything before this block is normal text
                 if (match.index > lastIndex) {
                     remainingContent += currentContent.slice(lastIndex, match.index);
                 }
+                // The reasoning content (match[1]) is fully complete, so store it
                 if (match[1]) {
-                    existingBlocks.push(match[1].trim());
+                    existingBlocks.push(match[1]);
                 }
                 lastIndex = match.index + match[0].length;
             }
 
-            // Handle any leftover content
+            // e) Add leftover text after the final block
             if (lastIndex < currentContent.length) {
                 const tail = currentContent.slice(lastIndex);
+                // If we see a new reasoning-header but no matching end tag, store that as partial
                 const headerPos = tail.indexOf(reasoningHeader);
                 if (headerPos >= 0 && !tail.includes(reasoningEndTag)) {
+                    // means we started a reasoning block but didn't finish
                     newPartialBlock = tail.slice(headerPos);
                     remainingContent += tail.slice(0, headerPos);
                 } else {
+                    // it's normal text
                     remainingContent += tail;
                 }
             }
 
-            // Update stored blocks
+            // f) Update the stored states
             reasoningContainer.setAttribute('data-reasoning-blocks', JSON.stringify(existingBlocks));
             reasoningContainer.setAttribute('data-partial-block', newPartialBlock);
 
-            // Only update response content if we have new content
+            // g) Only show response content if we have any
             if (remainingContent.trim()) {
                 markdownContainer.removeClass('is-empty');
-                const responseDiv = responseContainer.querySelector('.markdown-rendered') as HTMLElement;
-                if (responseDiv) {
-                    // Just normalize basic line endings, let markdown renderer handle the rest
-                    const normalizedContent = remainingContent
-                        .replace(/\r\n/g, '\n')
-                        .replace(/\r/g, '\n');
+                const currentResponseDiv = responseContainer.querySelector('.markdown-rendered') as HTMLElement;
+                if (currentResponseDiv) {
+                    // Instead of clearing, just append plain text for partial streaming
+                    const existingText = currentResponseDiv.textContent || '';
+                    currentResponseDiv.textContent = existingText + remainingContent;
+                }
+            }
+
+            // h) If we have at least one complete reasoning block, ensure we show the plus toggle
+            if (existingBlocks.length > 0) {
+                const actions = loadingMsg.querySelector('.flare-message-actions');
+                if (actions && !actions.querySelector('[aria-label="Toggle reasoning"]')) {
+                    // Add toggle button
+                    const messageId = loadingMsg.getAttribute('data-message-id') || `message-${Date.now()}`;
+                    loadingMsg.setAttribute('data-message-id', messageId);
+
+                    const expandBtn = actions.createEl('button', {
+                        cls: 'flare-action-button',
+                        attr: { 'aria-label': 'Toggle reasoning' }
+                    });
+                    setIcon(expandBtn, 'plus-circle');
                     
-                    // Get existing content
-                    const existingContent = responseDiv.textContent || '';
-                    
-                    // Combine content
-                    const combinedContent = existingContent + normalizedContent;
-                    
-                    // Update content
-                    responseDiv.textContent = combinedContent;
+                    expandBtn.onclick = async () => {
+                        const isExpanded = this.expandedReasoningMessages.has(messageId);
+                        if (isExpanded) {
+                            // Hide reasoning
+                            this.expandedReasoningMessages.delete(messageId);
+                            reasoningContainer?.classList.remove('is-expanded');
+                            expandBtn.classList.remove('is-active');
+                            setIcon(expandBtn, 'plus-circle');
+                            // Wait a moment before visually hiding
+                            setTimeout(() => {
+                                if (!this.expandedReasoningMessages.has(messageId)) {
+                                    reasoningContainer!.style.display = 'none';
+                                }
+                            }, 300);
+                        } else {
+                            // Expand
+                            reasoningContainer!.style.display = 'block';
+                            // Force reflow
+                            void reasoningContainer!.offsetHeight;
+                            // Render the reasoning blocks if not already done
+                            if (!reasoningContainer?.querySelector('.markdown-rendered')) {
+                                const joinedReasoning = existingBlocks.join('\n\n---\n\n');
+                                if (reasoningContainer) {  // Add null check
+                                    await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
+                                }
+                            }
+                            this.expandedReasoningMessages.add(messageId);
+                            reasoningContainer!.classList.add('is-expanded');
+                            expandBtn.classList.add('is-active');
+                            setIcon(expandBtn, 'minus-circle');
+                        }
+                    };
                 }
             }
         } else {
-            // For non-reasoning models, just append the new content
+            // i) Normal (non-reasoning) streaming: just append partial text
             markdownContainer.removeClass('is-empty');
             let currentContent = markdownContainer.querySelector('.markdown-rendered');
             if (!currentContent) {
@@ -1511,22 +1568,11 @@ export class AIChatView extends ItemView {
             }
             if (!(currentContent instanceof HTMLElement)) return;
 
-            // Just normalize basic line endings, let markdown renderer handle the rest
-            const normalizedContent = newContent
-                .replace(/\r\n/g, '\n')
-                .replace(/\r/g, '\n');
-            
-            // Get existing content
-            const existingContent = currentContent.textContent || '';
-            
-            // Combine content
-            const combinedContent = existingContent + normalizedContent;
-            
-            // Update content
-            currentContent.textContent = combinedContent;
+            const existingText = currentContent.textContent || '';
+            currentContent.textContent = existingText + newContent;
         }
 
-        // Scroll to bottom if near bottom
+        // 4. Scroll to bottom if user is near bottom
         requestAnimationFrame(() => {
             if (this.messagesEl instanceof HTMLElement) {
                 const shouldScroll = this.messagesEl.scrollHeight - this.messagesEl.scrollTop <= CONSTANTS.SCROLL_THRESHOLD;
@@ -1607,6 +1653,7 @@ export class AIChatView extends ItemView {
 
         // Create message content
         const contentEl = messageEl.createDiv('flare-message-content');
+        const contentWrapper = contentEl.createDiv('flare-content-wrapper');
 
         // Add metadata (timestamp, etc) and actions early
         const metaEl = messageEl.createDiv('flare-message-meta');
@@ -1705,7 +1752,7 @@ export class AIChatView extends ItemView {
                 const reasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
                 const reasoningBlocks: string[] = [];
                 let responsePart = content;
-                let match: RegExpExecArray | null;
+                let match;
 
                 while ((match = reasoningRegex.exec(content)) !== null) {
                     const [fullMatch, reasoningContent] = match;
@@ -1718,62 +1765,90 @@ export class AIChatView extends ItemView {
 
                 const hasReasoning = reasoningBlocks.length > 0;
                 
-                if (settings.isReasoningModel) {
+                if (hasReasoning && settings.isReasoningModel) {
                     // Create reasoning container (initially hidden)
                     const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
-                    reasoningContainer.style.display = 'none';
-                    reasoningContainer.classList.remove('is-expanded');
+                    reasoningContainer.style.display = 'block';
+                    reasoningContainer.style.opacity = '0';
+                    reasoningContainer.style.height = '0';
+                    reasoningContainer.style.overflow = 'hidden';
+                    reasoningContainer.style.transition = 'opacity 0.2s ease, height 0.2s ease';
                     
-                    // Create response container with same structure as non-reasoning models
-                    const responseContainer = markdownContainer.createDiv('flare-response-content');
-                    responseContainer.createDiv('markdown-rendered');
-
-                    // Add toggle button if we have reasoning blocks
-                    if (hasReasoning) {
-                        const expandBtn = actions.createEl('button', {
-                            cls: 'flare-action-button',
-                            attr: { 'aria-label': 'Toggle reasoning' }
-                        });
-                        setIcon(expandBtn, 'plus-circle');
-                        
-                        expandBtn.onclick = () => {
-                            const isExpanded = this.expandedReasoningMessages.has(messageId);
-                            if (isExpanded) {
-                                // Hide reasoning
-                                this.expandedReasoningMessages.delete(messageId);
-                                reasoningContainer.classList.remove('is-expanded');
-                                expandBtn.classList.remove('is-active');
-                                setIcon(expandBtn, 'plus-circle');
-                                // Wait for animation to complete before hiding
-                                setTimeout(() => {
-                                    if (!this.expandedReasoningMessages.has(messageId)) {
-                                        reasoningContainer.style.display = 'none';
-                                    }
-                                }, 200);
-                            } else {
-                                // Expand
-                                reasoningContainer.style.display = 'block';
-                                // Force reflow
-                                void reasoningContainer.offsetHeight;
-                                // Render the reasoning blocks if not already done
-                                if (!reasoningContainer.querySelector('.markdown-rendered')) {
-                                    const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
-                                    MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
-                                }
-                                this.expandedReasoningMessages.add(messageId);
-                                reasoningContainer.classList.add('is-expanded');
-                                expandBtn.classList.add('is-active');
-                                setIcon(expandBtn, 'minus-circle');
-                            }
-                        };
+                    if (this.expandedReasoningMessages.has(messageId)) {
+                        reasoningContainer.style.opacity = '1';
+                        reasoningContainer.style.height = 'auto';
                     }
+                    
+                    // Render all reasoning blocks
+                    if (reasoningBlocks.length > 0) {
+                        // Join reasoning blocks with dividers
+                        const reasoningContent = reasoningBlocks.join('\n\n---\n\n');
+                        await MarkdownRenderer.renderMarkdown(reasoningContent, reasoningContainer, '', this.plugin);
+                    } else {
+                        reasoningContainer.setText('No reasoning content found.');
+                    }
+
+                    // Create response container
+                    const responseContainer = markdownContainer.createDiv('flare-response-content');
+                    if (responsePart.trim()) {
+                        await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
+                    }
+
+                    // Add expand/collapse button to actions
+                    const expandBtn = actions.createEl('button', {
+                        cls: 'flare-action-button',
+                        attr: { 'aria-label': 'Toggle reasoning' }
+                    });
+                    setIcon(expandBtn, this.expandedReasoningMessages.has(messageId) ? 'minus-circle' : 'plus-circle');
+                    expandBtn.onclick = async () => {
+                        const isExpanded = this.expandedReasoningMessages.has(messageId);
+                        if (isExpanded) {
+                            this.expandedReasoningMessages.delete(messageId);
+                            reasoningContainer.style.opacity = '0';
+                            reasoningContainer.style.height = '0';
+                            setIcon(expandBtn, 'plus-circle');
+                            // Wait for animation to complete before hiding
+                            setTimeout(() => {
+                                if (!this.expandedReasoningMessages.has(messageId)) {
+                                    reasoningContainer.style.display = 'none';
+                                }
+                            }, 200);
+                        } else {
+                            this.expandedReasoningMessages.add(messageId);
+                            reasoningContainer.style.display = 'block';
+                            // Force a reflow
+                            void reasoningContainer.offsetHeight;
+                            reasoningContainer.style.opacity = '1';
+                            reasoningContainer.style.height = 'auto';
+                            setIcon(expandBtn, 'minus-circle');
+                        }
+                    };
                 } else {
-                    // For non-reasoning models, create standard markdown container
-                    markdownContainer.createDiv('markdown-rendered');
+                    // No reasoning found, just render the content normally
+                    await MarkdownRenderer.renderMarkdown(content, markdownContainer, '', this.plugin);
                 }
             } else {
-                // For user messages, render markdown directly in the content element
-                await MarkdownRenderer.renderMarkdown(content, contentEl, '', this.plugin);
+                // For user messages, use a simpler rendering approach
+                const markdownContainer = contentWrapper.createDiv('flare-markdown-content');
+                const rendered = markdownContainer.createDiv('markdown-rendered');
+                
+                // Check if the content contains any block elements that need markdown rendering
+                if (content.match(/^(\s*)(```|>|\d+\.|[*-]\s|#)/) || content.includes('\n')) {
+                    // Content has block elements, use full markdown rendering
+                    await MarkdownRenderer.renderMarkdown(content, rendered, '', this.plugin);
+                    
+                    // Clean up any unnecessary paragraph wrapping
+                    const paragraphs = rendered.querySelectorAll('p');
+                    paragraphs.forEach(p => {
+                        if (!p.querySelector('pre, blockquote, ul, ol')) {
+                            const children = Array.from(p.childNodes);
+                            p.replaceWith(...children);
+                        }
+                    });
+                } else {
+                    // Simple text content, just set it directly
+                    rendered.setText(content);
+                }
             }
             
             // Add standard action buttons
@@ -2439,33 +2514,6 @@ export class AIChatView extends ItemView {
         const markdownContainer = contentEl.querySelector('.flare-markdown-content');
         if (!(markdownContainer instanceof HTMLElement)) return;
 
-        // Helper function to clean up content before rendering
-        const cleanContent = (text: string, forceClean: boolean = false): string => {
-            // If content is already clean and we're not forcing cleanup, return as is
-            if (!forceClean) {
-                return text;
-            }
-
-            // For streamed content, normalize line endings and clean up whitespace
-            let cleaned = text
-                // Normalize all line endings to \n
-                .replace(/\r\n/g, '\n')
-                .replace(/\r/g, '\n')
-                // Remove extra whitespace
-                .replace(/[ \t]+$/gm, '')
-                // Fix heading spacing
-                .replace(/^(#{1,6})\s*/gm, '$1 ')
-                // Fix code block spacing
-                .replace(/```(\w*)\s*\n/g, '```$1\n')
-                .replace(/\n\s*```/g, '\n```')
-                // Normalize multiple blank lines
-                .replace(/\n{4,}/g, '\n\n\n')
-                // Fix spacing after paragraphs
-                .replace(/([^\n])\n{3,}(?=[^\n])/g, '$1\n\n');
-            
-            return cleaned.trim();
-        };
-
         if (settings.isReasoningModel) {
             // Get reasoning container and response container
             const reasoningContainer = markdownContainer.querySelector('.flare-reasoning-content') as HTMLElement;
@@ -2479,44 +2527,32 @@ export class AIChatView extends ItemView {
                 const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
                 const allReasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
                 
-                // First collect all reasoning blocks
                 const reasoningBlocks: string[] = [];
-                let mainContent = content;
-                let match: RegExpExecArray | null;
+                let responsePart = content;
+                let match;
+
+                // First collect all reasoning blocks
                 while ((match = allReasoningRegex.exec(content)) !== null) {
                     if (match[1]) {
                         reasoningBlocks.push(match[1].trim());
                     }
                 }
 
-                // Get clean response part by removing all reasoning blocks
-                const fullRegex = new RegExp(`${escapedHeader}[\\s\\S]*?${escapedEndTag}`, 'g');
-                const responsePart = mainContent.replace(fullRegex, '').trim();
+                // Then remove all reasoning blocks from response
+                responsePart = content.replace(allReasoningRegex, '').trim();
 
                 // Store reasoning blocks for later rendering
                 reasoningContainer.setAttribute('data-reasoning-blocks', JSON.stringify(reasoningBlocks));
                 reasoningContainer.style.display = 'none';
                 reasoningContainer.classList.remove('is-expanded');
 
-                // Clear and prepare response container properly
-                const cleanedResponse = cleanContent(responsePart, settings.stream === true);
-                
-                // Important: Don't empty the response container, just its markdown content
-                const existingMarkdown = responseContainer.querySelector('.markdown-rendered') as HTMLElement | null;
-                if (existingMarkdown) {
-                    existingMarkdown.empty();
+                // Only render the response part
+                const responseDiv = responseContainer.querySelector('.markdown-rendered') as HTMLElement;
+                if (responseDiv) {
+                    responseDiv.empty();
                     await MarkdownRenderer.renderMarkdown(
-                        cleanedResponse,
-                        existingMarkdown,
-                        '',
-                        this.plugin
-                    );
-                } else {
-                    // If no markdown container exists, create it
-                    const markdownRendered = responseContainer.createDiv('markdown-rendered');
-                    await MarkdownRenderer.renderMarkdown(
-                        cleanedResponse,
-                        markdownRendered,
+                        responsePart,
+                        responseDiv,
                         '',
                         this.plugin
                     );
@@ -2543,12 +2579,12 @@ export class AIChatView extends ItemView {
                                 reasoningContainer.classList.remove('is-expanded');
                                 expandBtn.classList.remove('is-active');
                                 setIcon(expandBtn, 'plus-circle');
-                                // Wait for animation to complete before hiding
+                                // Wait a moment before visually hiding
                                 setTimeout(() => {
                                     if (!this.expandedReasoningMessages.has(messageId)) {
                                         reasoningContainer.style.display = 'none';
                                     }
-                                }, 200);
+                                }, 300);
                             } else {
                                 // Expand
                                 reasoningContainer.style.display = 'block';
@@ -2571,10 +2607,8 @@ export class AIChatView extends ItemView {
         } else {
             // For non-reasoning models, just render the full content
             markdownContainer.empty();
-            // Only force clean for streamed content
-            const cleanedContent = cleanContent(content, settings.stream === true);
             await MarkdownRenderer.renderMarkdown(
-                cleanedContent,
+                content,
                 markdownContainer,
                 '',
                 this.plugin
