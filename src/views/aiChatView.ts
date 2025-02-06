@@ -248,6 +248,29 @@ export class AIChatView extends ItemView {
             }
         });
         
+        // Add auto-resize handler for input
+        this.inputEl.addEventListener('input', function() {
+            requestAnimationFrame(() => {
+                // Reset height to allow shrinking
+                this.style.height = '36px';
+                
+                // Toggle has-content class
+                if (this.value.trim()) {
+                    this.classList.add('has-content');
+                } else {
+                    this.classList.remove('has-content');
+                }
+                
+                // Calculate new height
+                const baseHeight = 36; // Base height including padding
+                const maxLines = 4;
+                const maxHeight = baseHeight * maxLines;
+                
+                // Set new height based on content
+                this.style.height = Math.min(this.scrollHeight, maxHeight) + 'px';
+            });
+        });
+        
         // Create send button
         const sendBtn = inputWrapper.createEl('button', {
             cls: 'flare-send-button',
@@ -384,7 +407,8 @@ export class AIChatView extends ItemView {
                         // Clear input field immediately
                         if (this.inputEl) {
                             this.inputEl.value = '';
-                            this.inputEl.style.height = '';  // Reset to default height
+                            this.inputEl.style.height = '36px';  // Reset to default height with transition
+                            this.inputEl.classList.remove('has-content');
                         }
                         // Run title generation in the background without affecting send button state
                         this.handleTitleGeneration().catch(error => {
@@ -404,7 +428,8 @@ export class AIChatView extends ItemView {
                         // Clear input before sending - this is the only place we should clear it
                         const inputValue = this.inputEl.value;
                         this.inputEl.value = '';
-                        this.inputEl.style.height = '';  // Reset to default height
+                        this.inputEl.style.height = '36px';  // Reset to default height with transition
+                        this.inputEl.classList.remove('has-content');
                         
                         // Try to send the message
                         const success = await this.handleMessage(content);
@@ -1655,16 +1680,17 @@ export class AIChatView extends ItemView {
         const contentEl = messageEl.createDiv('flare-message-content');
         const contentWrapper = contentEl.createDiv('flare-content-wrapper');
 
-        // Add metadata (timestamp, etc) and actions early
-        const metaEl = messageEl.createDiv('flare-message-meta');
-        // Only add a timestamp if it's not a system message
+        // Only create meta and actions for non-system messages
+        let actions: HTMLElement | undefined;
         if (role !== 'system') {
+            // Add metadata (timestamp, etc) and actions
+            const metaEl = messageEl.createDiv('flare-message-meta');
             const timestamp = moment().format('h:mm A');
             metaEl.createSpan('flare-message-time').setText(timestamp);
-        }
 
-        // Add action buttons container early
-        const actions = metaEl.createDiv('flare-message-actions');
+            // Add action buttons container
+            actions = metaEl.createDiv('flare-message-actions');
+        }
 
         // Handle system messages differently
         if (role === 'system') {
@@ -1795,34 +1821,36 @@ export class AIChatView extends ItemView {
                     }
 
                     // Add expand/collapse button to actions
-                    const expandBtn = actions.createEl('button', {
+                    const expandBtn = actions?.createEl('button', {
                         cls: 'flare-action-button',
                         attr: { 'aria-label': 'Toggle reasoning' }
                     });
-                    setIcon(expandBtn, this.expandedReasoningMessages.has(messageId) ? 'minus-circle' : 'plus-circle');
-                    expandBtn.onclick = async () => {
-                        const isExpanded = this.expandedReasoningMessages.has(messageId);
-                        if (isExpanded) {
-                            this.expandedReasoningMessages.delete(messageId);
-                            reasoningContainer.style.opacity = '0';
-                            reasoningContainer.style.height = '0';
-                            setIcon(expandBtn, 'plus-circle');
-                            // Wait for animation to complete before hiding
-                            setTimeout(() => {
-                                if (!this.expandedReasoningMessages.has(messageId)) {
-                                    reasoningContainer.style.display = 'none';
-                                }
-                            }, 200);
-                        } else {
-                            this.expandedReasoningMessages.add(messageId);
-                            reasoningContainer.style.display = 'block';
-                            // Force a reflow
-                            void reasoningContainer.offsetHeight;
-                            reasoningContainer.style.opacity = '1';
-                            reasoningContainer.style.height = 'auto';
-                            setIcon(expandBtn, 'minus-circle');
-                        }
-                    };
+                    if (expandBtn) {
+                        setIcon(expandBtn, this.expandedReasoningMessages.has(messageId) ? 'minus-circle' : 'plus-circle');
+                        expandBtn.onclick = async () => {
+                            const isExpanded = this.expandedReasoningMessages.has(messageId);
+                            if (isExpanded) {
+                                this.expandedReasoningMessages.delete(messageId);
+                                reasoningContainer.style.opacity = '0';
+                                reasoningContainer.style.height = '0';
+                                setIcon(expandBtn, 'plus-circle');
+                                // Wait for animation to complete before hiding
+                                setTimeout(() => {
+                                    if (!this.expandedReasoningMessages.has(messageId)) {
+                                        reasoningContainer.style.display = 'none';
+                                    }
+                                }, 200);
+                            } else {
+                                this.expandedReasoningMessages.add(messageId);
+                                reasoningContainer.style.display = 'block';
+                                // Force a reflow
+                                void reasoningContainer.offsetHeight;
+                                reasoningContainer.style.opacity = '1';
+                                reasoningContainer.style.height = 'auto';
+                                setIcon(expandBtn, 'minus-circle');
+                            }
+                        };
+                    }
                 } else {
                     // No reasoning found, just render the content normally
                     await MarkdownRenderer.renderMarkdown(content, markdownContainer, '', this.plugin);
@@ -1852,65 +1880,65 @@ export class AIChatView extends ItemView {
             }
             
             // Add standard action buttons
-            const copyBtn = actions.createEl('button', {
+            const copyBtn = actions?.createEl('button', {
                 cls: 'flare-action-button',
                 attr: { 'aria-label': 'Copy message' }
             });
-            setIcon(copyBtn, 'copy');
-            copyBtn.onclick = () => {
-                navigator.clipboard.writeText(content);
-                new Notice('Message copied to clipboard');
-            };
+            if (copyBtn) {
+                setIcon(copyBtn, 'copy');
+                copyBtn.onclick = () => {
+                    navigator.clipboard.writeText(content);
+                    new Notice('Message copied to clipboard');
+                };
+            }
 
             // Delete button for both user and assistant messages
-            const deleteBtn = actions.createEl('button', {
+            const deleteBtn = actions?.createEl('button', {
                 cls: 'flare-action-button delete',
                 attr: { 'aria-label': 'Delete message' }
             });
-            setIcon(deleteBtn, 'trash-2');
-            deleteBtn.onclick = async () => {
-                // Get the current content from the data-content attribute or fallback to original
-                const currentContent = messageEl.getAttribute('data-content') || content;
-                
-                // Remove from UI
-                messageEl.remove();
+            if (deleteBtn) {
+                setIcon(deleteBtn, 'trash-2');
+                deleteBtn.onclick = async () => {
+                    // Get the current content from the data-content attribute or fallback to original
+                    const currentContent = messageEl.getAttribute('data-content') || content;
+                    
+                    // Remove from UI
+                    messageEl.remove();
 
-                // Find message index
-                const index = this.messageHistory.findIndex(m => 
-                    m.role === role && m.content === currentContent
-                );
-                
-                if (index !== -1) {
-                    // Reset lastUsedFlare only if we're deleting the message that established the current flare
-                    const messageSettings = this.messageHistory[index]?.settings;
-                    if (messageSettings?.flare === this.plugin.lastUsedFlare) {
-                        // Check if any later messages use this flare
-                        const laterFlareMessage = this.messageHistory.slice(index + 1)
-                            .some(m => m.settings?.flare === this.plugin.lastUsedFlare);
-                        if (!laterFlareMessage) {
-                            this.plugin.lastUsedFlare = null;
+                    // Find message index
+                    const index = this.messageHistory.findIndex(m => 
+                        m.role === role && m.content === currentContent
+                    );
+                    
+                    if (index !== -1) {
+                        // Reset lastUsedFlare only if we're deleting the message that established the current flare
+                        const messageSettings = this.messageHistory[index]?.settings;
+                        if (messageSettings?.flare === this.plugin.lastUsedFlare) {
+                            // Check if any later messages use this flare
+                            const laterFlareMessage = this.messageHistory.slice(index + 1)
+                                .some(m => m.settings?.flare === this.plugin.lastUsedFlare);
+                            if (!laterFlareMessage) {
+                                this.plugin.lastUsedFlare = null;
+                            }
+                        }
+
+                        // Remove from local messageHistory
+                        this.messageHistory.splice(index, 1);
+
+                        // Also remove from ChatHistoryManager
+                        const history = await this.plugin.chatHistoryManager.getCurrentHistory();
+                        if (history) {
+                            history.messages = history.messages.filter(
+                                (m: { role: string; content: string }) => 
+                                    !(m.role === role && m.content === currentContent)
+                            );
+                            history.lastModified = Date.now();
+                            await this.plugin.chatHistoryManager.saveCurrentHistory();
                         }
                     }
-
-                    // Remove from local messageHistory
-                    this.messageHistory.splice(index, 1);
-
-                    // Also remove from ChatHistoryManager
-                    const history = await this.plugin.chatHistoryManager.getCurrentHistory();
-                    if (history) {
-                        history.messages = history.messages.filter(
-                            (m: { role: string; content: string }) => 
-                                !(m.role === role && m.content === currentContent)
-                        );
-                        history.lastModified = Date.now();
-                        await this.plugin.chatHistoryManager.saveCurrentHistory();
-                    }
-                }
-            };
-
-            // Add buttons to actions container
-            actions.appendChild(copyBtn);
-            actions.appendChild(deleteBtn);
+                };
+            }
         }
 
         // Scroll to bottom

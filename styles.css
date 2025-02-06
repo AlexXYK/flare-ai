@@ -83,7 +83,7 @@
 .flare-toolbar {
     display: flex;
     align-items: center;
-    padding: 8px;
+    padding: 6px;
     border-bottom: 1px solid var(--background-modifier-border);
     background: var(--background-secondary-alt);
     gap: 4px;
@@ -148,12 +148,14 @@
 }
 
 .flare-chat-container .flare-composer {
+    flex-grow: 1;
     padding: 2px;
     border-top: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
 }
 
 .flare-chat-container .flare-input-wrapper {
+    flex-grow: 1;
     position: relative;
     display: flex;
     align-items: center;
@@ -168,25 +170,32 @@
 
 .flare-chat-container .flare-input {
     flex-grow: 1;
-    min-height: 24px;
-    max-height: 200px;
+    min-height: 36px;
+    max-height: calc(36px * 4);
     padding: 6px 8px;
     border: none;
     background: transparent;
     resize: none;
     font-family: inherit;
-    line-height: 1.5;
+    line-height: 24px;
     width: 100%;
     margin: 0;
     box-sizing: border-box;
     overflow-y: hidden;
-    height: auto;
-    min-height: 24px;
-    transition: height 0.15s ease;
+    height: 36px;
+    transition: height 0.2s ease-in-out;
+    display: block; /* Changed to block */
+    padding-top: 6px; /* Adjust padding to center text */
 }
 
-.flare-chat-container .flare-input:focus {
-    outline: none;
+.flare-chat-container .flare-input::placeholder {
+    line-height: 24px;
+    vertical-align: middle;
+}
+
+.flare-chat-container .flare-input.has-content {
+    overflow-y: auto;
+    padding-top: 6px; /* Maintain consistent padding when content exists */
 }
 
 .flare-chat-container .flare-chooser {
@@ -515,6 +524,7 @@
 /* Always show reasoning toggle button */
 .flare-message:not(.is-loading) .flare-message-actions .flare-action-button[aria-label="Toggle reasoning"] {
     opacity: 1;
+    background: var(--background-modifier-hover);
 }
 
 /* Reasoning content styling */
@@ -2005,10 +2015,6 @@
     display: flex;
     flex-direction: column;
     gap: 0;
-}
-
-.flare-send-button {
-    background-color: transparent !important;
 }
 
 /* Force the Obsidian content area to have zero bottom padding,
