@@ -83,7 +83,7 @@
 .flare-toolbar {
     display: flex;
     align-items: center;
-    padding: 2px 4px;
+    padding: 8px;
     border-bottom: 1px solid var(--background-modifier-border);
     background: var(--background-secondary-alt);
     gap: 4px;
@@ -132,7 +132,7 @@
     min-width: 24px;
     width: 24px;
     height: 24px;
-    padding: 4px;
+    padding: 0;
     border-radius: 4px;
     color: var(--text-muted);
     background: transparent;
@@ -148,7 +148,7 @@
 }
 
 .flare-chat-container .flare-composer {
-    padding: 16px;
+    padding: 2px;
     border-top: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
 }
@@ -228,7 +228,7 @@
     justify-content: space-between;
     border-top: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
-    min-height: 36px;
+    min-height: 28px;
 }
 
 .flare-footer-left,
@@ -340,7 +340,7 @@
     display: inline-flex;
     align-items: center;
     margin: 0;
-    padding: 2px 6px;
+    padding: 6px 8px;
     border-radius: 12px;
     position: relative;
     z-index: 20;
@@ -375,13 +375,18 @@
     align-items: center;
     gap: 4px;
     align-self: flex-start;
-    margin: 0;
-    padding: 0;
+    margin-top: 1px;
+    margin-left: 0;
+    margin-bottom: 2px;
+    padding: 0px;
 }
 
-.flare-response-content .markdown-rendered [dir="auto"],
-.flare-response-content .markdown-rendered p {
-    margin: 0;
+.flare-response-content p[dir="auto"]:first-child {
+    margin-top: 0;
+}
+
+.flare-response-content p[dir="auto"]:last-child {
+    margin-bottom: 0;
 }
 
 /* Loading states */
@@ -413,7 +418,7 @@
     opacity: 1;
     transition: opacity 0.15s ease;
     min-height: 0;
-    margin: 6px;
+    margin: 0;
     padding: 0;
 }
 
@@ -444,6 +449,19 @@
 }
 
 /* Specific handling for paragraphs and list items */
+
+.flare-markdown-content p[dir="auto"]:first-child {
+    margin-top: 0;
+}
+
+.flare-markdown-content p[dir="auto"]:last-child {
+    margin-bottom: 0;
+}
+
+.flare-markdown-content hr {
+    margin: 1em;
+}
+
 .flare-markdown-content .markdown-rendered p[dir="auto"],
 .flare-markdown-content .markdown-rendered li {
     display: inline;
@@ -1894,7 +1912,7 @@
     box-sizing: border-box;
 }
 
-.flare-system-message .flare-system-main {
+.flare-system message .flare-system-main {
     position: relative;
     display: flex;
     align-items: center;
