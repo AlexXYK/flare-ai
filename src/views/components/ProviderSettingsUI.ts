@@ -88,16 +88,8 @@ export class ProviderSettingsUI {
                     'ollama': 'Ollama'
                 };
                 
-                // Get list of already configured provider types
-                const configuredTypes = new Set(
-                    Object.values(this.plugin.settings.providers)
-                        .map(p => p.type)
-                        .filter(Boolean)
-                );
-                
-                // Only add provider types that aren't already configured
+                // Always add provider types without filtering so that new providers can choose any type
                 Object.entries(providerTypes)
-                    .filter(([type]) => !configuredTypes.has(type))
                     .forEach(([type, label]) => {
                         dropdown.addOption(type, label);
                     });

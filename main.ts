@@ -58,38 +58,42 @@ export default class FlarePlugin extends Plugin {
     lastUsedFlare: string | null = null;
 
     async onload() {
+        console.log(`Loading ${PLUGIN_NAME} v${PLUGIN_VERSION}`);
+        
         try {
-            // Load settings first
-            this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+            await this.loadSettings();
+            await this.initializePlugin();
+            this.addCommands();
+            this.setupUI();
             
+            // Start watching Flares folder
+            this.startFlareWatcher();
+            
+            console.log(`${PLUGIN_NAME} loaded successfully`);
+        } catch (error) {
+            console.error(`${PLUGIN_NAME} failed to initialize:`, error);
+            new Notice(`${PLUGIN_NAME} failed to initialize. Check console for details.`);
+        }
+    }
+
+    private async initializePlugin() {
+        try {
             // Initialize managers
             this.providerManager = new MainProviderManager(this);
             this.flareManager = new FlareManager(this);
             this.chatHistoryManager = new ChatHistoryManager(this);
             
-            // Ensure Flares folder exists BEFORE initializing manager
+            // Ensure folders exist
             await this.ensureFlaresFolderExists();
             
             // Load initial flares
             await this.flareManager.loadFlares();
             
-            // Register providers with error handling
-            const providers = [
-                new OllamaManager(this),
-                new OpenAIManager(this),
-                new OpenRouterManager(this)
-            ];
-
-            for (const provider of providers) {
-                try {
-                    this.registerProvider(provider);
-                } catch (error) {
-                    console.error(`Failed to register provider: ${provider.constructor.name}`, error);
-                }
-            }
+            // Register providers
+            await this.registerProviders();
             
-            // Only initialize default provider if explicitly set and valid
-            if (this.settings?.defaultProvider && this.providers.has(this.settings.defaultProvider)) {
+            // Initialize default provider if set
+            if (this.settings?.defaultProvider) {
                 await this.initializeProvider();
             }
 
@@ -99,37 +103,92 @@ export default class FlarePlugin extends Plugin {
                 (leaf) => new AIChatView(leaf, this)
             );
 
-            // Add ribbon icon
-            this.addRibbonIcon('flame', 'Open Flares Chat', () => {
-                this.activateView();
-            });
-
             // Add settings tab
             this.addSettingTab(new GeneralSettingTab(this.app, this));
-
-            // Add commands
-            this.addCommands();
-
-            // Start watching Flares folder
-            this.startFlareWatcher();
         } catch (error) {
-            console.error('Failed to initialize plugin:', error);
-            new Notice('Failed to initialize Flare plugin. Please check the console for details.');
+            console.error('FLARE.ai: Plugin initialization failed:', error);
+            throw new Error(
+                'Failed to initialize FLARE.ai plugin. ' + 
+                'Please check your settings and try reloading Obsidian.'
+            );
+        }
+    }
+
+    private async registerProviders() {
+        const providers = [
+            new OllamaManager(this),
+            new OpenAIManager(this),
+            new OpenRouterManager(this)
+        ];
+
+        let registeredCount = 0;
+        const errors: string[] = [];
+
+        for (const provider of providers) {
+            try {
+                this.registerProvider(provider);
+                registeredCount++;
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                errors.push(`${provider.constructor.name}: ${errorMessage}`);
+                console.error(
+                    `FLARE.ai: Failed to register provider ${provider.constructor.name}:`,
+                    error
+                );
+            }
+        }
+
+        if (errors.length > 0) {
+            new Notice(
+                `Some providers failed to register (${registeredCount}/${providers.length} succeeded). ` +
+                'Check settings and console for details.'
+            );
+        }
+    }
+
+    private setupUI() {
+        try {
+            // Add ribbon icon with proper aria label and tooltip
+            this.addRibbonIcon('flame', PLUGIN_NAME, (evt: MouseEvent) => {
+                this.activateView();
+            }).setAttribute('aria-label', 'Open FLARE.ai Chat');
+        } catch (error) {
+            console.error('FLARE.ai: Failed to setup UI:', error);
+            new Notice('Failed to setup FLARE.ai UI components');
         }
     }
 
     async onunload() {
-        if (this.flareWatcher) {
-            clearInterval(this.flareWatcher);
-        }
-        if (this.chatHistoryManager) {
-            await this.chatHistoryManager.cleanup();
-        }
-        if (this.flareManager) {
-            await this.flareManager.cleanup();
-        }
+        console.log(`Unloading ${PLUGIN_NAME}`);
+        
+        const cleanupTasks: Array<Promise<void>> = [];
+        
+        try {
+            // Clean up watchers and timers
+            if (this.flareWatcher) {
+                clearInterval(this.flareWatcher);
+                this.flareWatcher = null;
+            }
 
-        await this.saveData(this.settings);
+            // Clean up managers
+            if (this.chatHistoryManager) {
+                cleanupTasks.push(this.chatHistoryManager.cleanup());
+            }
+            if (this.flareManager) {
+                cleanupTasks.push(this.flareManager.cleanup());
+            }
+
+            // Wait for all cleanup tasks to complete
+            await Promise.all(cleanupTasks);
+
+            // Save final state
+            await this.saveData(this.settings);
+            
+            console.log(`${PLUGIN_NAME} unloaded successfully`);
+        } catch (error) {
+            console.error(`FLARE.ai: Error during cleanup:`, error);
+            // Don't show notice during unload as it may not be visible
+        }
     }
 
     private addCommands() {
@@ -297,7 +356,7 @@ export default class FlarePlugin extends Plugin {
         historyWindow?: number;
         stream?: boolean;
         onToken?: (token: string) => void;
-        isResend?: boolean;
+        isFlareSwitch?: boolean;
     }): Promise<string> {
         try {
             const lastFlare = this.lastUsedFlare || null;
@@ -308,8 +367,7 @@ export default class FlarePlugin extends Plugin {
                 `${this.settings.flaresFolder}/${newFlareName}.md`
             );
             if (!flareExists) {
-                new Notice(`Flare "${newFlareName}" does not exist. Please create it first.`);
-                return '';
+                throw new Error(`Flare "${newFlareName}" does not exist. Please create it first.`);
             }
             
             // Load flare config
@@ -319,12 +377,12 @@ export default class FlarePlugin extends Plugin {
             }
 
             // Handle context windows for flare switches differently
-            let isFlareSwitch = false;
+            let isFlareSwitch = options?.isFlareSwitch ?? false;
             if (options?.messageHistory?.length) {
                 // Check if any of the last N messages used a different flare
                 const lastMessages = options.messageHistory.slice(-3); // Look at last few messages
                 const lastFlares = new Set(lastMessages.map(msg => msg.settings?.flare).filter(Boolean));
-                isFlareSwitch = lastFlares.size > 1 || !lastFlares.has(newFlareName);
+                isFlareSwitch = isFlareSwitch || lastFlares.size > 1 || !lastFlares.has(newFlareName);
             } else {
                 isFlareSwitch = true; // First message is always a flare switch
             }
@@ -388,69 +446,6 @@ export default class FlarePlugin extends Plugin {
                 }
             };
 
-            // Determine what history to send to the provider
-            let historyToSend = [...finalMessageHistory];
-
-            // Handle history windows for flare switches differently
-            if (isFlareSwitch) {
-                // Keep system message separate
-                const systemMessages = historyToSend.filter(m => m.role === 'system');
-                const nonSystemMessages = historyToSend.filter(m => m.role !== 'system');
-
-                // For flare switches, first apply handoff context
-                const handoffSize = flareConfig.handoffWindow ?? -1;
-                if (handoffSize === -1) {
-                    // If handoff is -1, use all messages
-                    historyToSend = [...systemMessages, ...nonSystemMessages];
-                } else {
-                    // Get the last N complete pairs based on handoff context
-                    const pairs: Array<Array<{role: string; content: string; settings?: any}>> = [];
-                    let currentPair: Array<{role: string; content: string; settings?: any}> = [];
-                    
-                    for (const msg of nonSystemMessages) {
-                        if (msg.role === 'user') {
-                            if (currentPair.length > 0) {
-                                pairs.push([...currentPair]);
-                            }
-                            currentPair = [msg];
-                        } else if (msg.role === 'assistant' && currentPair.length === 1) {
-                            currentPair.push(msg);
-                            pairs.push([...currentPair]);
-                            currentPair = [];
-                        }
-                    }
-
-                    // Now check if context window is smaller than handoff
-                    const contextSize = flareConfig.historyWindow ?? -1;
-                    if (contextSize === -1) {
-                        // If context window is -1, use all handoff messages
-                        historyToSend = [...systemMessages, ...historyToSend];
-                    } else if (contextSize < handoffSize) {
-                        // If context window is smaller, get the last N pairs from handoff
-                        const historyPairs = pairs.slice(-contextSize);
-                        historyToSend = [...systemMessages, ...historyPairs.flat()];
-                    } else {
-                        // If context window is larger or equal, use all handoff messages
-                        // The context window will build up from the handoff size as more messages come in
-                        historyToSend = [...systemMessages, ...historyToSend];
-                    }
-                }
-            } else if (!isFlareSwitch) {
-                // For regular messages, apply history window if set
-                const historySize = flareConfig.historyWindow ?? -1;
-                if (historySize !== -1) {
-                    const systemMessages = historyToSend.filter(m => m.role === 'system');
-                    const nonSystemMessages = historyToSend.filter(m => m.role !== 'system');
-                    const windowedNonSystem = this.applyContextWindow(nonSystemMessages, historySize);
-                    historyToSend = [...systemMessages, ...windowedNonSystem];
-                }
-            }
-
-            // Strip reasoning content from messages when switching flares or if current flare is not a reasoning model
-            if (isFlareSwitch || !flareConfig.isReasoningModel) {
-                historyToSend = this.stripReasoningContent(historyToSend, flareConfig.reasoningHeader);
-            }
-
             // Get provider and send message
             const provider = await this.getProviderInstance(flareConfig.provider);
             if (!provider) {
@@ -459,11 +454,13 @@ export default class FlarePlugin extends Plugin {
 
             const response = await provider.sendMessage(processedMessage, {
                 ...options,
-                messageHistory: historyToSend,
+                messageHistory: finalMessageHistory,
                 flare: newFlareName,
                 model: flareConfig.model,
                 temperature: options?.temperature ?? flareConfig.temperature ?? 0.7,
-                maxTokens: options?.maxTokens ?? flareConfig.maxTokens
+                maxTokens: options?.maxTokens ?? flareConfig.maxTokens,
+                stream: options?.stream ?? true,
+                onToken: options?.onToken
             });
 
             // After getting response, update the full history with both messages

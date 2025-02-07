@@ -147,55 +147,98 @@
     color: var(--text-normal);
 }
 
+.flare-bottom-container {
+    display: flex;
+    flex-direction: column;
+    width: 99%;
+    background: var(--background-primary);
+    position: relative;
+    z-index: 1;
+}
+
 .flare-chat-container .flare-composer {
-    flex-grow: 1;
+    display: flex;
     padding: 2px;
     border-top: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
 }
 
 .flare-chat-container .flare-input-wrapper {
-    flex-grow: 1;
-    position: relative;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 2px;
     background-color: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
     border-radius: 4px;
     padding: 2px;
     margin: 0;
-    position: relative; /* Important for absolute positioning of suggestions */
+    flex: 1;
 }
 
 .flare-chat-container .flare-input {
-    flex-grow: 1;
+    flex: 1;
     min-height: 36px;
-    max-height: calc(36px * 4);
+    max-height: calc(36px * 4); /* 4 lines maximum */
     padding: 6px 8px;
     border: none;
     background: transparent;
     resize: none;
     font-family: inherit;
-    line-height: 24px;
-    width: 100%;
+    line-height: 1.4;
     margin: 0;
     box-sizing: border-box;
     overflow-y: hidden;
     height: 36px;
     transition: height 0.2s ease-in-out;
-    display: block; /* Changed to block */
-    padding-top: 6px; /* Adjust padding to center text */
+}
+
+.flare-chat-container .flare-input.has-custom-height {
+    height: calc(var(--base-height, 36px) + attr(data-content-height number));
 }
 
 .flare-chat-container .flare-input::placeholder {
-    line-height: 24px;
+    line-height: 1.4;
     vertical-align: middle;
+    opacity: 0.6;
+}
+
+/* Input States */
+.flare-chat-container .flare-input.is-empty {
+    height: 36px !important; /* Base height when empty */
+}
+
+.flare-chat-container .flare-input.is-measuring {
+    height: 0 !important;
+    overflow: hidden;
 }
 
 .flare-chat-container .flare-input.has-content {
-    overflow-y: auto;
-    padding-top: 6px; /* Maintain consistent padding when content exists */
+    height: var(--content-height, auto);
+    overflow-y: auto; /* Enable scrolling when content exceeds max-height */
+}
+
+/* Ensure input maintains base height when empty */
+.flare-chat-container .flare-input:not(.has-content) {
+    height: 36px;
+    overflow-y: hidden;
+}
+
+/* Add scrollbar styling for the input when it's scrollable */
+.flare-chat-container .flare-input::-webkit-scrollbar {
+    width: 6px;
+}
+
+.flare-chat-container .flare-input::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.flare-chat-container .flare-input::-webkit-scrollbar-thumb {
+    background-color: var(--background-modifier-border);
+    border-radius: 3px;
+}
+
+.flare-chat-container .flare-input::-webkit-scrollbar-thumb:hover {
+    background-color: var(--background-modifier-border-hover);
 }
 
 .flare-chat-container .flare-chooser {
@@ -221,7 +264,13 @@
 }
 
 .flare-chat-container .flare-send-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
     background-color: transparent !important;
+    flex-shrink: 0;
 }
 
 /* Footer */
@@ -528,25 +577,30 @@
 }
 
 /* Reasoning content styling */
-.flare-markdown.content .flare-reasoning-content {
-    position: relative;
+.flare-reasoning-content {
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+    transition: opacity 0.3s ease, max-height 0.3s ease;
+    visibility: hidden;
     margin-top: var(--size-4-2);
     padding: var(--size-4-2);
     background: var(--background-secondary);
     border-radius: var(--radius-m);
     border-left: 2px solid var(--text-accent);
-    opacity: 0;
-    height: 0;
-    overflow: hidden;
-    transition: opacity 0.3s ease, height 0.3s ease;
-    visibility: hidden;
 }
 
 .flare-reasoning-content.is-expanded {
-    display: block;
-    visibility: visible;
     opacity: 1;
-    height: auto;
+    max-height: var(--max-reasoning-height, 1000px);
+    visibility: visible;
+}
+
+/* Remove .hidden class usage and rely on is-expanded state */
+.flare-reasoning-content:not(.is-expanded) {
+    margin: 0;
+    padding: 0;
+    border: none;
 }
 
 .flare-reasoning-content .markdown-rendered {
@@ -1529,16 +1583,12 @@
 
 /* Suggestions positioning */
 .flare-suggestions {
-    --container-width: 100%;
-    --left-offset: 0;
-    --max-height: 200px;
-    --bottom-offset: 0;
-    --top-offset: 0;
     position: absolute;
-    bottom: calc(100% + 4px);
-    left: var(--left-offset);
+    bottom: 100%;
+    left: 0;
     right: 0;
-    max-height: var(--max-height);
+    max-height: 200px;
+    width: 100%;
     overflow-y: auto;
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
@@ -1546,27 +1596,39 @@
     box-shadow: var(--shadow-s);
     z-index: 1000;
     padding: 4px;
-    margin: 0 8px;
-    width: var(--container-width);
+    margin: 0 0 8px 0;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.2s ease;
+    transition: opacity 0.2s ease, transform 0.2s ease;
     -webkit-overflow-scrolling: touch;
+    transform: translateY(8px);
+    visibility: hidden;
 }
 
 .flare-suggestions.position-bottom {
-    top: var(--bottom-offset);
     bottom: auto;
+    top: 100%;
+    transform: translateY(-8px);
 }
 
 .flare-suggestions.position-top {
-    bottom: var(--top-offset);
+    bottom: 100%;
     top: auto;
+    transform: translateY(8px);
 }
 
 .flare-suggestions.is-visible {
     opacity: 1;
     pointer-events: auto;
+    transform: translateY(0);
+    visibility: visible;
+    display: block;
+}
+
+.flare-suggestions-container {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 }
 
 .flare-suggestion-item {
@@ -1580,41 +1642,50 @@
     transition: all 0.15s ease;
     min-height: 36px;
     position: relative;
+    background: var(--background-primary);
 }
 
-.flare-suggestion-item:hover,
-.flare-suggestion-item.is-selected {
+/* Separate hover and selection states */
+.flare-suggestion-item:hover {
     background: var(--background-modifier-hover);
     color: var(--text-accent);
 }
 
-/* Keyboard navigation indicator */
 .flare-suggestion-item.is-selected {
-    background: var(--background-modifier-hover);
+    background: var(--background-secondary-alt);
     color: var(--text-accent);
-    /* Add a subtle outline to show keyboard focus */
     outline: 1px solid var(--interactive-accent);
     outline-offset: -1px;
 }
 
-/* Ensure the selected item is always visible */
-.flare-suggestion-item.is-selected {
-    position: relative;
-    z-index: 2;
+/* When hovering, remove outline from previously selected item */
+.flare-suggestions:hover .flare-suggestion-item.is-selected:not(:hover) {
+    background: var(--background-primary);
+    color: var(--text-normal);
+    outline: none;
 }
 
-/* Scroll the selected item into view smoothly */
-.flare-suggestions {
-    scroll-behavior: smooth;
+/* Ensure hover state takes precedence when both hover and selected */
+.flare-suggestion-item.is-selected:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-accent);
+    outline: 1px solid var(--interactive-accent);
 }
 
 .flare-suggestion-item .suggestion-icon {
-    color: var(--text-muted);
+    color: inherit;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 20px;
     height: 20px;
+    opacity: 0.8;
+    transition: opacity 0.15s ease;
+}
+
+.flare-suggestion-item:hover .suggestion-icon,
+.flare-suggestion-item.is-selected .suggestion-icon {
+    opacity: 1;
 }
 
 .flare-suggestion-item .suggestion-name {
@@ -2032,3 +2103,4 @@
     min-height: 0;
     overflow: hidden;
 }
+

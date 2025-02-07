@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, TFile, setIcon, Notice, App, WorkspaceLeaf, Menu, Platform, Modal, SuggestModal } from 'obsidian';
+import { ItemView, MarkdownRenderer, TFile, setIcon, Notice, App, WorkspaceLeaf, Menu, Platform, Modal, SuggestModal, debounce } from 'obsidian';
 import { TempDialog } from './components/TempDialog';
 
 // @ts-ignore
@@ -38,6 +38,23 @@ interface MessageSettings {
     reasoningHeader?: string;
     /** Whether this is a reasoning-capable model */
     isReasoningModel?: boolean;
+}
+
+/**
+ * Interface for flare configuration objects
+ */
+interface Flare {
+    name: string;
+    provider?: string;
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    stream?: boolean;
+    historyWindow?: number;
+    handoffWindow?: number;
+    reasoningHeader?: string;
+    isReasoningModel?: boolean;
+    [key: string]: any;
 }
 
 /**
@@ -119,6 +136,64 @@ class WikiLinkSuggestModal extends SuggestModal<TFile> {
 }
 
 /**
+ * Error types for FLARE.ai
+ */
+class FlareError extends Error {
+    constructor(message: string, public code: string) {
+        super(message);
+        this.name = 'FlareError';
+    }
+}
+
+/** Error for message handling */
+class MessageError extends FlareError {
+    constructor(message: string) {
+        super(message, 'MESSAGE_ERROR');
+    }
+}
+
+/** Error for flare handling */
+class FlareConfigError extends FlareError {
+    constructor(message: string) {
+        super(message, 'FLARE_CONFIG_ERROR');
+    }
+}
+
+/** Error for provider handling */
+class ProviderError extends FlareError {
+    constructor(message: string) {
+        super(message, 'PROVIDER_ERROR');
+    }
+}
+
+/** Interface for message state tracking */
+interface MessageState {
+    isStreaming: boolean;
+    isProcessing: boolean;
+    hasError: boolean;
+    errorMessage: string;
+}
+
+/** Interface for view state */
+interface ViewState {
+    isStreaming: boolean;
+    isProcessing: boolean;
+    hasError: boolean;
+    errorMessage: string;
+    currentFlare?: string;
+    currentTemp: number;
+    expandedMessages: Set<string>;
+    lastSavedTimestamp?: number;
+}
+
+/** Interface for operation options */
+interface OperationOptions {
+    timeout?: number;
+    retries?: number;
+    backoff?: boolean;
+}
+
+/**
  * Main view for the AI chat interface
  * Handles message display, user input, and interaction with AI providers
  */
@@ -153,38 +228,173 @@ export class AIChatView extends ItemView {
     private suggestionsEl!: HTMLElement;
     /** Whether current streaming is aborted */
     private isAborted: boolean = false;
-    // Add a new property to track title generation state
+    /** Track title generation state */
     private isTitleGenerationInProgress: boolean = false;
+    private selectedSuggestionIndex: number = -1;
+    /** Set of cleanup functions for event listeners */
+    private eventRefs: Set<() => void>;
+    /** Set of cleanup functions for debounced handlers */
+    private debouncedHandlers: Set<() => void>;
+    /** Array of active request controllers */
+    private activeRequests: AbortController[];
+    /** Current message state */
+    private messageState: MessageState = {
+        isStreaming: false,
+        isProcessing: false,
+        hasError: false,
+        errorMessage: ''
+    };
+
+    /** View state */
+    private viewState: ViewState = {
+        isStreaming: false,
+        isProcessing: false,
+        hasError: false,
+        errorMessage: '',
+        currentTemp: CONSTANTS.DEFAULT_TEMPERATURE,
+        expandedMessages: new Set()
+    };
+
+    /** ResizeObserver for layout updates */
+    private resizeObserver: ResizeObserver;
+
+    private debouncedHeightUpdate: () => void;
 
     constructor(leaf: WorkspaceLeaf, private plugin: FlarePlugin) {
         super(leaf);
         this.app = plugin.app;
+        this.eventRefs = new Set();
+        this.debouncedHandlers = new Set();
+        this.activeRequests = [];
+
+        // Initialize ResizeObserver
+        this.resizeObserver = new ResizeObserver(
+            this.createDebouncedHandler(
+                () => this.updateLayout(),
+                100,
+                false
+            )
+        );
+
+        // Initialize debounced height update
+        this.debouncedHeightUpdate = this.createDebouncedHandler(
+            () => this.updateInputHeight(),
+            50,
+            true
+        );
+
+        // Register all cleanup in one place
+        this.register(() => {
+            // Clean up event listeners
+            this.eventRefs.forEach(cleanup => cleanup());
+            this.eventRefs.clear();
+
+            // Clean up debounced handlers
+            this.debouncedHandlers.forEach(cleanup => cleanup());
+            this.debouncedHandlers.clear();
+
+            // Abort any active requests
+            this.activeRequests.forEach(controller => controller.abort());
+            this.activeRequests = [];
+
+            // Clean up ResizeObserver
+            if (this.resizeObserver) {
+                this.resizeObserver.disconnect();
+            }
+
+            // Clean up suggestions
+            this.hideSuggestions();
+
+            // Clean up history sidebar
+            if (this.historySidebar) {
+                this.historySidebar.hide();
+            }
+
+            // Clean up markdown renderers
+            this.containerEl.querySelectorAll('.markdown-rendered').forEach(el => {
+                if (el instanceof HTMLElement) el.empty();
+            });
+
+            // Reset state
+            this.messageHistory = [];
+            this.currentFlare = undefined;
+            this.isStreaming = false;
+            this.isAborted = false;
+
+            // Clear DOM
+            if (this.messagesEl) this.messagesEl.empty();
+            if (this.inputEl) this.inputEl.value = '';
+            this.containerEl.empty();
+        });
     }
 
+    /**
+     * Gets the view type identifier
+     * @returns The view type string
+     */
     getViewType(): string {
         return VIEW_TYPE_AI_CHAT;
     }
 
+    /**
+     * Gets the display text for the view
+     * @returns The display text
+     */
     getDisplayText(): string {
         return 'FLARE.ai';
     }
 
+    /**
+     * Gets the icon for the view
+     * @returns The icon name
+     */
     getIcon(): string {
         return 'flame';
     }
 
+    /**
+     * Handles loading and initialization of the view
+     */
     async onload() {
+        super.onload();
+
+        try {
+            // Create UI components
+            await this.createUI();
+            
+            // Initialize observers
+            this.initializeObservers();
+            
+            // Load saved state
+            await this.loadViewState();
+            
+            console.debug('FLARE.ai: View loaded successfully');
+        } catch (error) {
+            console.error('FLARE.ai: Failed to load view:', error);
+            new Notice('Failed to load FLARE.ai chat view');
+        }
+    }
+
+    private async createUI() {
         const container = this.containerEl.children[1];
         container.empty();
+        container.setAttribute('role', 'main');
+        container.setAttribute('aria-label', 'FLARE.ai Chat Interface');
 
         // Create main chat container
         const chatContainer = container.createDiv('flare-chat-container');
+        chatContainer.setAttribute('role', 'region');
+        chatContainer.setAttribute('aria-label', 'Chat Messages');
         
         // Create main content area
         const mainContent = chatContainer.createDiv('flare-main-content');
+        mainContent.setAttribute('role', 'region');
+        mainContent.setAttribute('aria-label', 'Main Chat Area');
 
         // Create toolbar
         const toolbar = mainContent.createDiv('flare-toolbar');
+        toolbar.setAttribute('role', 'toolbar');
+        toolbar.setAttribute('aria-label', 'Chat Controls');
         const toolbarLeft = toolbar.createDiv('flare-toolbar-left');
         const toolbarCenter = toolbar.createDiv('flare-toolbar-center');
         const toolbarRight = toolbar.createDiv('flare-toolbar-right');
@@ -229,7 +439,7 @@ export class AIChatView extends ItemView {
         // Instead, create a bottom container that will hold both composer and footer
         const bottomContainer = mainContent.createDiv('flare-bottom-container');
         const composer = bottomContainer.createDiv('flare-composer');
-        
+
         const inputWrapper = composer.createDiv('flare-input-wrapper');
 
         // Add flare chooser
@@ -248,27 +458,18 @@ export class AIChatView extends ItemView {
             }
         });
         
-        // Add auto-resize handler for input
+        // Add auto-resize handler for input without inline styles
         this.inputEl.addEventListener('input', function() {
-            requestAnimationFrame(() => {
-                // Reset height to allow shrinking
-                this.style.height = '36px';
-                
-                // Toggle has-content class
-                if (this.value.trim()) {
-                    this.classList.add('has-content');
-                } else {
-                    this.classList.remove('has-content');
-                }
-                
-                // Calculate new height
-                const baseHeight = 36; // Base height including padding
-                const maxLines = 4;
-                const maxHeight = baseHeight * maxLines;
-                
-                // Set new height based on content
-                this.style.height = Math.min(this.scrollHeight, maxHeight) + 'px';
-            });
+            // Toggle classes based on the input presence
+            if (this.value.trim()) {
+                this.classList.add('has-content', 'has-custom-height');
+                // Calculate content height and store in data attribute for CSS to use
+                const contentHeight = this.scrollHeight;
+                this.setAttribute('data-content-height', contentHeight.toString());
+            } else {
+                this.classList.remove('has-content', 'has-custom-height');
+                this.removeAttribute('data-content-height');
+            }
         });
         
         // Create send button
@@ -330,57 +531,24 @@ export class AIChatView extends ItemView {
         
         // Setup event handlers
         this.setupEventHandlers();
+
+        // Add ResizeObserver
+        this.resizeObserver.observe(this.containerEl);
+
+        // Setup accessibility
+        this.setupAccessibility();
+
+        // Load saved state
+        await this.loadViewState();
     }
     
     private setupEventHandlers() {
-        // Handle history toggle
-        const historyBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Toggle chat history"]');
-        if (historyBtn) {
-            historyBtn.addEventListener('click', () => {
-                if (this.historySidebar.isVisible) {
-                    this.historySidebar.hide();
-                } else {
-                    this.historySidebar.show();
-                }
-            }, { passive: true });
-        }
-        
-        // Handle new chat
-        const newChatBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="New chat"]');
-        if (newChatBtn) {
-            newChatBtn.addEventListener('click', () => {
-                this.startNewChat();
-            }, { passive: true });
-        }
-        
-        // Handle save chat
-        const saveBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Save chat"]');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', async () => {
-                try {
-                    await this.plugin.chatHistoryManager.saveCurrentHistory();
-                    new Notice('Chat saved successfully');
-                    const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
-                    if (currentFile) {
-                        const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
-                        if (titleEl) {
-                            titleEl.setText(currentFile.basename);
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error saving chat:', error);
-                    new Notice('Failed to save chat');
-                }
-            }, { passive: true });
-        }
-        
-        // Handle clear chat
-        const clearBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Clear chat"]');
-        if (clearBtn) {
-            clearBtn.addEventListener('click', () => {
-                this.clearChat();
-            }, { passive: true });
-        }
+        if (!this.inputEl) return;
+
+        // Register all DOM events using Obsidian's registerDomEvent
+        this.registerDomEvent(this.inputEl, 'input', this.handleInput.bind(this));
+        this.registerDomEvent(this.inputEl, 'keydown', this.handleKeyDown.bind(this), { capture: true });
+        this.registerDomEvent(document, 'click', this.handleGlobalClick.bind(this));
 
         // Handle send button
         const sendBtn = this.containerEl.querySelector('.flare-send-button') as HTMLButtonElement | null;
@@ -407,10 +575,9 @@ export class AIChatView extends ItemView {
                         // Clear input field immediately
                         if (this.inputEl) {
                             this.inputEl.value = '';
-                            this.inputEl.style.height = '36px';  // Reset to default height with transition
-                            this.inputEl.classList.remove('has-content');
+                            this.inputEl.classList.remove('has-content', 'has-custom-height');
                         }
-                        // Run title generation in the background without affecting send button state
+                        // Run title generation in the background
                         this.handleTitleGeneration().catch(error => {
                             console.error('Failed to generate title:', error);
                             new Notice('Failed to generate title');
@@ -425,11 +592,10 @@ export class AIChatView extends ItemView {
                     sendBtn.setAttribute('aria-label', 'Stop streaming');
                     
                     try {
-                        // Clear input before sending - this is the only place we should clear it
+                        // Clear input before sending
                         const inputValue = this.inputEl.value;
                         this.inputEl.value = '';
-                        this.inputEl.style.height = '36px';  // Reset to default height with transition
-                        this.inputEl.classList.remove('has-content');
+                        this.inputEl.classList.remove('has-content', 'has-custom-height');
                         
                         // Try to send the message
                         const success = await this.handleMessage(content);
@@ -445,15 +611,17 @@ export class AIChatView extends ItemView {
                 }
             };
 
-            // Set initial handler
-            sendBtn.addEventListener('click', this.originalSendHandler, { passive: true });
+            this.registerDomEvent(sendBtn, 'click', (e: MouseEvent) => {
+                if (this.originalSendHandler) {
+                    this.originalSendHandler(e);
+                }
+            });
         }
         
         // Handle flare chooser
         const flareChooser = this.containerEl.querySelector('.flare-chooser');
-        if (flareChooser) {
-            flareChooser.addEventListener('click', (async function(this: AIChatView, event: Event) {
-                const mouseEvent = event as MouseEvent;
+        if (flareChooser instanceof HTMLElement) {
+            this.registerDomEvent(flareChooser, 'click', async (e: MouseEvent) => {
                 const menu = new Menu();
                 
                 try {
@@ -467,7 +635,7 @@ export class AIChatView extends ItemView {
                                 .setIcon('flame')
                                 .onClick(async () => {
                                     try {
-                                        // Load the flare config
+                                        // When clicking from the menu, we want to actually switch flares
                                         this.currentFlare = await this.plugin.flareManager.debouncedLoadFlare(flare.name);
                                         if (this.currentFlare) {
                                             await this.handleFlareSwitch(this.currentFlare);
@@ -482,677 +650,433 @@ export class AIChatView extends ItemView {
                     
                     // Show menu at click position
                     menu.showAtPosition({
-                        x: mouseEvent.clientX,
-                        y: mouseEvent.clientY
+                        x: e.clientX,
+                        y: e.clientY
                     });
                 } catch (error: unknown) {
                     console.error('Failed to load flares:', error);
                     new Notice('Failed to load flares: ' + getErrorMessage(error));
                 }
-            }).bind(this));
+            });
         }
-        
-        // Setup input handlers for flare suggestions
-        if (this.inputEl) {
-            let suggestionContainer: HTMLElement | null = null;
-            let selectedIndex = -1;
-            let flares: Array<{name: string}> = [];
-            
-            const removeSuggestions = () => {
+
+        // Global click handler for closing suggestions
+        this.registerDomEvent(document, 'click', ((e: Event) => {
+            if (!(e instanceof MouseEvent)) return;
+            const suggestionContainer = this.containerEl.querySelector('.flare-suggestions');
+            if (suggestionContainer && 
+                !suggestionContainer.contains(e.target as Node) && 
+                !this.inputEl.contains(e.target as Node)) {
+                this.hideSuggestions();
+            }
+        }) as EventListener);
+
+        // Window resize handler for suggestion positioning
+        const debouncedUpdatePosition = this.createDebouncedHandler(
+            () => {
+                const suggestionContainer = this.containerEl.querySelector('.flare-suggestions');
                 if (suggestionContainer) {
-                    suggestionContainer.remove();
-                    suggestionContainer = null;
+                    this.updateSuggestionsPosition();
                 }
-                this.containerEl.removeClass('has-suggestions');
-                selectedIndex = -1;
-                flares = [];
-            };
+            },
+            100,
+            false
+        );
+        this.registerDomEvent(window, 'resize', debouncedUpdatePosition as EventListener);
 
-            const selectSuggestion = async (index: number) => {
-                if (!suggestionContainer || index < 0 || index >= flares.length) return;
-                
-                const flare = flares[index];
-                const input = this.inputEl.value;
-                const cursorPosition = this.inputEl.selectionStart || 0;
-                
-                // Only process @ at the start of input
-                if (input.trimStart().startsWith('@')) {
-                    const newValue = '@' + flare.name + ' ' + input.slice(cursorPosition);
-                    this.inputEl.value = newValue;
-                    
-                    // Set cursor position after the inserted flare name
-                    const newPosition = flare.name.length + 2; // +2 for @ and space
-                    this.inputEl.setSelectionRange(newPosition, newPosition);
-                }
-                
-                // Remove suggestions
-                removeSuggestions();
-            };
+        // Setup toolbar buttons
+        this.setupToolbarHandlers();
+    }
 
-            const updateSuggestions = async (searchTerm: string) => {
-                try {
-                    // Load available flares
-                    flares = await this.plugin.flareManager.loadFlares();
-                    
-                    // Filter flares based on search term
-                    const filtered = flares.filter(f => 
-                        f.name.toLowerCase().includes(searchTerm.toLowerCase())
-                    );
+    private resetSendButton(
+        button: HTMLButtonElement, 
+        originalHandler: ((this: GlobalEventHandlers, ev: MouseEvent) => any) | null
+    ): void {
+        this.isAborted = true;  // Set abort state when stopping
+        setIcon(button, 'send');
+        button.setAttribute('aria-label', 'Send message');
+        button.classList.remove('is-streaming');
+        this.isStreaming = false;
+    }
 
-                    if (filtered.length === 0) {
-                        removeSuggestions();
-                        return;
-                    }
+    private updateFlareSuggestions(searchTerm: string) {
+        const createSuggestionContainer = () => {
+            const container = createDiv('flare-suggestions');
+            // Append to input wrapper for proper positioning
+            const inputWrapper = this.inputEl?.closest('.flare-input-wrapper');
+            if (inputWrapper) {
+                inputWrapper.appendChild(container);
+            }
+            return container;
+        };
 
-                    // Update flares array to only contain filtered results
-                    flares = filtered;
+        const removeSuggestions = () => {
+            const container = this.containerEl.querySelector('.flare-suggestions');
+            if (container) {
+                container.remove();
+            }
+            this.selectedSuggestionIndex = -1;
+        };
 
-                    // Create or update suggestion container
-                    if (!suggestionContainer) {
-                        suggestionContainer = createDiv('flare-suggestions');
-                        document.body.appendChild(suggestionContainer);
-                    }
-                    suggestionContainer.empty();
+        const renderSuggestions = async (container: HTMLElement, searchTerm: string) => {
+            try {
+                const flares = await this.plugin.flareManager.loadFlares();
+                const filtered = flares.filter((f: { name: string }) => 
+                    f.name.toLowerCase().includes(searchTerm.toLowerCase())
+                );
 
-                    // Create inner container for suggestions
-                    const suggestionsInner = suggestionContainer.createDiv('flare-suggestions-container');
-
-                    // Add suggestions
-                    filtered.forEach((flare, index) => {
-                        const item = suggestionsInner.createDiv('flare-suggestion-item');
-                        if (index === selectedIndex) {
-                            item.addClass('is-selected');
-                        }
-                        
-                        const icon = item.createDiv('suggestion-icon');
-                        setIcon(icon, 'flame');
-                        
-                        item.createDiv('suggestion-name').setText(flare.name);
-                        
-                        if (index === 0) {
-                            item.createDiv('suggestion-hint').setText('↵ to select');
-                        }
-                        
-                        // Handle click
-                        item.addEventListener('click', async () => {
-                            await selectSuggestion(index);
-                        });
-                    });
-
-                    // Position the suggestions
-                    const inputWrapper = this.inputEl.closest('.flare-input-wrapper') as HTMLElement;
-                    if (!inputWrapper) return;
-
-                    const wrapperRect = inputWrapper.getBoundingClientRect();
-                    const viewportHeight = window.innerHeight;
-                    const viewportWidth = window.innerWidth;
-                    
-                    // Calculate available space
-                    const spaceBelow = viewportHeight - wrapperRect.bottom;
-                    const spaceAbove = wrapperRect.top;
-                    
-                    // Calculate dimensions
-                    const containerWidth = Math.min(viewportWidth * 0.9, 400);
-                    const leftOffset = Math.max(8, wrapperRect.left);
-                    
-                    // Set position and dimensions
-                    suggestionContainer.style.position = 'fixed';
-                    suggestionContainer.style.width = `${containerWidth}px`;
-                    suggestionContainer.style.left = `${leftOffset}px`;
-                    
-                    // Set max height for suggestions container
-                    const maxHeight = Math.min(300, Math.max(spaceAbove, spaceBelow) - 16);
-                    suggestionsInner.style.maxHeight = `${maxHeight}px`;
-                    
-                    if (spaceBelow >= 200 || spaceBelow > spaceAbove) {
-                        // Position below input
-                        suggestionContainer.style.top = `${wrapperRect.bottom + 8}px`;
-                        suggestionContainer.style.bottom = 'auto';
-                        suggestionContainer.removeClass('position-top');
-                        suggestionContainer.addClass('position-bottom');
-                    } else {
-                        // Position above input
-                        suggestionContainer.style.bottom = `${viewportHeight - wrapperRect.top + 8}px`;
-                        suggestionContainer.style.top = 'auto';
-                        suggestionContainer.addClass('position-top');
-                        suggestionContainer.removeClass('position-bottom');
-                    }
-
-                    // Show suggestions
-                    suggestionContainer.addClass('is-visible');
-                    
-                    // Set initial selection
-                    if (selectedIndex === -1) {
-                        selectedIndex = 0;
-                    }
-
-                } catch (error) {
-                    console.error('Error updating suggestions:', error);
+                if (filtered.length === 0) {
                     removeSuggestions();
-                }
-            };
-
-            // Add input handlers
-            this.inputEl.addEventListener('input', async () => {
-                const input = this.inputEl.value;
-                const cursorPosition = this.inputEl.selectionStart || 0;
-                
-                // Check if we're at the start of the input or after whitespace
-                const beforeCursor = input.slice(0, cursorPosition);
-                const isAtStart = beforeCursor.trim() === beforeCursor && beforeCursor.startsWith('@');
-                
-                if (isAtStart) {
-                    const searchTerm = beforeCursor.slice(1); // Remove the @ symbol
-                    await updateSuggestions(searchTerm);
-                } else {
-                    removeSuggestions();
-                }
-            });
-
-            // Also trigger suggestions on @ being typed
-            this.inputEl.addEventListener('keyup', async (e: KeyboardEvent) => {
-                if (e.key === '@') {
-                    const input = this.inputEl.value;
-                    const cursorPosition = this.inputEl.selectionStart || 0;
-                    const beforeCursor = input.slice(0, cursorPosition);
-                    
-                    // Only show suggestions if @ is at the start or after whitespace
-                    if (beforeCursor.trim() === '@') {
-                        await updateSuggestions('');
-                    }
-                }
-            });
-
-            // Handle keyboard navigation
-            this.inputEl.addEventListener('keydown', async (e: KeyboardEvent) => {
-                // Handle suggestions navigation if suggestions are visible
-                if (suggestionContainer) {
-                    switch (e.key) {
-                        case 'ArrowUp':
-                            e.preventDefault();
-                            selectedIndex = Math.max(0, selectedIndex - 1);
-                            const upSearchTerm = this.inputEl.value.slice(1, this.inputEl.selectionStart).trim();
-                            await updateSuggestions(upSearchTerm);
-                            break;
-                            
-                        case 'ArrowDown':
-                            e.preventDefault();
-                            selectedIndex = Math.min(flares.length - 1, selectedIndex + 1);
-                            const downSearchTerm = this.inputEl.value.slice(1, this.inputEl.selectionStart).trim();
-                            await updateSuggestions(downSearchTerm);
-                            break;
-                            
-                        case 'Enter':
-                            if (selectedIndex >= 0) {
-                                e.preventDefault();
-                                await selectSuggestion(selectedIndex);
-                            }
-                            break;
-                            
-                        case 'Escape':
-                            removeSuggestions();
-                            break;
-                    }
                     return;
                 }
 
-                // Handle Enter key behavior when no suggestions are shown
-                if (e.key === 'Enter') {
-                    // On mobile, allow normal Enter behavior
-                    if (Platform.isMobile) {
-                        return;
+                container.empty();
+                const suggestionsInner = container.createDiv('flare-suggestions-container');
+
+                // Add suggestions
+                filtered.forEach((flare: { name: string }, index: number) => {
+                    const item = suggestionsInner.createDiv('flare-suggestion-item');
+                    if (index === this.selectedSuggestionIndex) {
+                        item.classList.add('is-selected');
                     }
                     
-                    // On desktop:
-                    // - Shift+Enter creates a line break
-                    // - Plain Enter sends the message
-                    if (!e.shiftKey) {
-                        e.preventDefault();
-                        const sendBtn = this.containerEl.querySelector('.flare-send-button') as HTMLButtonElement;
-                        if (sendBtn && this.originalSendHandler && !this.isStreaming) {
-                            const boundHandler = this.originalSendHandler.bind(this);
-                            await boundHandler(new MouseEvent('click'));
-                        }
+                    const icon = item.createDiv('suggestion-icon');
+                    setIcon(icon, 'flame');
+                    
+                    item.createDiv('suggestion-name').setText(flare.name);
+                    
+                    if (index === 0) {
+                        item.createDiv('suggestion-hint').setText('↵ to select');
                     }
-                }
-            });
-
-            // Remove suggestions when clicking outside
-            document.addEventListener('click', (e: MouseEvent) => {
-                if (suggestionContainer && !suggestionContainer.contains(e.target as Node) && !this.inputEl.contains(e.target as Node)) {
-                    removeSuggestions();
-                }
-            });
-        }
-
-        // If you want the default placeholder to read "@flarename ..." on startup,
-        // add something like this:
-        if (this.inputEl) {
-            this.inputEl.setAttribute('placeholder', '@flarename ...');
-        }
-    }
-
-    async loadCurrentHistory() {
-        if (!this.messagesEl) return;
-
-        try {
-            // Clear UI first
-            this.messagesEl.empty();
-            this.messageHistory = [];
-
-            // Add loading indicator
-            const loadingEl = this.messagesEl.createDiv('flare-loading-message');
-            loadingEl.setText('Loading chat history...');
-
-            const history = await this.plugin.chatHistoryManager.getCurrentHistory();
-            const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
-            
-            // Update chat title based on current history
-            const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
-            if (titleEl) {
-                if (currentFile) {
-                    titleEl.setText(currentFile.basename);
-                } else {
-                    titleEl.setText('New Chat');
-                }
-            }
-            
-            // Remove loading indicator
-            loadingEl.remove();
-            
-            if (history?.messages && Array.isArray(history.messages)) {
-                // Store complete history first
-                this.messageHistory = history.messages.map((message: ChatMessage) => ({
-                    role: message.role,
-                    content: message.content,
-                    settings: message.settings
-                }));
-
-                // Determine what to show in UI based on history window
-                let messagesToShow = [...history.messages];
-                if (this.currentFlare?.historyWindow !== undefined && this.currentFlare.historyWindow !== -1) {
-                    const windowSize = this.currentFlare.historyWindow;
-                    if (windowSize === 0) {
-                        messagesToShow = [];
-                    } else {
-                        const systemMessages = messagesToShow.filter(m => m.role === 'system');
-                        const nonSystemMessages = messagesToShow.filter(m => m.role !== 'system');
-                        const windowedNonSystem = this.plugin.applyHistoryWindow(nonSystemMessages, windowSize);
-                        messagesToShow = windowedNonSystem.length > 0 ? 
-                            systemMessages.concat(windowedNonSystem) : 
-                            windowedNonSystem;
-                    }
-                }
-
-                // Display messages in UI
-                for (const message of messagesToShow) {
-                    await this.addMessage(
-                        message.role,
-                        message.content,
-                        message.settings,
-                        false // Don't add to history manager since we're loading from it
-                    );
-                }
-
-                // Scroll to bottom
-                this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-            }
-
-        } catch (error) {
-            console.error('Error loading chat history:', error);
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            new Notice('Error loading chat history: ' + errorMessage);
-            
-            // Clear messages on error
-            this.messagesEl.empty();
-            this.messageHistory = [];
-            
-            // Reset title
-            const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
-            if (titleEl) {
-                titleEl.setText('New Chat');
-            }
-        }
-    }
-
-    private async clearChat() {
-        if (this.messagesEl) {
-            // Clear UI messages
-            this.messagesEl.empty();
-            
-            // Clear message history
-            this.messageHistory = [];
-
-            // Clear history in the history manager and save empty state
-            const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
-            if (currentFile) {
-                // Clear the history manager's state
-                await this.plugin.chatHistoryManager.clearHistory();
-                // Ensure we have a clean history object
-                const history = await this.plugin.chatHistoryManager.getCurrentHistory();
-                if (history) {
-                    history.messages = [];
-                    history.lastModified = Date.now();
-                }
-                // Save the empty state
-                await this.plugin.chatHistoryManager.saveCurrentHistory();
-            } else {
-                // If no current file, create a new empty history
-                await this.plugin.chatHistoryManager.createNewHistory();
-            }
-
-            // Reset chat title to "New Chat"
-            const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
-            if (titleEl) {
-                titleEl.setText('New Chat');
-            }
-        }
-    }
-
-    // Add a new method for starting a new chat
-    private async startNewChat() {
-        if (this.messagesEl) {
-            // Clear UI messages and history
-            this.messagesEl.empty();
-            this.messageHistory = [];
-            
-            try {
-                // Create new chat history and wait for it to complete
-                const newHistory = await this.plugin.chatHistoryManager.createNewHistory();
-                if (!newHistory) {
-                    throw new Error('Failed to create new chat history');
-                }
-
-                // Save the new history immediately
-                await this.plugin.chatHistoryManager.saveCurrentHistory();
-                
-                // Always set title to "New Chat" initially
-                const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
-                if (titleEl) {
-                    titleEl.setText('New Chat');
-                }
-
-                // Reset current flare
-                this.currentFlare = undefined;
-                
-                // Reset input placeholder
-                if (this.inputEl) {
-                    this.inputEl.setAttribute('placeholder', '@flarename ...');
-                }
-
-                // Reset model display
-                if (this.modelDisplayEl) {
-                    this.modelDisplayEl.setText('--');
-                    const modelControl = this.containerEl.querySelector('.flare-model-control');
-                    if (modelControl) {
-                        modelControl.addClass('is-disabled');
-                    }
-                }
-
-                // Reset temperature
-                this.currentTemp = 0.7; // Reset to default temperature
-                if (this.tempDisplayEl) {
-                    this.tempDisplayEl.setText('--');
-                    const tempControl = this.containerEl.querySelector('.flare-temp-control');
-                    if (tempControl) {
-                        tempControl.addClass('is-disabled');
-                    }
-                }
-
-                // Reset streaming state
-                this.isStreaming = false;
-                const sendBtn = this.containerEl.querySelector('.flare-send-button') as HTMLButtonElement;
-                if (sendBtn) {
-                    this.resetSendButton(sendBtn, this.originalSendHandler);
-                }
-
-                // Update history sidebar if it exists
-                if (this.plugin.historySidebar) {
-                    await this.plugin.historySidebar.refresh();
-                }
-
-                new Notice('New chat created');
-            } catch (error) {
-                console.error('Failed to create new chat:', error);
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                new Notice('Failed to create new chat: ' + errorMessage);
-            }
-        }
-    }
-
-    async handleTitleGeneration(): Promise<boolean> {
-        let progressNotice: any = null;
-        try {
-            // Verify we have messages to generate a title from
-            if (!this.messageHistory.length) {
-                throw new Error('No messages to generate title from');
-            }
-
-            const titleSettings = this.plugin.settings.titleSettings;
-
-            // Validate title generation settings
-            if (!titleSettings.provider || !titleSettings.model) {
-                throw new Error('Title generation provider and model must be configured in settings');
-            }
-
-            // Verify provider exists and is enabled
-            const provider = this.plugin.settings.providers[titleSettings.provider];
-            if (!provider || !provider.enabled) {
-                throw new Error(`Provider ${provider?.name || titleSettings.provider} is not configured or enabled`);
-            }
-
-            progressNotice = new Notice('Title generation in progress...', 0);
-
-            // Build the conversation's text, filtering out system messages and cleaning content
-            const historyText = this.messageHistory
-                .filter(msg => msg.role !== 'system')
-                .map(msg => {
-                    let content = msg.content;
-                    try {
-                        // Try to parse JSON content (for system messages)
-                        const parsed = JSON.parse(content);
-                        if (parsed.main) {
-                            content = parsed.main;
-                        }
-                    } catch (e) {
-                        // Not JSON, use as is
-                    }
-                    // Clean up the content - remove markdown and limit length
-                    content = content
-                        .replace(/```[\s\S]*?```/g, '') // Remove code blocks
-                        .replace(/`[^`]*`/g, '') // Remove inline code
-                        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1') // Convert links to text
-                        .replace(/[#*_~]/g, '') // Remove markdown formatting
-                        .substring(0, 150); // Limit length
-                    return `${msg.role}: ${content}`;
-                })
-                .join('\n\n');
-
-            // Create a direct request to the provider's API
-            const prompt = titleSettings.prompt + '\n\nChat History:\n' + historyText;
-            
-            // Create messages array for the API request
-            const messages = [
-                { role: 'user', content: prompt }
-            ];
-
-            // Make direct API call based on provider type
-            let response: string;
-            
-            if (titleSettings.provider === 'openai') {
-                const result = await this.plugin.openai.createChatCompletion({
-                    model: titleSettings.model,
-                    messages: messages,
-                    temperature: titleSettings.temperature || 0.7,
-                    max_tokens: titleSettings.maxTokens || 50,
-                    stream: false // Never use streaming for title generation
-                });
-                response = result.choices[0]?.message?.content || '';
-            } else if (titleSettings.provider === 'anthropic') {
-                const result = await this.plugin.anthropic.messages.create({
-                    model: titleSettings.model,
-                    messages: messages,
-                    temperature: titleSettings.temperature || 0.7,
-                    max_tokens: titleSettings.maxTokens || 50,
-                    stream: false // Never use streaming for title generation
-                });
-                response = result.content[0]?.text || '';
-            } else if (provider.type === 'ollama') {
-                const result = await fetch(`${provider.baseUrl}/api/chat`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        model: titleSettings.model,
-                        messages: messages,
-                        stream: false, // Never use streaming for title generation
-                        options: {
-                            temperature: titleSettings.temperature || 0.7
-                        }
-                    })
-                });
-
-                if (!result.ok) {
-                    const error = await result.text();
-                    throw new Error(`Ollama API error: ${error}`);
-                }
-
-                const data = await result.json();
-                response = data.message?.content || '';
-            } else {
-                throw new Error(`Unsupported provider: ${titleSettings.provider}`);
-            }
-
-            // If we don't get a valid response, throw an error
-            if (!response || response.trim().length === 0) {
-                throw new Error('Failed to generate title - no response from model');
-            }
-
-            // Update the title
-            const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
-            if (currentFile) {
-                let sanitizedTitle = this.sanitizeTitle(response.trim());
-                const currentPath = currentFile.parent.path;
-
-                // Handle potential file name conflicts by adding a number suffix
-                let counter = 1;
-                let targetPath = `${currentPath}/${sanitizedTitle}.md`;
-                while (await this.plugin.app.vault.adapter.exists(targetPath)) {
-                    sanitizedTitle = `${this.sanitizeTitle(response.trim())} ${counter}`;
-                    targetPath = `${currentPath}/${sanitizedTitle}.md`;
-                    counter++;
-                }
-                
-                // Get current history and update its title
-                const history = await this.plugin.chatHistoryManager.getCurrentHistory();
-                if (history) {
-                    history.title = sanitizedTitle;
-                    // Save the updated history
-                    await this.plugin.chatHistoryManager.saveCurrentHistory();
-                }
-                
-                // Update the file
-                await this.plugin.app.fileManager.renameFile(
-                    currentFile,
-                    targetPath
-                );
-                
-                // Update the title in the UI
-                const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
-                if (titleEl) {
-                    titleEl.setText(sanitizedTitle);
-                }
-                
-                // Hide the progress notice before showing success
-                if (progressNotice) progressNotice.hide();
-                
-                // Show success notice after a small delay
-                setTimeout(() => {
-                    new Notice('Title updated successfully');
-                }, 100);
-            } else {
-                throw new Error('No active chat file found');
-            }
-
-            return true;
-        } catch (error) {
-            console.error('Error generating title:', error);
-            // Hide the progress notice before showing error
-            if (progressNotice) progressNotice.hide();
-            
-            // Show error notice after a small delay
-            setTimeout(() => {
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                new Notice(`Error generating title: ${errorMessage}`);
-            }, 100);
-            return false;
-        }
-    }
-
-    async handleMessage(content: string): Promise<boolean> {
-        try {
-            // Check for title command
-            if (content === '/title') {
-                // Run title generation in the background without affecting send button state
-                this.handleTitleGeneration().catch(error => {
-                    console.error('Failed to generate title:', error);
-                    new Notice('Failed to generate title');
-                });
-                return true;
-            }
-
-            // First check if message starts with a flare switch
-            const flareSwitchMatch = content.match(/^@(\w+)(?:\s+([\s\S]+))?$/);
-            if (flareSwitchMatch) {
-                const [_, flareName, actualMessage] = flareSwitchMatch;
-                
-                try {
-                    // Check if flare exists before proceeding
-                    const flareExists = await this.plugin.app.vault.adapter.exists(
-                        `${this.plugin.settings.flaresFolder}/${flareName}.md`
-                    );
-                    if (!flareExists) {
-                        new Notice(`Flare "${flareName}" does not exist. Please create it first.`);
-                        return false;
-                    }
-
-                    // Load and switch to the new flare
-                    const newFlare = await this.plugin.flareManager.debouncedLoadFlare(flareName);
-                    if (!newFlare) {
-                        throw new Error(`Failed to load flare configuration for ${flareName}`);
-                    }
-
-                    // Check provider configuration before switching
-                    const provider = this.plugin.settings.providers[newFlare.provider];
-                    if (!provider || !provider.enabled) {
-                        const providerName = provider?.name || newFlare.provider;
-                        throw new Error(`Provider ${providerName} is not configured or enabled. Please check settings.`);
-                    }
-
-                    if (!newFlare.model) {
-                        throw new Error(`No model selected for flare ${newFlare.name}. Please configure the flare.`);
-                    }
-
-                    // Wait for the flare switch to complete before processing message
-                    await this.handleFlareSwitch(newFlare);
-
-                    // Only process message if there is one
-                    if (actualMessage?.trim()) {
-                        await this.processMessage(actualMessage.trim(), { 
-                            stream: newFlare.stream ?? true, 
-                            isFlareSwitch: true 
+                    
+                    // Add mouse event handlers
+                    if (item instanceof HTMLElement) {
+                        this.registerDomEvent(item, 'mouseenter', () => {
+                            // Remove selection from previously selected item
+                            suggestionsInner.querySelectorAll('.is-selected').forEach(el => 
+                                el.classList.remove('is-selected')
+                            );
+                            item.classList.add('is-selected');
+                            this.selectedSuggestionIndex = index;
+                        });
+                        
+                        this.registerDomEvent(item, 'click', () => {
+                            this.insertFlareSuggestion(index);
                         });
                     }
-                    return true;
-                } catch (error: unknown) {
-                    console.error('Failed to load flare config:', error);
-                    new Notice(getErrorMessage(error));
+                });
+
+                // Position the suggestions based on available space
+                const inputWrapper = this.inputEl?.closest('.flare-input-wrapper');
+                if (inputWrapper) {
+                    const rect = inputWrapper.getBoundingClientRect();
+                    const viewportHeight = window.innerHeight;
+                    const spaceBelow = viewportHeight - rect.bottom;
+                    const spaceAbove = rect.top;
+
+                    if (spaceBelow >= 200 || spaceBelow > spaceAbove) {
+                        container.classList.remove('position-top');
+                        container.classList.add('position-bottom');
+                    } else {
+                        container.classList.add('position-top');
+                        container.classList.remove('position-bottom');
+                    }
+                }
+
+                container.classList.add('is-visible');
+
+                // Set initial selection
+                if (this.selectedSuggestionIndex === -1) {
+                    this.selectedSuggestionIndex = 0;
+                    const firstItem = suggestionsInner.querySelector('.flare-suggestion-item');
+                    if (firstItem instanceof HTMLElement) {
+                        firstItem.classList.add('is-selected');
+                    }
+                }
+
+                // Add mouse leave handler to container
+                if (container instanceof HTMLElement) {
+                    this.registerDomEvent(container, 'mouseleave', () => {
+                        // Restore keyboard selection when mouse leaves
+                        suggestionsInner.querySelectorAll('.is-selected').forEach(el => 
+                            el.classList.remove('is-selected')
+                        );
+                        const currentItem = suggestionsInner.children[this.selectedSuggestionIndex];
+                        if (currentItem instanceof HTMLElement) {
+                            currentItem.classList.add('is-selected');
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error updating suggestions:', error);
+                removeSuggestions();
+            }
+        };
+
+        // Remove existing suggestions
+        removeSuggestions();
+
+        // Create new suggestions container
+        const container = createSuggestionContainer();
+        renderSuggestions(container, searchTerm);
+    }
+
+    private hideSuggestions() {
+        const container = this.containerEl.querySelector('.flare-suggestions');
+        if (container) {
+            container.remove();
+        }
+        this.selectedSuggestionIndex = -1;
+    }
+
+    private async selectFlare(flareName: string) {
+        try {
+            const flare = await this.plugin.flareManager.debouncedLoadFlare(flareName);
+            if (flare) {
+                this.currentFlare = flare;
+                await this.handleFlareSwitch(flare);
+            }
+        } catch (error) {
+            console.error('Error loading flare:', error);
+            new Notice(`Failed to load flare: ${error}`);
+        }
+    }
+
+    private navigateSuggestions(direction: 'up' | 'down') {
+        const suggestions = this.containerEl.querySelectorAll('.flare-suggestion-item');
+        const total = suggestions.length;
+        if (!total) return;
+
+        // Update index with wrapping, one item at a time
+        if (direction === 'up') {
+            this.selectedSuggestionIndex = (this.selectedSuggestionIndex <= 0) ? total - 1 : this.selectedSuggestionIndex - 1;
+        } else {
+            this.selectedSuggestionIndex = (this.selectedSuggestionIndex >= total - 1) ? 0 : this.selectedSuggestionIndex + 1;
+        }
+
+        // Update UI
+        suggestions.forEach((item, index) => {
+            if (index === this.selectedSuggestionIndex) {
+                item.classList.add('is-selected');
+                // Use scrollIntoView with smooth behavior
+                item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            } else {
+                item.classList.remove('is-selected');
+            }
+        });
+    }
+
+    private handleKeyDown(e: KeyboardEvent) {
+        const suggestionContainer = this.containerEl.querySelector('.flare-suggestions');
+        
+        // Handle suggestions navigation if suggestions are visible
+        if (suggestionContainer) {
+            switch (e.key) {
+                case 'ArrowUp':
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    this.navigateSuggestions('up');
+                    break;
+                    
+                case 'ArrowDown':
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    this.navigateSuggestions('down');
+                    break;
+                    
+                case 'Tab':
+                    if (this.selectedSuggestionIndex >= 0) {
+                        e.preventDefault();
+                        e.stopImmediatePropagation();
+                        this.insertFlareSuggestion(this.selectedSuggestionIndex);
+                    }
+                    break;
+                    
+                case 'Enter':
+                    if (this.selectedSuggestionIndex >= 0) {
+                        e.preventDefault();
+                        e.stopImmediatePropagation();
+                        this.insertFlareSuggestion(this.selectedSuggestionIndex);
+                    }
+                    break;
+                    
+                case 'Escape':
+                    this.hideSuggestions();
+                    break;
+            }
+            return;
+        }
+
+        // If suggestions are not visible, let the Enter key (and others) be handled normally:
+        if (e.key === 'Enter' && !Platform.isMobile && !e.shiftKey) {
+            e.preventDefault();
+            const sendBtn = this.containerEl.querySelector('.flare-send-button') as HTMLButtonElement;
+            if (sendBtn && this.originalSendHandler && !this.isStreaming) {
+                this.originalSendHandler(new MouseEvent('click'));
+            }
+        }
+    }
+
+    private setupToolbarHandlers() {
+        // History toggle
+        const historyBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Toggle chat history"]');
+        if (historyBtn instanceof HTMLElement) {
+            this.registerDomEvent(historyBtn, 'click', () => {
+                if (this.historySidebar.isVisible) {
+                    this.historySidebar.hide();
+                } else {
+                    this.historySidebar.show();
+                }
+            });
+        }
+
+        // New chat
+        const newChatBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="New chat"]');
+        if (newChatBtn instanceof HTMLElement) {
+            this.registerDomEvent(newChatBtn, 'click', () => {
+                this.startNewChat();
+            });
+        }
+
+        // Save chat
+        const saveBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Save chat"]');
+        if (saveBtn instanceof HTMLElement) {
+            this.registerDomEvent(saveBtn, 'click', async () => {
+                try {
+                    await this.plugin.chatHistoryManager.saveCurrentHistory();
+                    new Notice('Chat saved successfully');
+                    const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
+                    if (currentFile) {
+                        const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
+                        if (titleEl) {
+                            titleEl.textContent = currentFile.basename;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error saving chat:', error);
+                    new Notice('Failed to save chat');
+                }
+            });
+        }
+
+        // Clear chat
+        const clearBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Clear chat"]');
+        if (clearBtn instanceof HTMLElement) {
+            this.registerDomEvent(clearBtn, 'click', () => {
+                this.clearChat();
+            });
+        }
+    }
+
+    private startNewChat() {
+        // Implementation of startNewChat method
+    }
+
+    private clearChat() {
+        // Implementation of clearChat method
+    }
+
+    private updateInputHeight() {
+        // Implementation of updateInputHeight method
+    }
+
+    private updateTempDisplay() {
+        // Implementation of updateTempDisplay method
+    }
+
+    private showModelSelector() {
+        // Implementation of showModelSelector method
+    }
+
+    private loadCurrentHistory() {
+        // Implementation of loadCurrentHistory method
+    }
+
+    private createDebouncedHandler(handler: () => void, delay: number, immediate: boolean) {
+        let timeout: NodeJS.Timeout | null = null;
+        return () => {
+            const callNow = immediate && !timeout;
+            if (!timeout) timeout = setTimeout(handler, delay);
+            else if (!callNow) handler();
+        };
+    }
+
+    private updateSuggestionsPosition() {
+        const suggestionContainer = this.containerEl.querySelector('.flare-suggestions') as HTMLElement | null;
+        if (!suggestionContainer) return;
+
+        const inputWrapper = this.inputEl?.closest('.flare-input-wrapper') as HTMLElement | null;
+        if (!inputWrapper) return;
+
+        const wrapperRect = inputWrapper.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        const viewportWidth = window.innerWidth;
+        
+        // Calculate available space
+        const spaceBelow = viewportHeight - wrapperRect.bottom;
+        const spaceAbove = wrapperRect.top;
+        
+        // Calculate dimensions
+        const containerWidth = Math.min(viewportWidth * 0.9, 400);
+        const leftOffset = Math.max(8, wrapperRect.left);
+        const maxHeight = Math.min(300, Math.max(spaceAbove, spaceBelow) - 16);
+        
+        // Update positioning data attributes
+        suggestionContainer.dataset.containerWidth = String(containerWidth);
+        suggestionContainer.dataset.leftOffset = String(leftOffset);
+        suggestionContainer.dataset.maxHeight = String(maxHeight);
+        
+        // Position based on available space
+        if (spaceBelow >= 200 || spaceBelow > spaceAbove) {
+            suggestionContainer.dataset.bottomOffset = String(wrapperRect.bottom + 8);
+            suggestionContainer.classList.remove('position-top');
+            suggestionContainer.classList.add('position-bottom');
+        } else {
+            suggestionContainer.dataset.topOffset = String(viewportHeight - wrapperRect.top + 8);
+            suggestionContainer.classList.add('position-top');
+            suggestionContainer.classList.remove('position-bottom');
+        }
+    }
+
+    private async handleTitleGeneration(): Promise<boolean> {
+        if (this.isTitleGenerationInProgress) return false;
+        this.isTitleGenerationInProgress = true;
+
+        try {
+            // Implementation will be added later
+            return true;
+        } catch (error: unknown) {
+            console.error('Error generating title:', error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            new Notice(`Error generating title: ${errorMessage}`);
+            return false;
+        } finally {
+            this.isTitleGenerationInProgress = false;
+        }
+    }
+
+    private async handleMessage(content: string): Promise<boolean> {
+        try {
+            // Check for inline flare switch command using the plugin's parser.
+            const parsed = this.plugin.parseMessageForFlare(content);
+            // If the parsed flare is different from the currently active flare (or default), switch to it.
+            if (parsed.flare !== (this.currentFlare ? this.currentFlare.name : (this.plugin.settings.defaultFlare || 'default'))) {
+                const newFlareConfig = await this.plugin.flareManager.debouncedLoadFlare(parsed.flare);
+                if (newFlareConfig) {
+                    await this.handleFlareSwitch(newFlareConfig);
+                } else {
+                    new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
                     return false;
                 }
+                // If there's no additional message content, we're done.
+                if (!parsed.content.trim()) {
+                    return true;
+                }
+                // Otherwise, update content with the remainder of the user's input.
+                content = parsed.content;
             }
 
-            // Verify we have a current flare
+            // At this point, this.currentFlare should be set via handleFlareSwitch.
             if (!this.currentFlare) {
                 new Notice('Please select a flare first');
                 return false;
@@ -1160,455 +1084,572 @@ export class AIChatView extends ItemView {
 
             // Process message normally
             try {
-                await this.processMessage(content, { 
+                return await this.sendMessage(content, {
                     stream: this.currentFlare?.stream ?? false,
-                    isFlareSwitch: false 
+                    isFlareSwitch: false
                 });
-                return true;
             } catch (error: unknown) {
                 console.error('Error processing message:', error);
                 new Notice('Error: ' + getErrorMessage(error));
                 return false;
             }
         } catch (error: unknown) {
-            await this.handleError(error, 'Error sending message');
+            console.error('Error in handleMessage:', error);
+            new Notice('Error: ' + getErrorMessage(error));
             return false;
         }
     }
 
-    // Split out the actual message processing logic
-    private async processMessage(
-        content: string, 
-        options?: { stream?: boolean; isFlareSwitch?: boolean }
-    ) {
+    /**
+     * Handles sending a message to the AI provider and rendering the response
+     * @param content - The message content to send
+     * @param options - Optional settings for message handling
+     * @returns Promise<boolean> - Success status
+     * @throws {MessageError} When message handling fails
+     */
+    private async sendMessage(content: string, options?: { stream?: boolean; isFlareSwitch?: boolean }): Promise<boolean> {
         try {
-            // Reset abort state at the start of each message
-            this.isAborted = false;
+            this.messageState = {
+                isStreaming: false,
+                isProcessing: true,
+                hasError: false,
+                errorMessage: ''
+            };
 
-            // Clear input field immediately and reset its height
-            if (this.inputEl) {
-                this.inputEl.value = '';
-                this.inputEl.classList.add('is-empty');
-                // Force a reflow to ensure height is updated
-                void this.inputEl.offsetHeight;
-                this.inputEl.classList.remove('is-empty');
-            }
-
-            // Get current flare settings
-            const settings = {
+            // Add user message to UI first
+            const userMessage = await this.addMessage('user', content, {
                 flare: this.currentFlare?.name || 'default',
-                provider: this.currentFlare?.provider || this.plugin.settings.defaultProvider,
+                provider: this.currentFlare?.provider || 'default',
                 model: this.currentFlare?.model || 'default',
                 temperature: this.currentTemp,
-                maxTokens: this.currentFlare?.maxTokens,
-                historyWindow: this.currentFlare?.historyWindow ?? -1,
-                handoffWindow: this.currentFlare?.handoffWindow,
-                stream: options?.stream ?? this.currentFlare?.stream ?? true,
-                isFlareSwitch: options?.isFlareSwitch ?? false,
-                reasoningHeader: this.currentFlare?.reasoningHeader || '<think>',
-                isReasoningModel: this.currentFlare?.isReasoningModel ?? false
-            };
+                maxTokens: this.currentFlare?.maxTokens
+            });
 
-            // Create user message object (but don't add to history yet)
-            const userMessage = {
-                role: 'user',
-                content: content,
-                settings
-            };
+            if (userMessage) {
+                userMessage.setAttribute('role', 'article');
+                userMessage.setAttribute('aria-label', 'User message');
+            }
 
-            // Add user message to UI only
-            await this.addMessage('user', content, settings, false);
+            // Create loading message for assistant
+            const loadingMsg = await this.addMessage('assistant', '', {
+                flare: this.currentFlare?.name || 'default',
+                provider: this.currentFlare?.provider || 'default',
+                model: this.currentFlare?.model || 'default',
+                temperature: this.currentTemp,
+                maxTokens: this.currentFlare?.maxTokens
+            }, false);
 
-            // Create loading message
-            const loadingMsg = await this.addMessage('assistant', '', settings, false);
             if (loadingMsg) {
-                loadingMsg.addClass('is-loading');
-                const contentEl = loadingMsg.querySelector('.flare-message-content');
+                loadingMsg.setAttribute('role', 'article');
+                loadingMsg.setAttribute('aria-label', 'Assistant message');
+                loadingMsg.classList.add('is-loading');
+            }
+
+            let accumulatedResponse = '';
+            let accumulatedReasoningBlocks: string[] = [];
+            let currentReasoningBlock = '';
+            let isInReasoningBlock = false;
+            const reasoningHeader = this.currentFlare?.reasoningHeader || '<think>';
+            const reasoningEndTag = reasoningHeader.replace('<', '</');
+
+            const response = await this.plugin.handleMessage(content, {
+                flare: this.currentFlare?.name,
+                provider: this.currentFlare?.provider,
+                model: this.currentFlare?.model,
+                temperature: this.currentTemp,
+                maxTokens: this.currentFlare?.maxTokens,
+                messageHistory: this.messageHistory,
+                historyWindow: this.currentFlare?.historyWindow,
+                stream: options?.stream ?? true,
+                isFlareSwitch: options?.isFlareSwitch,
+                onToken: (token: string) => {
+                    if (this.currentFlare?.isReasoningModel) {
+                        // Handle reasoning blocks during streaming
+                        if (token.includes(reasoningHeader)) {
+                            isInReasoningBlock = true;
+                            currentReasoningBlock = '';
+                            // Don't add the header to visible content
+                            token = token.replace(reasoningHeader, '');
+                        }
+                        if (token.includes(reasoningEndTag)) {
+                            isInReasoningBlock = false;
+                            if (currentReasoningBlock.trim()) {
+                                accumulatedReasoningBlocks.push(currentReasoningBlock.trim());
+                            }
+                            // Don't add the end tag to visible content
+                            token = token.replace(reasoningEndTag, '');
+                        }
+
+                        if (isInReasoningBlock) {
+                            currentReasoningBlock += token;
+                        } else {
+                            accumulatedResponse += token;
+                            if (loadingMsg) {
+                                const contentEl = loadingMsg.querySelector('.flare-response-content');
+                                if (contentEl instanceof HTMLElement) {
+                                    contentEl.textContent = accumulatedResponse;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Update loading message with final response
+            if (loadingMsg) {
+                loadingMsg.classList.remove('is-loading');
+                const contentEl = loadingMsg.querySelector('.flare-message-content') as HTMLElement | null;
                 if (contentEl) {
-                    contentEl.empty();
-                    const contentWrapper = contentEl.createDiv('flare-content-wrapper');
-                    const mainText = contentWrapper.createDiv('flare-system-main');
-                    const flareName = mainText.createSpan('flare-name');
-                    const flameIcon = flareName.createSpan();
-                    setIcon(flameIcon, 'flame');
-                    flareName.createSpan().setText(`@${settings.flare}`);
-                    
-                    const metadataEl = flareName.createDiv('flare-metadata');
-                    const metadata = this.getFlareMetadata(settings);
-                    Object.entries(metadata).forEach(([key, value]) => {
-                        const item = metadataEl.createDiv('flare-metadata-item');
-                        item.createSpan('metadata-key').setText(key + ':');
-                        item.createSpan('metadata-value').setText(' ' + value);
+                    contentEl.textContent = '';
+                    await this.renderUserOrAssistantMessage('assistant', contentEl, response, {
+                        flare: this.currentFlare?.name || 'default',
+                        provider: this.currentFlare?.provider || 'default',
+                        model: this.currentFlare?.model || 'default',
+                        temperature: this.currentTemp,
+                        maxTokens: this.currentFlare?.maxTokens,
+                        isReasoningModel: this.currentFlare?.isReasoningModel,
+                        reasoningHeader: this.currentFlare?.reasoningHeader
                     });
 
-                    // Create markdown container with proper structure
-                    const markdownContent = contentWrapper.createDiv('flare-markdown-content is-empty');
-                    if (settings.isReasoningModel) {
-                        // Create containers for reasoning and response content
-                        const reasoningContainer = markdownContent.createDiv('flare-reasoning-content');
-                        reasoningContainer.setAttribute('data-reasoning-blocks', '[]');
-                        reasoningContainer.setAttribute('data-partial-block', '');
-                        reasoningContainer.style.display = 'none';
-                        
-                        const responseContainer = markdownContent.createDiv('flare-response-content');
-                        responseContainer.createDiv('markdown-rendered');
-                    } else {
-                        // For non-reasoning models, just create the markdown container
-                        markdownContent.createDiv('markdown-rendered');
-                    }
-                }
-            }
+                    // Add reasoning toggle if we have reasoning blocks
+                    if (accumulatedReasoningBlocks.length > 0) {
+                        const actions = loadingMsg.querySelector('.flare-message-actions') as HTMLElement | null;
+                        if (actions) {
+                            const messageId = loadingMsg.getAttribute('data-message-id') || `message-${Date.now()}`;
+                            loadingMsg.setAttribute('data-message-id', messageId);
 
-            let accumulatedContent = '';
-            let lastRenderedLength = 0;
-            const renderDebounceMs = 25;
-            let lastRenderTime = 0;
-            let pendingRender: number | null = null;
-            let renderBuffer = '';
-            let response = '';
+                            const expandBtn = this.createActionButton(actions, 'Toggle reasoning', 'plus-circle');
+                            this.registerDomEvent(expandBtn, 'click', async () => {
+                                const reasoningContent = contentEl.querySelector('.flare-reasoning-content') as HTMLElement | null;
+                                if (!reasoningContent) return;
 
-            // Add header/tag variables for reasoning model
-            const reasoningHeader = settings.reasoningHeader || '<think>';
-            const reasoningEndTag = reasoningHeader.replace('<', '</');
-            const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
-            const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
-
-            try {
-                // Send message to provider
-                response = await this.plugin.handleMessage(content, {
-                    flare: settings.flare,
-                    provider: settings.provider,
-                    model: settings.model,
-                    temperature: settings.temperature,
-                    maxTokens: settings.maxTokens,
-                    messageHistory: this.messageHistory,
-                    historyWindow: settings.historyWindow,
-                    stream: settings.stream,
-                    onToken: (token: string) => {
-                        if (loadingMsg && !this.isAborted) {
-                            accumulatedContent += token;
-                            renderBuffer += token;
-                            
-                            // Cancel any pending render
-                            if (pendingRender !== null) {
-                                window.clearTimeout(pendingRender);
-                            }
-                            
-                            const now = Date.now();
-                            const timeSinceLastRender = now - lastRenderTime;
-                            const hasSignificantContent = renderBuffer.length >= 10;
-                            
-                            // Render immediately if we have significant content and enough time has passed
-                            if (hasSignificantContent && timeSinceLastRender >= renderDebounceMs) {
-                                this.renderStreamingContent(loadingMsg, accumulatedContent, renderBuffer, settings);
-                                renderBuffer = '';
-                                lastRenderedLength = accumulatedContent.length;
-                                lastRenderTime = now;
-                            } else {
-                                // Schedule a new render
-                                pendingRender = window.setTimeout(() => {
-                                    if (!this.isAborted && renderBuffer.length > 0) {
-                                        this.renderStreamingContent(loadingMsg, accumulatedContent, renderBuffer, settings);
-                                        renderBuffer = '';
-                                        lastRenderedLength = accumulatedContent.length;
-                                        lastRenderTime = Date.now();
+                                const isExpanded = this.expandedReasoningMessages.has(messageId);
+                                if (isExpanded) {
+                                    this.expandedReasoningMessages.delete(messageId);
+                                    reasoningContent.classList.remove('is-expanded');
+                                    expandBtn.classList.remove('is-active');
+                                    setIcon(expandBtn, 'plus-circle');
+                                } else {
+                                    // Render reasoning blocks if not already done
+                                    if (!reasoningContent.querySelector('.markdown-rendered')) {
+                                        const joinedReasoning = accumulatedReasoningBlocks.join('\n\n---\n\n');
+                                        await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContent, '', this.plugin);
                                     }
-                                    pendingRender = null;
-                                }, renderDebounceMs);
-                            }
+                                    this.expandedReasoningMessages.add(messageId);
+                                    reasoningContent.classList.add('is-expanded');
+                                    expandBtn.classList.add('is-active');
+                                    setIcon(expandBtn, 'minus-circle');
+                                }
+                            });
                         }
                     }
-                });
-
-                // Now that we have a successful response, add both messages to history
-                // Add user message to histories
-                this.messageHistory.push(userMessage);
-                await this.plugin.chatHistoryManager.addMessage(userMessage);
-
-                // Add assistant response to histories
-                const assistantMessage = {
-                    role: 'assistant',
-                    content: settings.stream ? accumulatedContent : response,
-                    settings: {
-                        ...settings,
-                        truncated: false
-                    }
-                };
-                
-                // Add to local history
-                this.messageHistory.push(assistantMessage);
-                
-                // Add to ChatHistoryManager
-                await this.plugin.chatHistoryManager.addMessage(assistantMessage);
-
-                // Cancel any pending renders before final render
-                if (pendingRender !== null) {
-                    window.clearTimeout(pendingRender);
-                    pendingRender = null;
-                }
-
-                // Update loading message with final response
-                if (loadingMsg) {
-                    await this.finalizeMessageRender(
-                        loadingMsg,
-                        settings.stream ? accumulatedContent : response,
-                        settings
-                    );
-                }
-            } catch (error: unknown) {
-                // If we have accumulated content and this was a streaming request that was stopped
-                if (accumulatedContent && settings.stream && error instanceof Error && error.name === 'AbortError') {
-                    this.isAborted = true;
-                    
-                    // Cancel any pending render
-                    if (pendingRender !== null) {
-                        window.clearTimeout(pendingRender);
-                        pendingRender = null;
-                    }
-
-                    // Create assistant message with the truncated response
-                    const assistantMessage = {
-                        role: 'assistant',
-                        content: accumulatedContent,
-                        settings: {
-                            ...settings,
-                            truncated: true
-                        }
-                    };
-                    
-                    // Add to local history
-                    this.messageHistory.push(assistantMessage);
-                    
-                    // Add to ChatHistoryManager and save immediately
-                    await this.plugin.chatHistoryManager.addMessage(assistantMessage);
-                    await this.plugin.chatHistoryManager.saveCurrentHistory();
-
-                    // Update loading message with final content
-                    if (loadingMsg) {
-                        loadingMsg.removeClass('is-loading');
-                        const contentEl = loadingMsg.querySelector('.flare-message-content');
-                        if (contentEl) {
-                            const markdownContainer = contentEl.querySelector('.flare-markdown-content') as HTMLElement;
-                            if (markdownContainer) {
-                                markdownContainer.empty();
-                                await MarkdownRenderer.renderMarkdown(
-                                    accumulatedContent,
-                                    markdownContainer,
-                                    '',
-                                    this.plugin
-                                );
-                            }
-                        }
-                    }
-
-                    return;
-                }
-
-                // Remove loading message if no content was received
-                if (loadingMsg) {
-                    loadingMsg.removeClass('is-loading');
-                    loadingMsg.remove();
-                }
-
-                // Show a user-friendly message for connection issues
-                if (error instanceof TypeError && error.message === 'Failed to fetch') {
-                    new Notice(`Unable to connect to ${settings.provider}. Please check your connection and provider settings.`);
-                } else {
-                    console.error('Error processing message:', error);
-                    new Notice('Error: ' + getErrorMessage(error));
                 }
             }
 
-            // After streaming completes:
-            if (loadingMsg) {
-                await this.finalizeMessageRender(
-                    loadingMsg,
-                    settings.stream ? accumulatedContent : response,
-                    settings
-                );
-            }
+            this.messageState.isProcessing = false;
+            return true;
         } catch (error: unknown) {
-            const err: unknown = error;
-            console.error('Error processing message:', err);
-            if (err instanceof Error && err.name === 'AbortError') {
-                return;
+            this.messageState = {
+                isStreaming: false,
+                isProcessing: false,
+                hasError: true,
+                errorMessage: error instanceof Error ? error.message : String(error)
+            };
+
+            if (error instanceof Error) {
+                throw new MessageError(error.message);
             }
-            new Notice('Error: ' + getErrorMessage(err));
+            throw new MessageError('Unknown error occurred while sending message');
         }
     }
 
-    // Add this new method to handle content rendering
-    private renderStreamingContent(
-        loadingMsg: HTMLElement,
-        fullContent: string,
-        newContent: string,
-        settings: MessageSettings
-    ): void {
-        // 1. Grab the main message content area from the loading message
-        const contentEl = loadingMsg.querySelector('.flare-message-content');
-        if (!contentEl) return;
-
-        // 2. Grab the "flare-markdown-content" container (for normal streaming text)
-        const markdownContainer = contentEl.querySelector('.flare-markdown-content');
-        if (!(markdownContainer instanceof HTMLElement)) return;
-
-        // 3. If this is a reasoning-capable model, we need to split reasoning vs. normal text.
-        if (settings.isReasoningModel) {
-            // a) Find or create the separate containers for reasoning and normal/response content.
-            let reasoningContainer = contentEl.querySelector('.flare-reasoning-content') as HTMLElement | null;
-            let responseContainer = contentEl.querySelector('.flare-response-content') as HTMLElement | null;
-
-            // Create them once if needed
-            if (!reasoningContainer) {
-                reasoningContainer = markdownContainer.createDiv({ cls: 'flare-reasoning-content' });
-                reasoningContainer.setAttribute('data-reasoning-blocks', '[]');
-                reasoningContainer.setAttribute('data-partial-block', '');
-                reasoningContainer.style.display = 'none'; // hidden until user expands
-            }
-            if (!responseContainer) {
-                responseContainer = markdownContainer.createDiv({ cls: 'flare-response-content' });
-                // Create markdown container for response if it doesn't exist
-                if (!responseContainer.querySelector('.markdown-rendered')) {
-                    responseContainer.createDiv('markdown-rendered');
-                }
-            }
-
-            // b) Retrieve the partial-block state, previously-detected reasoning blocks, etc.
-            const existingBlocksStr = reasoningContainer.getAttribute('data-reasoning-blocks') || '[]';
-            const existingBlocks = JSON.parse(existingBlocksStr) as string[];
-            const partialBlock = reasoningContainer.getAttribute('data-partial-block') || '';
-
-            // Combine the old partial plus the new tokens
-            let currentContent = partialBlock + newContent;
-
-            // c) Regex set for reasoning start/end
-            const reasoningHeader = settings.reasoningHeader || '<think>';
-            const reasoningEndTag = reasoningHeader.replace('<', '</');
-            const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
-            const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
-            const allReasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
-
-            let lastIndex = 0;
-            let match: RegExpExecArray | null;
-            let remainingContent = '';
-            let newPartialBlock = '';
-
-            // d) Loop through all reasoning blocks within currentContent
-            while ((match = allReasoningRegex.exec(currentContent)) !== null) {
-                // Everything before this block is normal text
-                if (match.index > lastIndex) {
-                    remainingContent += currentContent.slice(lastIndex, match.index);
-                }
-                // The reasoning content (match[1]) is fully complete, so store it
-                if (match[1]) {
-                    existingBlocks.push(match[1]);
-                }
-                lastIndex = match.index + match[0].length;
-            }
-
-            // e) Add leftover text after the final block
-            if (lastIndex < currentContent.length) {
-                const tail = currentContent.slice(lastIndex);
-                // If we see a new reasoning-header but no matching end tag, store that as partial
-                const headerPos = tail.indexOf(reasoningHeader);
-                if (headerPos >= 0 && !tail.includes(reasoningEndTag)) {
-                    // means we started a reasoning block but didn't finish
-                    newPartialBlock = tail.slice(headerPos);
-                    remainingContent += tail.slice(0, headerPos);
+    /**
+     * Handles switching between different flares
+     * @param flare - The flare configuration to switch to
+     * @throws {FlareConfigError} When flare switching fails
+     */
+    private async handleFlareSwitch(flare: FlareConfig): Promise<void> {
+        try {
+            // Enable/disable interactions based on flare presence
+            const modelControl = this.containerEl.querySelector('.flare-model-control');
+            const tempControl = this.containerEl.querySelector('.flare-temp-control');
+            
+            if (modelControl) {
+                if (flare) {
+                    modelControl.classList.remove('is-disabled');
+                    // Update model display
+                    if (this.modelDisplayEl) {
+                        this.modelDisplayEl.textContent = flare.model ? this.truncateModelName(flare.model, 30) : '--';
+                    }
                 } else {
-                    // it's normal text
-                    remainingContent += tail;
+                    modelControl.classList.add('is-disabled');
+                    if (this.modelDisplayEl) {
+                        this.modelDisplayEl.textContent = '--';
+                    }
                 }
             }
-
-            // f) Update the stored states
-            reasoningContainer.setAttribute('data-reasoning-blocks', JSON.stringify(existingBlocks));
-            reasoningContainer.setAttribute('data-partial-block', newPartialBlock);
-
-            // g) Only show response content if we have any
-            if (remainingContent.trim()) {
-                markdownContainer.removeClass('is-empty');
-                const currentResponseDiv = responseContainer.querySelector('.markdown-rendered') as HTMLElement;
-                if (currentResponseDiv) {
-                    // Instead of clearing, just append plain text for partial streaming
-                    const existingText = currentResponseDiv.textContent || '';
-                    currentResponseDiv.textContent = existingText + remainingContent;
+            
+            if (tempControl) {
+                if (flare) {
+                    tempControl.classList.remove('is-disabled');
+                } else {
+                    tempControl.classList.add('is-disabled');
                 }
             }
+            
+            if (this.inputEl) {
+                // Keep input enabled always to allow @flarename commands
+                this.inputEl.value = '';
+                // Update placeholder based on current flare
+                this.inputEl.setAttribute('placeholder', flare ? `@${flare.name}` : '@flarename or select a flare');
+            }
 
-            // h) If we have at least one complete reasoning block, ensure we show the plus toggle
-            if (existingBlocks.length > 0) {
-                const actions = loadingMsg.querySelector('.flare-message-actions');
-                if (actions && !actions.querySelector('[aria-label="Toggle reasoning"]')) {
-                    // Add toggle button
-                    const messageId = loadingMsg.getAttribute('data-message-id') || `message-${Date.now()}`;
-                    loadingMsg.setAttribute('data-message-id', messageId);
+            // Always update temperature to flare's default
+            this.currentTemp = flare.temperature ?? 0.7;
+            if (this.tempDisplayEl) {
+                this.tempDisplayEl.textContent = this.currentTemp.toFixed(2);
+            }
 
-                    const expandBtn = actions.createEl('button', {
-                        cls: 'flare-action-button',
-                        attr: { 'aria-label': 'Toggle reasoning' }
-                    });
-                    setIcon(expandBtn, 'plus-circle');
-                    
-                    expandBtn.onclick = async () => {
-                        const isExpanded = this.expandedReasoningMessages.has(messageId);
-                        if (isExpanded) {
-                            // Hide reasoning
-                            this.expandedReasoningMessages.delete(messageId);
-                            reasoningContainer?.classList.remove('is-expanded');
-                            expandBtn.classList.remove('is-active');
-                            setIcon(expandBtn, 'plus-circle');
-                            // Wait a moment before visually hiding
-                            setTimeout(() => {
-                                if (!this.expandedReasoningMessages.has(messageId)) {
-                                    reasoningContainer!.style.display = 'none';
-                                }
-                            }, 300);
-                        } else {
-                            // Expand
-                            reasoningContainer!.style.display = 'block';
-                            // Force reflow
-                            void reasoningContainer!.offsetHeight;
-                            // Render the reasoning blocks if not already done
-                            if (!reasoningContainer?.querySelector('.markdown-rendered')) {
-                                const joinedReasoning = existingBlocks.join('\n\n---\n\n');
-                                if (reasoningContainer) {  // Add null check
-                                    await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
-                                }
-                            }
-                            this.expandedReasoningMessages.add(messageId);
-                            reasoningContainer!.classList.add('is-expanded');
-                            expandBtn.classList.add('is-active');
-                            setIcon(expandBtn, 'minus-circle');
-                        }
-                    };
+            // Add a "system" message to note that we switched flares
+            const switchContent = {
+                main: `@${flare.name}`,
+                metadata: {
+                    flare: flare.name,
+                    provider: flare.provider,
+                    model: flare.model,
+                    temperature: flare.temperature ?? 0.7,
+                    maxTokens: flare.maxTokens,
+                    historyWindow: flare.historyWindow ?? -1,
+                    handoffWindow: flare.handoffWindow ?? -1,
+                    stream: flare.stream ?? true,
+                    isReasoningModel: flare.isReasoningModel,
+                    reasoningHeader: flare.reasoningHeader
                 }
-            }
-        } else {
-            // i) Normal (non-reasoning) streaming: just append partial text
-            markdownContainer.removeClass('is-empty');
-            let currentContent = markdownContainer.querySelector('.markdown-rendered');
-            if (!currentContent) {
-                currentContent = markdownContainer.createDiv('markdown-rendered');
-            }
-            if (!(currentContent instanceof HTMLElement)) return;
+            };
 
-            const existingText = currentContent.textContent || '';
-            currentContent.textContent = existingText + newContent;
+            // Only add the system message to UI, not to history
+            await this.addMessage('system', JSON.stringify(switchContent), switchContent.metadata, false);
+
+            // Set the current flare and activate flare switch mode
+            this.currentFlare = flare;
+            this.plugin.isFlareSwitchActive = true;
+
+            // Reload flares to ensure list is up to date
+            await this.plugin.flareManager.loadFlares();
+        } catch (error: unknown) {
+            console.error('Error handling flare switch:', error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            new Notice(`Error: ${errorMessage}`);
+        }
+    }
+
+    private truncateModelName(model: string, maxLength: number = 20): string {
+        if (model.length <= maxLength) return model;
+        return '...' + model.slice(-maxLength);
+    }
+
+    private async addMessage(
+        role: 'user' | 'assistant' | 'system', 
+        content: string, 
+        settings?: MessageSettings,
+        addToHistoryManager: boolean = true
+    ): Promise<HTMLElement | null> {
+        if (!this.messagesEl) return null;
+
+        // Create message container using Obsidian's createDiv
+        const messageEl = this.messagesEl.createDiv({
+            cls: `flare-message ${role}`
+        });
+
+        // Add accessibility attributes
+        messageEl.setAttribute('role', 'article');
+        messageEl.setAttribute('aria-label', `${role} message`);
+        messageEl.setAttribute('aria-live', role === 'assistant' ? 'polite' : 'off');
+
+        // Store original content for comparison
+        messageEl.setAttrs({
+            'data-content': content,
+            'data-role': role
+        });
+
+        // Create message content with proper structure
+        const contentEl = messageEl.createDiv('flare-message-content');
+
+        // Only create meta and actions for non-system messages
+        if (role !== 'system') {
+            // Add metadata (timestamp, etc) and actions
+            const metaEl = messageEl.createDiv('flare-message-meta');
+            const timestamp = moment().format('h:mm A');
+            metaEl.createSpan({
+                cls: 'flare-message-time',
+                text: timestamp
+            });
+
+            // Add action buttons container
+            const actions = metaEl.createDiv('flare-message-actions');
+            this.addMessageActions(actions, messageEl, content);
         }
 
-        // 4. Scroll to bottom if user is near bottom
-        requestAnimationFrame(() => {
-            if (this.messagesEl instanceof HTMLElement) {
-                const shouldScroll = this.messagesEl.scrollHeight - this.messagesEl.scrollTop <= CONSTANTS.SCROLL_THRESHOLD;
-                if (shouldScroll) {
-                    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-                }
-            }
+        // Handle system messages differently
+        if (role === 'system') {
+            this.renderSystemMessage(messageEl, contentEl, content);
+        } else {
+            await this.renderUserOrAssistantMessage(role, contentEl, content, settings);
+        }
+
+        // Add to history manager if needed
+        if (addToHistoryManager) {
+            const messageData = {
+                role,
+                content,
+                settings,
+                timestamp: Date.now()
+            };
+            this.messageHistory.push(messageData);
+            await this.plugin.chatHistoryManager.addMessage(messageData);
+        }
+
+        // Scroll to bottom
+        this.scrollToBottom();
+
+        return messageEl;
+    }
+
+    private addMessageActions(actions: HTMLElement, messageEl: HTMLElement, content: string) {
+        // Add copy button
+        const copyBtn = this.createActionButton(actions, 'Copy message', 'copy');
+        this.registerDomEvent(copyBtn, 'click', () => {
+            navigator.clipboard.writeText(content);
+            new Notice('Message copied to clipboard');
+        });
+
+        // Add delete button
+        const deleteBtn = this.createActionButton(actions, 'Delete message', 'trash-2', 'delete');
+        this.registerDomEvent(deleteBtn, 'click', async () => {
+            await this.deleteMessage(messageEl);
         });
     }
 
-    // Add a helper method for getting flare metadata
+    private createActionButton(
+        parent: HTMLElement,
+        ariaLabel: string,
+        iconName: string,
+        additionalClass?: string
+    ): HTMLElement {
+        const btn = parent.createEl('button', {
+            cls: `flare-action-button${additionalClass ? ' ' + additionalClass : ''}`,
+            attr: { 
+                'role': 'button',
+                'aria-label': ariaLabel,
+                'tabindex': '0'
+            }
+        });
+        setIcon(btn, iconName);
+        return btn;
+    }
+
+    private async deleteMessage(messageEl: HTMLElement) {
+        const currentContent = messageEl.getAttribute('data-content');
+        const role = messageEl.getAttribute('data-role');
+        
+        if (!currentContent || !role) return;
+
+        // Remove from UI with animation
+        messageEl.classList.add('deleting');
+        // Wait for animation
+        await new Promise(resolve => setTimeout(resolve, 300));
+        messageEl.remove();
+
+        // Find and remove from history
+        const index = this.messageHistory.findIndex(m => 
+            m.role === role && m.content === currentContent
+        );
+        
+        if (index !== -1) {
+            // Handle flare reset if needed
+            const messageSettings = this.messageHistory[index]?.settings;
+            if (messageSettings?.flare === this.plugin.lastUsedFlare) {
+                const laterFlareMessage = this.messageHistory.slice(index + 1)
+                    .some(m => m.settings?.flare === this.plugin.lastUsedFlare);
+                if (!laterFlareMessage) {
+                    this.plugin.lastUsedFlare = null;
+                }
+            }
+
+            // Remove from histories
+            this.messageHistory.splice(index, 1);
+            await this.updateHistoryAfterDelete(currentContent, role);
+        }
+    }
+
+    private async updateHistoryAfterDelete(content: string, role: string) {
+        const history = await this.plugin.chatHistoryManager.getCurrentHistory();
+        if (history) {
+            history.messages = history.messages.filter(
+                (m: { role: string; content: string }) => 
+                    !(m.role === role && m.content === content)
+            );
+            history.lastModified = Date.now();
+            await this.plugin.chatHistoryManager.saveCurrentHistory();
+        }
+    }
+
+    private renderSystemMessage(messageEl: HTMLElement, contentEl: HTMLElement, content: string) {
+        messageEl.classList.remove('flare-message');
+        messageEl.classList.add('flare-system-message');
+        
+        try {
+            const switchContent = JSON.parse(content);
+            const mainText = contentEl.createDiv('flare-system-main');
+            
+            // If it's a temperature message
+            if (switchContent.metadata?.type === 'temperature') {
+                const tempDisplay = mainText.createSpan('flare-name');
+                const tempIcon = tempDisplay.createSpan();
+                setIcon(tempIcon, 'thermometer');
+                tempDisplay.createSpan().textContent = switchContent.main;
+            } else {
+                // Otherwise it's a flare switch message
+                const flareName = mainText.createSpan('flare-name');
+                const flameIcon = flareName.createSpan();
+                setIcon(flameIcon, 'flame');
+                flareName.createSpan().textContent = switchContent.main;
+                
+                // Create metadata container with complete metadata
+                const metadataEl = flareName.createDiv('flare-metadata');
+                
+                // Get metadata directly from the content
+                const metadata = this.getFlareMetadata({
+                    ...switchContent.metadata,
+                    flare: switchContent.main.replace('@', ''),
+                    isReasoningModel: switchContent.metadata.isReasoningModel,
+                    reasoningHeader: switchContent.metadata.reasoningHeader
+                });
+                
+                Object.entries(metadata).forEach(([key, value]) => {
+                    const item = metadataEl.createDiv('flare-metadata-item');
+                    item.createSpan('metadata-key').textContent = key + ':';
+                    item.createSpan('metadata-value').textContent = ' ' + value;
+                });
+            }
+        } catch (error) {
+            console.error('Error parsing system message:', error);
+            contentEl.textContent = content;
+        }
+    }
+
+    private async renderUserOrAssistantMessage(
+        role: 'user' | 'assistant',
+        contentEl: HTMLElement,
+        content: string,
+        settings?: MessageSettings
+    ) {
+        const contentWrapper = contentEl.createDiv('flare-content-wrapper');
+        contentWrapper.setAttribute('role', 'presentation');
+
+        if (role === 'assistant') {
+            // For assistant messages, add flare info
+            const mainText = contentWrapper.createDiv('flare-system-main');
+            mainText.setAttribute('role', 'presentation');
+            const flareName = mainText.createSpan('flare-name');
+            flareName.setAttribute('role', 'button');
+            flareName.setAttribute('aria-label', `Using flare ${settings?.flare || 'default'}`);
+            flareName.setAttribute('tabindex', '0');
+            const flameIcon = flareName.createSpan();
+            setIcon(flameIcon, 'flame');
+            flareName.createSpan().textContent = `@${settings?.flare || 'default'}`;
+            
+            // Create metadata container
+            const metadataEl = flareName.createDiv('flare-metadata');
+            metadataEl.setAttribute('role', 'tooltip');
+            metadataEl.setAttribute('aria-hidden', 'true');
+            const metadata = this.getFlareMetadata(settings);
+            Object.entries(metadata).forEach(([key, value]) => {
+                const item = metadataEl.createDiv('flare-metadata-item');
+                item.createSpan('metadata-key').textContent = key + ':';
+                item.createSpan('metadata-value').textContent = ' ' + value;
+            });
+        }
+
+        // Create markdown container for the actual message content
+        const markdownContainer = contentWrapper.createDiv('flare-markdown-content');
+        markdownContainer.setAttribute('role', 'presentation');
+        
+        if (role === 'assistant' && settings?.isReasoningModel) {
+            await this.renderReasoningContent(markdownContainer, content, settings);
+        } else {
+            const rendered = markdownContainer.createDiv('markdown-rendered');
+            rendered.setAttribute('role', 'presentation');
+            if (this.needsMarkdownRendering(content)) {
+                await MarkdownRenderer.renderMarkdown(content, rendered, '', this.plugin);
+                this.cleanupParagraphWrapping(rendered);
+            } else {
+                rendered.textContent = content;
+            }
+        }
+    }
+
+    private async renderReasoningContent(
+        markdownContainer: HTMLElement,
+        content: string,
+        settings: MessageSettings
+    ) {
+        const { reasoningBlocks, responsePart } = this.extractReasoningContent(
+            content,
+            settings.reasoningHeader || '<think>'
+        );
+
+        if (reasoningBlocks.length > 0) {
+            const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
+            reasoningContainer.setAttribute('role', 'region');
+            reasoningContainer.setAttribute('aria-label', 'AI reasoning process');
+            reasoningContainer.setAttribute('aria-expanded', 'false');
+            const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
+            await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
+        }
+
+        const responseContainer = markdownContainer.createDiv('flare-response-content');
+        responseContainer.setAttribute('role', 'region');
+        responseContainer.setAttribute('aria-label', 'AI response');
+        if (responsePart.trim()) {
+            await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
+        }
+    }
+
+    private extractReasoningContent(content: string, reasoningHeader: string): {
+        reasoningBlocks: string[];
+        responsePart: string;
+    } {
+        const reasoningEndTag = reasoningHeader.replace('<', '</');
+        const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
+        const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
+        const allReasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
+        
+        const reasoningBlocks: string[] = [];
+        let responsePart = content;
+        let match: RegExpExecArray | null;
+
+        // Extract all reasoning blocks
+        while ((match = allReasoningRegex.exec(content)) !== null) {
+            if (match[1]) {
+                reasoningBlocks.push(match[1].trim());
+            }
+            // Remove this reasoning block from response
+            responsePart = responsePart.replace(match[0], '');
+        }
+
+        return { reasoningBlocks, responsePart: responsePart.trim() };
+    }
+
+    private scrollToBottom() {
+        if (this.messagesEl) {
+            const shouldScroll = this.messagesEl.scrollHeight - this.messagesEl.scrollTop <= 100;
+            if (shouldScroll) {
+                this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+            }
+        }
+    }
+
     private getFlareMetadata(settings?: PartialMessageSettings): Record<string, string> {
         const metadata: Record<string, string> = {};
         
@@ -1653,1032 +1694,308 @@ export class AIChatView extends ItemView {
         return metadata;
     }
 
-    // Add a helper method for formatting metadata
-    private formatMetadata(metadata: Record<string, string>): string {
-        return Object.entries(metadata)
-            .map(([key, value]) => `${key}: ${value}`)
-            .join('\n');
-    }
-
-    private async addMessage(
-        role: 'user' | 'assistant' | 'system', 
-        content: string, 
-        settings?: MessageSettings,
-        addToHistoryManager: boolean = true
-    ) {
-        if (!this.messagesEl) return;
-
-        // Create message container
-        const messageEl = this.messagesEl.createDiv({
-            cls: `flare-message ${role}`
-        });
-
-        // Store original content for comparison
-        messageEl.setAttribute('data-content', content);
-
-        // Create message content
-        const contentEl = messageEl.createDiv('flare-message-content');
-        const contentWrapper = contentEl.createDiv('flare-content-wrapper');
-
-        // Only create meta and actions for non-system messages
-        let actions: HTMLElement | undefined;
-        if (role !== 'system') {
-            // Add metadata (timestamp, etc) and actions
-            const metaEl = messageEl.createDiv('flare-message-meta');
-            const timestamp = moment().format('h:mm A');
-            metaEl.createSpan('flare-message-time').setText(timestamp);
-
-            // Add action buttons container
-            actions = metaEl.createDiv('flare-message-actions');
-        }
-
-        // Handle system messages differently
-        if (role === 'system') {
-            messageEl.removeClass('flare-message');
-            messageEl.addClass('flare-system-message');
-            
-            try {
-                const switchContent = JSON.parse(content);
-                const mainText = contentEl.createDiv('flare-system-main');
-                
-                // If it's a temperature message
-                if (switchContent.metadata?.type === 'temperature') {
-                    const tempDisplay = mainText.createSpan('flare-name');
-                    const tempIcon = tempDisplay.createSpan();
-                    setIcon(tempIcon, 'thermometer');
-                    tempDisplay.createSpan().setText(switchContent.main);
-                } else {
-                    // Otherwise it's a flare switch message
-                    const flareName = mainText.createSpan('flare-name');
-                    const flameIcon = flareName.createSpan();
-                    setIcon(flameIcon, 'flame');
-                    flareName.createSpan().setText(switchContent.main);
-                    
-                    // Create metadata container with complete metadata
-                    const metadataEl = flareName.createDiv('flare-metadata');
-                    
-                    // Get metadata directly from the content
-                    const metadata = this.getFlareMetadata({
-                        ...switchContent.metadata,
-                        flare: switchContent.main.replace('@', ''),
-                        isReasoningModel: switchContent.metadata.isReasoningModel,
-                        reasoningHeader: switchContent.metadata.reasoningHeader
-                    });
-                    
-                    Object.entries(metadata).forEach(([key, value]) => {
-                        const item = metadataEl.createDiv('flare-metadata-item');
-                        item.createSpan('metadata-key').setText(key + ':');
-                        item.createSpan('metadata-value').setText(' ' + value);
-                    });
-                }
-            } catch (error) {
-                console.error('Error parsing system message:', error);
-                contentEl.setText(content);
-            }
-        } else {
-            // For user/assistant messages, render markdown
-            if (role === 'assistant' && settings) {
-                // Create a container for the flare name and content
-                const contentWrapper = contentEl.createDiv('flare-content-wrapper');
-                
-                // Add flare info for assistant messages
-                const mainText = contentWrapper.createDiv('flare-system-main');
-                
-                // Create flare name with info button
-                const flareName = mainText.createSpan('flare-name');
-                const flameIcon = flareName.createSpan();
-                setIcon(flameIcon, 'flame');
-                flareName.createSpan().setText(`@${settings.flare || 'default'}`);
-                
-                // Create metadata container
-                const metadataEl = flareName.createDiv('flare-metadata');
-                const metadata = this.getFlareMetadata(settings);
-                Object.entries(metadata).forEach(([key, value]) => {
-                    const item = metadataEl.createDiv('flare-metadata-item');
-                    item.createSpan('metadata-key').setText(key + ':');
-                    item.createSpan('metadata-value').setText(' ' + value);
-                });
-
-                // Create a container for the markdown content
-                const markdownContainer = contentWrapper.createDiv('flare-markdown-content');
-
-                // Check if this is a reasoning model response
-                const reasoningHeader = settings.reasoningHeader || '<think>';
-                const reasoningEndTag = reasoningHeader.replace('<', '</');
-                
-                // Get unique ID for this message
-                const messageId = `message-${Date.now()}`;
-                messageEl.setAttribute('data-message-id', messageId);
-
-                // Escape special characters for the final extraction
-                const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
-                const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
-
-                // Extract all reasoning blocks
-                const reasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
-                const reasoningBlocks: string[] = [];
-                let responsePart = content;
-                let match;
-
-                while ((match = reasoningRegex.exec(content)) !== null) {
-                    const [fullMatch, reasoningContent] = match;
-                    if (reasoningContent.trim()) {
-                        reasoningBlocks.push(reasoningContent.trim());
-                    }
-                    // Remove this reasoning block from the response part
-                    responsePart = responsePart.replace(fullMatch, '');
-                }
-
-                const hasReasoning = reasoningBlocks.length > 0;
-                
-                if (hasReasoning && settings.isReasoningModel) {
-                    // Create reasoning container (initially hidden)
-                    const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
-                    reasoningContainer.style.display = 'block';
-                    reasoningContainer.style.opacity = '0';
-                    reasoningContainer.style.height = '0';
-                    reasoningContainer.style.overflow = 'hidden';
-                    reasoningContainer.style.transition = 'opacity 0.2s ease, height 0.2s ease';
-                    
-                    if (this.expandedReasoningMessages.has(messageId)) {
-                        reasoningContainer.style.opacity = '1';
-                        reasoningContainer.style.height = 'auto';
-                    }
-                    
-                    // Render all reasoning blocks
-                    if (reasoningBlocks.length > 0) {
-                        // Join reasoning blocks with dividers
-                        const reasoningContent = reasoningBlocks.join('\n\n---\n\n');
-                        await MarkdownRenderer.renderMarkdown(reasoningContent, reasoningContainer, '', this.plugin);
-                    } else {
-                        reasoningContainer.setText('No reasoning content found.');
-                    }
-
-                    // Create response container
-                    const responseContainer = markdownContainer.createDiv('flare-response-content');
-                    if (responsePart.trim()) {
-                        await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
-                    }
-
-                    // Add expand/collapse button to actions
-                    const expandBtn = actions?.createEl('button', {
-                        cls: 'flare-action-button',
-                        attr: { 'aria-label': 'Toggle reasoning' }
-                    });
-                    if (expandBtn) {
-                        setIcon(expandBtn, this.expandedReasoningMessages.has(messageId) ? 'minus-circle' : 'plus-circle');
-                        expandBtn.onclick = async () => {
-                            const isExpanded = this.expandedReasoningMessages.has(messageId);
-                            if (isExpanded) {
-                                this.expandedReasoningMessages.delete(messageId);
-                                reasoningContainer.style.opacity = '0';
-                                reasoningContainer.style.height = '0';
-                                setIcon(expandBtn, 'plus-circle');
-                                // Wait for animation to complete before hiding
-                                setTimeout(() => {
-                                    if (!this.expandedReasoningMessages.has(messageId)) {
-                                        reasoningContainer.style.display = 'none';
-                                    }
-                                }, 200);
-                            } else {
-                                this.expandedReasoningMessages.add(messageId);
-                                reasoningContainer.style.display = 'block';
-                                // Force a reflow
-                                void reasoningContainer.offsetHeight;
-                                reasoningContainer.style.opacity = '1';
-                                reasoningContainer.style.height = 'auto';
-                                setIcon(expandBtn, 'minus-circle');
-                            }
-                        };
-                    }
-                } else {
-                    // No reasoning found, just render the content normally
-                    await MarkdownRenderer.renderMarkdown(content, markdownContainer, '', this.plugin);
-                }
-            } else {
-                // For user messages, use a simpler rendering approach
-                const markdownContainer = contentWrapper.createDiv('flare-markdown-content');
-                const rendered = markdownContainer.createDiv('markdown-rendered');
-                
-                // Check if the content contains any block elements that need markdown rendering
-                if (content.match(/^(\s*)(```|>|\d+\.|[*-]\s|#)/) || content.includes('\n')) {
-                    // Content has block elements, use full markdown rendering
-                    await MarkdownRenderer.renderMarkdown(content, rendered, '', this.plugin);
-                    
-                    // Clean up any unnecessary paragraph wrapping
-                    const paragraphs = rendered.querySelectorAll('p');
-                    paragraphs.forEach(p => {
-                        if (!p.querySelector('pre, blockquote, ul, ol')) {
-                            const children = Array.from(p.childNodes);
-                            p.replaceWith(...children);
-                        }
-                    });
-                } else {
-                    // Simple text content, just set it directly
-                    rendered.setText(content);
-                }
-            }
-            
-            // Add standard action buttons
-            const copyBtn = actions?.createEl('button', {
-                cls: 'flare-action-button',
-                attr: { 'aria-label': 'Copy message' }
-            });
-            if (copyBtn) {
-                setIcon(copyBtn, 'copy');
-                copyBtn.onclick = () => {
-                    navigator.clipboard.writeText(content);
-                    new Notice('Message copied to clipboard');
-                };
-            }
-
-            // Delete button for both user and assistant messages
-            const deleteBtn = actions?.createEl('button', {
-                cls: 'flare-action-button delete',
-                attr: { 'aria-label': 'Delete message' }
-            });
-            if (deleteBtn) {
-                setIcon(deleteBtn, 'trash-2');
-                deleteBtn.onclick = async () => {
-                    // Get the current content from the data-content attribute or fallback to original
-                    const currentContent = messageEl.getAttribute('data-content') || content;
-                    
-                    // Remove from UI
-                    messageEl.remove();
-
-                    // Find message index
-                    const index = this.messageHistory.findIndex(m => 
-                        m.role === role && m.content === currentContent
-                    );
-                    
-                    if (index !== -1) {
-                        // Reset lastUsedFlare only if we're deleting the message that established the current flare
-                        const messageSettings = this.messageHistory[index]?.settings;
-                        if (messageSettings?.flare === this.plugin.lastUsedFlare) {
-                            // Check if any later messages use this flare
-                            const laterFlareMessage = this.messageHistory.slice(index + 1)
-                                .some(m => m.settings?.flare === this.plugin.lastUsedFlare);
-                            if (!laterFlareMessage) {
-                                this.plugin.lastUsedFlare = null;
-                            }
-                        }
-
-                        // Remove from local messageHistory
-                        this.messageHistory.splice(index, 1);
-
-                        // Also remove from ChatHistoryManager
-                        const history = await this.plugin.chatHistoryManager.getCurrentHistory();
-                        if (history) {
-                            history.messages = history.messages.filter(
-                                (m: { role: string; content: string }) => 
-                                    !(m.role === role && m.content === currentContent)
-                            );
-                            history.lastModified = Date.now();
-                            await this.plugin.chatHistoryManager.saveCurrentHistory();
-                        }
-                    }
-                };
-            }
-        }
-
-        // Scroll to bottom
-        this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-
-        return messageEl;
-    }
-
-    private truncateModelName(model: string, maxLength: number = 20): string {
-        if (model.length <= maxLength) return model;
-        return '...' + model.slice(-maxLength);
-    }
-
-    private setupInfoPanelToggle(infoButton: HTMLElement, infoPanel: HTMLElement, container: HTMLElement) {
-            const toggleInfo = (e: Event) => {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                // Close any other open panels first
-                document.querySelectorAll('.flare-info-panel.is-visible').forEach(panel => {
-                    if (panel !== infoPanel) {
-                        panel.removeClass('is-visible');
-                    }
-                });
-                
-                // Toggle classes with proper boolean value
-                const isVisible = !infoPanel.hasClass('is-visible');
-                infoPanel.toggleClass('is-visible', isVisible);
-                infoButton.toggleClass('is-active', isVisible);
-                
-                // Add click outside listener to close panel
-                if (isVisible) {
-                    setTimeout(() => {
-                        document.addEventListener('click', function closePanel(e) {
-                        if (!container.contains(e.target as Node)) {
-                                infoPanel.removeClass('is-visible');
-                                infoButton.removeClass('is-active');
-                                document.removeEventListener('click', closePanel);
-                            }
-                        });
-                    }, 0);
-                }
-            };
-            
-            infoButton.onclick = toggleInfo;
-    }
-
-    private sanitizeTitle(title: string): string {
-        // Remove invalid filename characters
-        let sanitized = title.replace(/[\\/:*?"<>|]/g, '');
-        
-        // Trim whitespace and dots from ends (dots at end can cause issues on some filesystems)
-        sanitized = sanitized.trim().replace(/\.+$/, '');
-        
-        // Limit length (most filesystems have a 255 char limit, but we'll be more conservative)
-        const MAX_LENGTH = 100;
-        if (sanitized.length > MAX_LENGTH) {
-            sanitized = sanitized.slice(0, MAX_LENGTH).trim();
-        }
-        
-        // Ensure we have a valid title
-        if (!sanitized) {
-            sanitized = 'Untitled Chat';
-        }
-        
-        return sanitized;
-    }
-
-    private async handleFlareSwitch(flare: FlareConfig | undefined) {
-        // Enable/disable interactions based on flare presence
-        const modelControl = this.containerEl.querySelector('.flare-model-control');
-        const tempControl = this.containerEl.querySelector('.flare-temp-control');
-        
-        if (modelControl) {
-            if (flare) {
-                modelControl.removeClass('is-disabled');
-                // Update model display
-                if (this.modelDisplayEl) {
-                    this.modelDisplayEl.setText(flare.model ? this.truncateModelName(flare.model, 30) : '--');
-                }
-            } else {
-                modelControl.addClass('is-disabled');
-                if (this.modelDisplayEl) {
-                    this.modelDisplayEl.setText('--');
-                }
-            }
-        }
-        
-        if (tempControl) {
-            if (flare) {
-                tempControl.removeClass('is-disabled');
-            } else {
-                tempControl.addClass('is-disabled');
-            }
-        }
-        
-        if (this.inputEl) {
-            // Keep input enabled always to allow @flarename commands
-            this.inputEl.value = '';
-            // Update placeholder based on current flare
-            this.inputEl.setAttribute('placeholder', flare ? `@${flare.name}` : '@flarename or select a flare');
-        }
-
-        if (flare) {
-            // Always update temperature to flare's default
-            this.currentTemp = flare.temperature ?? 0.7;
-            if (this.tempDisplayEl) {
-                this.tempDisplayEl.setText(this.currentTemp.toFixed(2));
-            }
-
-            if (this.plugin.settings.debugLoggingEnabled) {
-                console.log('Flare Config:', {
-                    name: flare.name,
-                    isReasoningModel: flare.isReasoningModel,
-                    reasoningHeader: flare.reasoningHeader
-                });
-            }
-
-            // Add a "system" message to note that we switched flares
-            const switchContent = {
-                main: `@${flare.name}`,
-                metadata: {
-                    flare: flare.name,
-                    provider: flare.provider,
-                    model: flare.model,
-                    temperature: flare.temperature ?? 0.7,
-                    maxTokens: flare.maxTokens,
-                    historyWindow: flare.historyWindow ?? -1,
-                    handoffWindow: flare.handoffWindow ?? -1,
-                    stream: flare.stream ?? true,
-                    isReasoningModel: flare.isReasoningModel,
-                    reasoningHeader: flare.reasoningHeader
-                }
-            };
-
-            if (this.plugin.settings.debugLoggingEnabled) {
-                console.log('Switch Content Metadata:', switchContent.metadata);
-            }
-
-            // Only add the system message to UI, not to history
-            await this.addMessage('system', JSON.stringify(switchContent), switchContent.metadata, false);
-
-            // Set the current flare and activate flare switch mode
-            this.currentFlare = flare;
-            this.plugin.isFlareSwitchActive = true;
-
-            // Reload flares to ensure list is up to date
-            await this.plugin.flareManager.loadFlares();
-        } else {
-            // Clear current flare and deactivate flare switch mode
-            this.currentFlare = undefined;
-            this.plugin.isFlareSwitchActive = false;
-        }
-    }
-
-    private async updateModelSelector(flare: FlareConfig) {
-        const modelSelect = this.containerEl.querySelector('.flare-model-select') as HTMLSelectElement;
-        if (!modelSelect) return;
-
-        // Clear existing options except the placeholder
-        while (modelSelect.options.length > 1) {
-            modelSelect.remove(1);
-        }
-
-        try {
-            // Get available models for the provider
-            const providerSettings = this.plugin.settings.providers[flare.provider];
-            console.debug('Provider settings:', providerSettings);
-            console.debug('Current flare:', this.currentFlare);
-            
-            // Check if we have visible models
-            if (!providerSettings?.visibleModels?.length) {
-                // Try getting enabled models instead
-                if (providerSettings?.enabledModels?.length) {
-                    console.debug('Using enabled models:', providerSettings.enabledModels);
-                    const menu = new Menu();
-                    
-                    providerSettings.enabledModels.forEach((model: string) => {
-                        menu.addItem(item => {
-                            const displayName = this.truncateModelName(model, 30);
-                            item
-                                .setTitle(displayName)
-                                .onClick(async () => {
-                                    if (model === this.currentFlare?.model) return;
-                                    
-                                    // Update display
-                                    if (this.modelDisplayEl) {
-                                        this.modelDisplayEl.setText(displayName);
-                                    }
-
-                                    // Add system message for model change
-                                    await this.addMessage('system', JSON.stringify({
-                                        main: displayName,
-                                        metadata: {
-                                            type: 'model',
-                                            from: this.currentFlare?.model,
-                                            to: model
-                                        }
-                                    }), undefined, false);
-
-                                    // Update current flare's model (in memory only)
-                                    if (this.currentFlare) {
-                                        this.currentFlare.model = model;
-                                    }
-                                });
-                        });
-                    });
-
-                    // Show menu at model control
-                    const modelControl = this.containerEl.querySelector('.flare-model-control');
-                    if (modelControl) {
-                        const rect = modelControl.getBoundingClientRect();
-                        menu.showAtPosition({ x: rect.left, y: rect.bottom });
-                    }
-                    return;
-                }
-                
-                console.debug('No models found in provider settings');
-                new Notice('No models available for this provider');
-                return;
-            }
-
-            console.debug('Using visible models:', providerSettings.visibleModels);
-            const menu = new Menu();
-            
-            providerSettings.visibleModels.forEach((model: string) => {
-                menu.addItem(item => {
-                    const displayName = this.truncateModelName(model, 30);
-                    item
-                        .setTitle(displayName)
-                        .onClick(async () => {
-                            if (model === this.currentFlare?.model) return;
-                            
-                            // Update display
-                            if (this.modelDisplayEl) {
-                                this.modelDisplayEl.setText(displayName);
-                            }
-
-                            // Add system message for model change
-                            await this.addMessage('system', JSON.stringify({
-                                main: displayName,
-                                metadata: {
-                                    type: 'model',
-                                    from: this.currentFlare?.model,
-                                    to: model
-                                }
-                            }), undefined, false);
-
-                            // Update current flare's model (in memory only)
-                            if (this.currentFlare) {
-                                this.currentFlare.model = model;
-                            }
-                        });
-                });
-            });
-
-            // Show menu at model control
-            const modelControl = this.containerEl.querySelector('.flare-model-control');
-            if (modelControl) {
-                const rect = modelControl.getBoundingClientRect();
-                menu.showAtPosition({ x: rect.left, y: rect.bottom });
-            }
-        } catch (error) {
-            console.error('Error showing model selector:', error);
-            new Notice('Failed to show model selector');
-        }
-    }
-
-    private async updateSystemMessage(messageEl: HTMLElement, content: SystemMessageContent) {
-        const contentEl = messageEl.querySelector('.flare-message-content');
-        if (contentEl) {
-            contentEl.empty();
-            
-            // Create a container for the flare name and content
-            const contentWrapper = contentEl.createDiv('flare-content-wrapper');
-            
-            // Add flare info for assistant messages
-            const mainText = contentWrapper.createDiv('flare-system-main');
-            
-            // Handle different types of system messages
-            const metadata = content.metadata || {};
-            if (metadata.type === 'model') {
-                // For model changes, use circuit icon
-                const modelText = mainText.createSpan('flare-name');
-                const circuitIcon = modelText.createSpan();
-                setIcon(circuitIcon, 'circuit-board');
-                modelText.createSpan().setText(content.main.replace('Model: ', ''));
-
-                // Add metadata for model changes too
-                const metadataEl = modelText.createDiv('flare-metadata');
-                const flareMetadata = this.getFlareMetadata({
-                    ...metadata,
-                    model: content.main,
-                    isReasoningModel: this.currentFlare?.isReasoningModel,
-                    reasoningHeader: this.currentFlare?.reasoningHeader
-                });
-                Object.entries(flareMetadata).forEach(([key, value]) => {
-                    const item = metadataEl.createDiv('flare-metadata-item');
-                    item.createSpan('metadata-key').setText(key + ':');
-                    item.createSpan('metadata-value').setText(' ' + value);
-                });
-            } else if (content.main.startsWith('@')) {
-                // For flare switches
-                const flareName = mainText.createSpan('flare-name');
-                const flameIcon = flareName.createSpan();
-                setIcon(flameIcon, 'flame');
-                flareName.createSpan().setText(content.main);
-                
-                // Create metadata container with complete metadata
-                const metadataEl = flareName.createDiv('flare-metadata');
-                const flareMetadata = this.getFlareMetadata({
-                    ...metadata,
-                    flare: content.main.replace('@', ''),
-                    isReasoningModel: this.currentFlare?.isReasoningModel,
-                    reasoningHeader: this.currentFlare?.reasoningHeader
-                });
-                Object.entries(flareMetadata).forEach(([key, value]) => {
-                    const item = metadataEl.createDiv('flare-metadata-item');
-                    item.createSpan('metadata-key').setText(key + ':');
-                    item.createSpan('metadata-value').setText(' ' + value);
-                });
-            } else {
-                // For temperature changes
-                const tempDisplay = mainText.createSpan('flare-name');
-                const tempIcon = tempDisplay.createSpan();
-                setIcon(tempIcon, 'thermometer');
-                tempDisplay.createSpan().setText(content.main);
-                
-                // Add metadata for temperature changes too
-                const metadataEl = tempDisplay.createDiv('flare-metadata');
-                const flareMetadata = this.getFlareMetadata({
-                    ...metadata,
-                    temperature: parseFloat(content.main),
-                    isReasoningModel: this.currentFlare?.isReasoningModel,
-                    reasoningHeader: this.currentFlare?.reasoningHeader
-                });
-                Object.entries(flareMetadata).forEach(([key, value]) => {
-                    const item = metadataEl.createDiv('flare-metadata-item');
-                    item.createSpan('metadata-key').setText(key + ':');
-                    item.createSpan('metadata-value').setText(' ' + value);
-                });
-            }
-        }
-    }
-
-    private async showModelSelector() {
-        if (!this.currentFlare) return;
-
-        try {
-            // Get available models for the provider
-            const providerSettings = this.plugin.settings.providers[this.currentFlare.provider];
-            console.debug('Provider settings:', providerSettings);
-            console.debug('Current flare:', this.currentFlare);
-            
-            // Check if we have visible models
-            if (!providerSettings?.visibleModels?.length) {
-                // Try getting enabled models instead
-                if (providerSettings?.enabledModels?.length) {
-                    console.debug('Using enabled models:', providerSettings.enabledModels);
-                    const menu = new Menu();
-                    
-                    providerSettings.enabledModels.forEach((model: string) => {
-                        menu.addItem(item => {
-                            const displayName = this.truncateModelName(model, 30);
-                            item
-                                .setTitle(displayName)
-                                .onClick(async () => {
-                                    if (model === this.currentFlare?.model) return;
-                                    
-                                    // Update display
-                                    if (this.modelDisplayEl) {
-                                        this.modelDisplayEl.setText(displayName);
-                                    }
-
-                                    // Add system message for model change
-                                    await this.addMessage('system', JSON.stringify({
-                                        main: displayName,
-                                        metadata: {
-                                            type: 'model',
-                                            from: this.currentFlare?.model,
-                                            to: model
-                                        }
-                                    }), undefined, false);
-
-                                    // Update current flare's model (in memory only)
-                                    if (this.currentFlare) {
-                                        this.currentFlare.model = model;
-                                    }
-                                });
-                        });
-                    });
-
-                    // Show menu at model control
-                    const modelControl = this.containerEl.querySelector('.flare-model-control');
-                    if (modelControl) {
-                        const rect = modelControl.getBoundingClientRect();
-                        menu.showAtPosition({ x: rect.left, y: rect.bottom });
-                    }
-                    return;
-                }
-                
-                console.debug('No models found in provider settings');
-                new Notice('No models available for this provider');
-                return;
-            }
-
-            console.debug('Using visible models:', providerSettings.visibleModels);
-            const menu = new Menu();
-            
-            providerSettings.visibleModels.forEach((model: string) => {
-                menu.addItem(item => {
-                    const displayName = this.truncateModelName(model, 30);
-                    item
-                        .setTitle(displayName)
-                        .onClick(async () => {
-                            if (model === this.currentFlare?.model) return;
-                            
-                            // Update display
-                            if (this.modelDisplayEl) {
-                                this.modelDisplayEl.setText(displayName);
-                            }
-
-                            // Add system message for model change
-                            await this.addMessage('system', JSON.stringify({
-                                main: displayName,
-                                metadata: {
-                                    type: 'model',
-                                    from: this.currentFlare?.model,
-                                    to: model
-                                }
-                            }), undefined, false);
-
-                            // Update current flare's model (in memory only)
-                            if (this.currentFlare) {
-                                this.currentFlare.model = model;
-                            }
-                        });
-                });
-            });
-
-            // Show menu at model control
-            const modelControl = this.containerEl.querySelector('.flare-model-control');
-            if (modelControl) {
-                const rect = modelControl.getBoundingClientRect();
-                menu.showAtPosition({ x: rect.left, y: rect.bottom });
-            }
-        } catch (error) {
-            console.error('Error showing model selector:', error);
-            new Notice('Failed to show model selector');
-        }
-    }
-
-    async onOpen() {
-        await super.onOpen();
-
-        // Clear model selector and disable controls initially
-        if (this.modelDisplayEl) {
-            this.modelDisplayEl.setText('--');
-        }
-        if (this.tempDisplayEl) {
-            this.tempDisplayEl.setText('--');
-        }
-        // Set initial input placeholder
-        if (this.inputEl) {
-            this.inputEl.setAttribute('placeholder', this.currentFlare ? `@${this.currentFlare.name}` : '@flarename or select a flare');
-        }
-        // Input should always be enabled to allow @flarename commands
-        // ... rest of the onOpen method ...
-    }
-
-    private resetSendButton(
-        button: HTMLButtonElement, 
-        originalHandler?: ((this: GlobalEventHandlers, ev: MouseEvent) => any) | null
-    ): void {
-        this.isAborted = true;  // Set abort state when stopping
-        setIcon(button, 'send');
-        button.setAttribute('aria-label', 'Send message');
-        button.onclick = originalHandler || null;
-        this.isStreaming = false;
-    }
-
-    private async updateTempDisplay() {
-        if (this.tempDisplayEl) {
-            if (!this.currentFlare) {
-                this.tempDisplayEl.setText('--');
-                return;
-            }
-
-            this.tempDisplayEl.setText(this.currentTemp.toFixed(2));
-            
-            // Only show temp change message if it differs from flare default
-            const flareDefaultTemp = this.currentFlare?.temperature ?? 0.7;
-            if (this.currentTemp !== flareDefaultTemp) {
-                // Always append new temperature message
-                await this.addMessage('system', JSON.stringify({
-                    main: `${this.currentTemp.toFixed(2)}`,
-                    metadata: {
-                        type: 'temperature'
-                    }
-                }), undefined, false);
-            }
-        }
-    }
-
     private escapeRegexSpecials(str: string): string {
         return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
-    private updateInputHeight() {
-        if (!this.inputEl) return;
-
-        // Reset height to auto to get scrollHeight
-        this.inputEl.classList.add('is-empty');
+    private async handleError(error: unknown, context: string): Promise<void> {
+        let errorToThrow: Error;
         
-        // Set height to 0 to measure content
-        this.inputEl.classList.add('is-measuring');
-        
-        // Get content height and set CSS variable
-        const contentHeight = this.inputEl.scrollHeight;
-        this.inputEl.style.setProperty('--content-height', `${contentHeight}px`);
-        
-        // Apply content height
-        this.inputEl.classList.remove('is-measuring', 'is-empty');
-        this.inputEl.classList.add('has-content');
-    }
-
-    private updateSuggestionsPosition() {
-        const suggestionContainer = this.containerEl.querySelector('.flare-suggestions') as HTMLElement;
-        if (!suggestionContainer) return;
-
-        // Get input wrapper for positioning reference
-        const inputWrapper = this.inputEl.closest('.flare-input-wrapper') as HTMLElement;
-        if (!inputWrapper) return;
-
-        const wrapperRect = inputWrapper.getBoundingClientRect();
-        const viewportHeight = window.innerHeight;
-        const viewportWidth = window.innerWidth;
-        
-        // Calculate available space above and below input
-        const spaceAbove = wrapperRect.top;
-        const spaceBelow = viewportHeight - wrapperRect.bottom;
-
-        // Calculate dimensions
-        const containerWidth = Math.min(viewportWidth * 0.9, 400);
-        const leftOffset = (viewportWidth - containerWidth) / 2;
-        
-        // Set CSS custom properties for positioning
-        suggestionContainer.addClass('position-fixed');
-        suggestionContainer.style.setProperty('--container-width', `${containerWidth}px`);
-        suggestionContainer.style.setProperty('--left-offset', `${leftOffset}px`);
-        
-        // Get suggestions inner container
-        const suggestionsInner = suggestionContainer.querySelector('.flare-suggestions-container') as HTMLElement;
-        if (suggestionsInner) {
-            // Set max height based on available space
-            const maxHeight = Math.max(spaceAbove, spaceBelow) - 20;
-            suggestionsInner.style.setProperty('--max-height', `${maxHeight}px`);
-        }
-        
-        // Position above or below based on available space
-        if (spaceBelow >= spaceAbove) {
-            suggestionContainer.addClass('position-bottom');
-            suggestionContainer.removeClass('position-top');
-            suggestionContainer.style.setProperty('--bottom-offset', `${wrapperRect.bottom + 8}px`);
+        if (error instanceof FlareError) {
+            errorToThrow = error;
+        } else if (error instanceof Error) {
+            switch (context) {
+                case 'message':
+                    errorToThrow = new MessageError(error.message);
+                    break;
+                case 'flare':
+                    errorToThrow = new FlareConfigError(error.message);
+                    break;
+                case 'provider':
+                    errorToThrow = new ProviderError(error.message);
+                    break;
+                default:
+                    errorToThrow = new FlareError('An unknown error occurred', 'UNKNOWN_ERROR');
+            }
         } else {
-            suggestionContainer.addClass('position-top');
-            suggestionContainer.removeClass('position-bottom');
-            suggestionContainer.style.setProperty('--top-offset', `${viewportHeight - wrapperRect.top + 8}px`);
+            errorToThrow = new FlareError('An unknown error occurred', 'UNKNOWN_ERROR');
         }
+
+        console.error(`Error in ${context}:`, error);
+        new Notice(`Error: ${errorToThrow.message}`);
+        
+        this.messageState = {
+            isStreaming: false,
+            isProcessing: false,
+            hasError: true,
+            errorMessage: errorToThrow.message
+        };
+
+        throw errorToThrow;
     }
 
-    private toggleReasoningVisibility(messageEl: HTMLElement) {
-        const reasoningContent = messageEl.querySelector('.flare-reasoning-content');
-        if (reasoningContent) {
-            reasoningContent.classList.toggle('is-expanded');
-        }
+    /**
+     * Checks if content needs markdown rendering
+     * @param content - The content to check
+     * @returns boolean - Whether content needs markdown rendering
+     */
+    private needsMarkdownRendering(content: string): boolean {
+        return content.match(/^(\s*)(```|>|\d+\.|[*-]\s|#)/) !== null || content.includes('\n');
     }
 
-    async saveChat(error?: Error) {
-        try {
-            // ... existing code ...
-        } catch (error) {
-            console.error('Error saving chat:', error);
-        }
+    /**
+     * Cleans up unnecessary paragraph wrapping from rendered markdown
+     * @param rendered - The rendered markdown element
+     */
+    private cleanupParagraphWrapping(rendered: HTMLElement) {
+        const paragraphs = rendered.querySelectorAll('p');
+        paragraphs.forEach(p => {
+            if (!p.querySelector('pre, blockquote, ul, ol')) {
+                const children = Array.from(p.childNodes);
+                p.replaceWith(...children);
+            }
+        });
     }
 
-    private async handleError(error: unknown, message: string) {
-        console.error(message, error);
-        new Notice(message + ': ' + getErrorMessage(error));
+    /**
+     * Updates the layout based on container size
+     */
+    private updateLayout() {
+        const width = this.containerEl.offsetWidth;
+        const isMobile = width <= CONSTANTS.MOBILE_BREAKPOINT;
+        this.containerEl.classList.toggle('is-mobile', isMobile);
+        this.updateSuggestionsPosition();
     }
 
-    private async finalizeMessageRender(
-        loadingMsg: HTMLElement,
-        content: string,
-        settings: MessageSettings
-    ) {
-        loadingMsg.removeClass('is-loading');
-        const contentEl = loadingMsg.querySelector('.flare-message-content');
-        if (!contentEl) return;
+    /**
+     * Sets up accessibility features
+     */
+    private setupAccessibility() {
+        // Add keyboard navigation
+        this.registerDomEvent(this.containerEl, 'keydown', ((e: Event) => {
+            if (!(e instanceof KeyboardEvent)) return;
+            if (e.key === 'Escape') {
+                this.closeAllMenus();
+            }
+        }) as EventListener);
 
-        const markdownContainer = contentEl.querySelector('.flare-markdown-content');
-        if (!(markdownContainer instanceof HTMLElement)) return;
+        // Add touch feedback
+        this.containerEl.querySelectorAll('.clickable').forEach(element => {
+            if (element instanceof HTMLElement) {
+                this.addTouchFeedback(element);
+            }
+        });
+    }
 
-        if (settings.isReasoningModel) {
-            // Get reasoning container and response container
-            const reasoningContainer = markdownContainer.querySelector('.flare-reasoning-content') as HTMLElement;
-            const responseContainer = markdownContainer.querySelector('.flare-response-content') as HTMLElement;
-            
-            if (reasoningContainer && responseContainer) {
-                // Extract reasoning blocks and response content
-                const reasoningHeader = settings.reasoningHeader || '<think>';
-                const reasoningEndTag = reasoningHeader.replace('<', '</');
-                const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
-                const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
-                const allReasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
-                
-                const reasoningBlocks: string[] = [];
-                let responsePart = content;
-                let match;
+    /**
+     * Adds touch feedback to an element
+     */
+    private addTouchFeedback(element: HTMLElement) {
+        this.registerDomEvent(
+            element, 
+            'touchstart', 
+            (() => element.classList.add('is-touching')) as EventListener,
+            { passive: true }
+        );
 
-                // First collect all reasoning blocks
-                while ((match = allReasoningRegex.exec(content)) !== null) {
-                    if (match[1]) {
-                        reasoningBlocks.push(match[1].trim());
-                    }
-                }
+        this.registerDomEvent(
+            element, 
+            'touchend', 
+            (() => element.classList.remove('is-touching')) as EventListener,
+            { passive: true }
+        );
+    }
 
-                // Then remove all reasoning blocks from response
-                responsePart = content.replace(allReasoningRegex, '').trim();
+    /**
+     * Retries an operation with exponential backoff
+     */
+    private async retryOperation<T>(
+        operation: () => Promise<T>,
+        options: OperationOptions = {}
+    ): Promise<T> {
+        const { timeout = 30000, retries = 3, backoff = true } = options;
 
-                // Store reasoning blocks for later rendering
-                reasoningContainer.setAttribute('data-reasoning-blocks', JSON.stringify(reasoningBlocks));
-                reasoningContainer.style.display = 'none';
-                reasoningContainer.classList.remove('is-expanded');
-
-                // Only render the response part
-                const responseDiv = responseContainer.querySelector('.markdown-rendered') as HTMLElement;
-                if (responseDiv) {
-                    responseDiv.empty();
-                    await MarkdownRenderer.renderMarkdown(
-                        responsePart,
-                        responseDiv,
-                        '',
-                        this.plugin
+        for (let i = 0; i < retries; i++) {
+            try {
+                return await this.makeRequest(operation(), timeout);
+            } catch (error) {
+                if (i === retries - 1) throw error;
+                if (backoff) {
+                    await new Promise(resolve => 
+                        setTimeout(resolve, 1000 * Math.pow(2, i))
                     );
                 }
+            }
+        }
+        throw new Error('Operation failed after retries');
+    }
 
-                // Add toggle button if we have reasoning blocks
-                if (reasoningBlocks.length > 0) {
-                    const actions = loadingMsg.querySelector('.flare-message-actions');
-                    if (actions && !actions.querySelector('[aria-label="Toggle reasoning"]')) {
-                        const messageId = loadingMsg.getAttribute('data-message-id') || `message-${Date.now()}`;
-                        loadingMsg.setAttribute('data-message-id', messageId);
+    /**
+     * Makes a request with timeout
+     */
+    private async makeRequest<T>(
+        promise: Promise<T>, 
+        timeout: number
+    ): Promise<T> {
+        const timeoutPromise = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error('Request timed out')), timeout)
+        );
+        return Promise.race([promise, timeoutPromise]);
+    }
 
-                        const expandBtn = actions.createEl('button', {
-                            cls: 'flare-action-button',
-                            attr: { 'aria-label': 'Toggle reasoning' }
-                        });
-                        setIcon(expandBtn, 'plus-circle');
-                        
-                        expandBtn.onclick = () => {
-                            const isExpanded = this.expandedReasoningMessages.has(messageId);
-                            if (isExpanded) {
-                                // Hide reasoning
-                                this.expandedReasoningMessages.delete(messageId);
-                                reasoningContainer.classList.remove('is-expanded');
-                                expandBtn.classList.remove('is-active');
-                                setIcon(expandBtn, 'plus-circle');
-                                // Wait a moment before visually hiding
-                                setTimeout(() => {
-                                    if (!this.expandedReasoningMessages.has(messageId)) {
-                                        reasoningContainer.style.display = 'none';
-                                    }
-                                }, 300);
-                            } else {
-                                // Expand
-                                reasoningContainer.style.display = 'block';
-                                // Force reflow
-                                void reasoningContainer.offsetHeight;
-                                // Render the reasoning blocks if not already done
-                                if (!reasoningContainer.querySelector('.markdown-rendered')) {
-                                    const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
-                                    MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
-                                }
-                                this.expandedReasoningMessages.add(messageId);
-                                reasoningContainer.classList.add('is-expanded');
-                                expandBtn.classList.add('is-active');
-                                setIcon(expandBtn, 'minus-circle');
-                            }
-                        };
-                    }
+    /**
+     * Updates the view state and triggers UI update
+     */
+    private updateViewState(state: Partial<ViewState>) {
+        this.viewState = { ...this.viewState, ...state };
+        this.saveViewState();
+        this.updateUI();
+    }
+
+    /**
+     * Saves view state to plugin data
+     */
+    private async saveViewState() {
+        try {
+            const state = {
+                ...this.viewState,
+                expandedMessages: Array.from(this.viewState.expandedMessages),
+                lastSavedTimestamp: Date.now()
+            };
+            await this.plugin.saveData(state);
+        } catch (error) {
+            console.error('Error saving view state:', error);
+        }
+    }
+
+    /**
+     * Loads view state from plugin data
+     */
+    private async loadViewState() {
+        try {
+            const saved = await this.plugin.loadData();
+            if (saved) {
+                this.viewState = {
+                    ...this.viewState,
+                    ...saved,
+                    expandedMessages: new Set(saved.expandedMessages)
+                };
+                this.updateUI();
+            }
+        } catch (error) {
+            console.error('Error loading view state:', error);
+        }
+    }
+
+    /**
+     * Updates UI based on current state
+     */
+    private updateUI() {
+        // Update streaming state
+        this.containerEl.classList.toggle('is-streaming', this.viewState.isStreaming);
+        this.containerEl.classList.toggle('is-processing', this.viewState.isProcessing);
+        this.containerEl.classList.toggle('has-error', this.viewState.hasError);
+
+        // Update expanded messages
+        this.viewState.expandedMessages.forEach(messageId => {
+            const messageEl = this.containerEl.querySelector(`[data-message-id="${messageId}"]`);
+            if (messageEl instanceof HTMLElement) {
+                const reasoningContent = messageEl.querySelector('.flare-reasoning-content');
+                if (reasoningContent instanceof HTMLElement) {
+                    reasoningContent.classList.toggle('is-expanded', this.expandedReasoningMessages.has(messageId));
+                }
+                const toggleBtn = messageEl.querySelector('.flare-action-button[aria-label="Toggle reasoning"]');
+                if (toggleBtn instanceof HTMLElement) {
+                    toggleBtn.classList.toggle('is-active', this.expandedReasoningMessages.has(messageId));
+                    setIcon(toggleBtn, this.expandedReasoningMessages.has(messageId) ? 'minus-circle' : 'plus-circle');
                 }
             }
-        } else {
-            // For non-reasoning models, just render the full content
-            markdownContainer.empty();
-            await MarkdownRenderer.renderMarkdown(
-                content,
-                markdownContainer,
-                '',
-                this.plugin
-            );
-        }
+        });
 
-        // Save history after each message exchange
-        await this.plugin.chatHistoryManager.saveCurrentHistory();
+        // Update temperature display
+        if (this.tempDisplayEl) {
+            this.tempDisplayEl.textContent = this.viewState.currentTemp.toFixed(2);
+        }
+    }
+
+    /**
+     * Closes all open menus
+     */
+    private closeAllMenus() {
+        this.hideSuggestions();
+        this.containerEl.querySelectorAll('.is-active').forEach(el => {
+            if (el instanceof HTMLElement) {
+                el.classList.remove('is-active');
+            }
+        });
+    }
+
+    private handleInput(e: Event) {
+        if (!(e.target instanceof HTMLTextAreaElement)) return;
+        const input = e.target.value;
+        const cursorPosition = e.target.selectionStart || 0;
         
-        // Check if we should auto-generate title
-        const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
-        const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
-        if (titleEl && 
-            currentFile && 
-            titleEl.textContent === 'New Chat' && 
-            !this.isTitleGenerationInProgress) {
-            const titleSettings = this.plugin.settings.titleSettings;
-            // Only proceed if auto-generate is enabled
-            if (titleSettings.autoGenerate) {
-                // Calculate number of complete message pairs (user + assistant)
-                const messagePairs = Math.floor(this.messageHistory.filter(m => 
-                    m.role !== 'system' && !m.settings?.truncated
-                ).length / 2);
-                
-                if (messagePairs >= (titleSettings.autoGenerateAfterPairs || 2)) {
-                    // Set flag before starting generation
-                    this.isTitleGenerationInProgress = true;
-                    // Run title generation in the background
-                    this.handleTitleGeneration()
-                        .catch(error => {
-                            console.error('Auto title generation failed:', error);
-                        })
-                        .finally(() => {
-                            this.isTitleGenerationInProgress = false;
-                        });
-                }
-            }
+        // Check if we're at the start of the input or after whitespace
+        const beforeCursor = input.slice(0, cursorPosition);
+        const isAtStart = beforeCursor.trim() === beforeCursor && beforeCursor.startsWith('@');
+        
+        if (isAtStart) {
+            const searchTerm = beforeCursor.slice(1); // Remove the @ symbol
+            this.updateFlareSuggestions(searchTerm);
+        } else {
+            this.hideSuggestions();
         }
 
-        // Refresh history sidebar if it exists
-        if (this.plugin.historySidebar) {
-            await this.plugin.historySidebar.refresh();
+        // Update input height
+        this.debouncedHeightUpdate();
+    }
+
+    private handleGlobalClick(e: MouseEvent) {
+        const suggestionContainer = this.containerEl.querySelector('.flare-suggestions');
+        if (suggestionContainer && 
+            !suggestionContainer.contains(e.target as Node) && 
+            !this.inputEl.contains(e.target as Node)) {
+            this.hideSuggestions();
         }
+    }
+
+    private initializeObservers() {
+        // Add ResizeObserver
+        if (this.resizeObserver) {
+            this.resizeObserver.observe(this.containerEl);
+        }
+    }
+
+    private async insertFlareSuggestion(index: number) {
+        const suggestions = this.containerEl.querySelectorAll('.flare-suggestion-item');
+        if (index < 0 || index >= suggestions.length) return;
+
+        const selectedItem = suggestions[index] as HTMLElement;
+        const flareName = selectedItem.querySelector('.suggestion-name')?.textContent;
+        if (!flareName || !this.inputEl) return;
+
+        // Get cursor position and input value
+        const cursorPosition = this.inputEl.selectionStart || 0;
+        const input = this.inputEl.value;
+        
+        // Find the @ symbol before the cursor
+        const beforeCursor = input.slice(0, cursorPosition);
+        const atIndex = beforeCursor.lastIndexOf('@');
+        
+        if (atIndex !== -1) {
+            // Replace the text from @ to cursor with the flare name and add a space
+            const newValue = input.slice(0, atIndex) + '@' + flareName + ' ' + input.slice(cursorPosition);
+            this.inputEl.value = newValue;
+            
+            // Set cursor position after the flare name and space
+            const newCursorPosition = atIndex + flareName.length + 2; // +2 for @ and space
+            this.inputEl.setSelectionRange(newCursorPosition, newCursorPosition);
+            
+            // Update input height if needed
+            this.debouncedHeightUpdate();
+        }
+        
+        // Hide suggestions after inserting
+        this.hideSuggestions();
     }
 } 
