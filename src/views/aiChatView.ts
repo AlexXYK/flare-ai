@@ -1057,23 +1057,25 @@ export class AIChatView extends ItemView {
 
     private async handleMessage(content: string): Promise<boolean> {
         try {
-            // Check for inline flare switch command using the plugin's parser.
-            const parsed = this.plugin.parseMessageForFlare(content);
-            // If the parsed flare is different from the currently active flare (or default), switch to it.
-            if (parsed.flare !== (this.currentFlare ? this.currentFlare.name : (this.plugin.settings.defaultFlare || 'default'))) {
-                const newFlareConfig = await this.plugin.flareManager.debouncedLoadFlare(parsed.flare);
-                if (newFlareConfig) {
-                    await this.handleFlareSwitch(newFlareConfig);
-                } else {
-                    new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
-                    return false;
+            // If the message starts with '@', treat it as a possible flare switch command.
+            if (content.trim().startsWith('@')) {
+                const parsed = this.plugin.parseMessageForFlare(content);
+                // If the parsed flare is different from the currently active flare, switch to it.
+                if (parsed.flare !== (this.currentFlare ? this.currentFlare.name : (this.plugin.settings.defaultFlare || 'default'))) {
+                    const newFlareConfig = await this.plugin.flareManager.debouncedLoadFlare(parsed.flare);
+                    if (newFlareConfig) {
+                        await this.handleFlareSwitch(newFlareConfig);
+                    } else {
+                        new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
+                        return false;
+                    }
+                    // If there's no additional message content, we're done.
+                    if (!parsed.content.trim()) {
+                        return true;
+                    }
+                    // Otherwise, update content with the remainder of the user's input.
+                    content = parsed.content;
                 }
-                // If there's no additional message content, we're done.
-                if (!parsed.content.trim()) {
-                    return true;
-                }
-                // Otherwise, update content with the remainder of the user's input.
-                content = parsed.content;
             }
 
             // At this point, this.currentFlare should be set via handleFlareSwitch.

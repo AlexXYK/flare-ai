@@ -43,7 +43,7 @@ export class ProviderSettingsView {
                 }
             }
         });
-
+        
         const cancelBtn = actionButtons.createEl('button', {
             text: 'Cancel'
         });

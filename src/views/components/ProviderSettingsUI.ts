@@ -4,6 +4,7 @@ import type { ProviderSettings } from '../../types/AIProvider';
 
 export class ProviderSettingsUI {
     private currentProvider: string | null = null;
+    private providerDropdown: DropdownComponent | null = null;
 
     constructor(
         private plugin: FlarePlugin,
@@ -12,17 +13,25 @@ export class ProviderSettingsUI {
     ) {}
 
     display(): void {
+        this.container.empty();
         // Store original settings for revert
         const originalSettings = JSON.parse(JSON.stringify(this.plugin.settings));
 
-        // Provider selector with add/remove buttons
-        const selectorContainer = this.container.createEl('div', { cls: 'flare-provider-selector' });
+        // Create main container with two columns: left for provider selector and type setting, right for action buttons
+        const mainContainer = this.container.createEl('div', { cls: 'provider-settings-main' });
+        const leftContainer = mainContainer.createEl('div', { cls: 'provider-settings-left' });
+        const rightContainer = mainContainer.createEl('div', { cls: 'provider-settings-right' });
+
+        // Provider selector with add/remove buttons in the left column
+        const selectorContainer = leftContainer.createEl('div', { cls: 'flare-provider-selector' });
+
         let dropdownRef: DropdownComponent;
         const dropdownContainer = new Setting(selectorContainer)
             .setName('Active provider')
             .setDesc('Select a provider to configure')
             .addDropdown(dropdown => {
                 dropdownRef = dropdown;
+                this.providerDropdown = dropdown;
                 // Add placeholder option
                 dropdown.addOption('', 'Select a provider...');
                 
@@ -50,7 +59,7 @@ export class ProviderSettingsUI {
                 return dropdown;
             });
 
-        // Add buttons container
+        // Add buttons container for add/delete in the provider selector area
         const buttonsContainer = dropdownContainer.controlEl.createEl('div', { cls: 'flare-provider-buttons' });
         
         // Add new provider button
@@ -70,8 +79,9 @@ export class ProviderSettingsUI {
             deleteButton.addClass('disabled');
         }
 
-        // Add provider type setting
-        const providerTypeContainer = selectorContainer.createEl('div', { cls: 'provider-type-setting' });
+        // Add provider type setting in the left column
+        const providerTypeContainer = leftContainer.createEl('div', { cls: 'provider-type-setting' });
+
         let providerTypeDropdown: DropdownComponent;
         const providerTypeSetting = new Setting(providerTypeContainer)
             .setName('Provider type')
@@ -88,7 +98,6 @@ export class ProviderSettingsUI {
                     'ollama': 'Ollama'
                 };
                 
-                // Always add provider types without filtering so that new providers can choose any type
                 Object.entries(providerTypes)
                     .forEach(([type, label]) => {
                         dropdown.addOption(type, label);
@@ -98,15 +107,14 @@ export class ProviderSettingsUI {
                     if (!this.currentProvider) return;
                     this.plugin.settings.providers[this.currentProvider].type = value;
                     showActionButtons();
-                    // Trigger provider change to update the settings view
                     this.onProviderChange(this.currentProvider);
                 });
 
                 return dropdown;
             });
 
-        // Add action buttons container
-        const actionButtons = selectorContainer.createEl('div', { cls: 'flare-form-actions' });
+        // Add action buttons container in the right column
+        const actionButtons = rightContainer.createEl('div', { cls: 'flare-form-actions' });
         new Setting(actionButtons)
             .addButton(button => {
                 button
@@ -123,7 +131,6 @@ export class ProviderSettingsUI {
                     .setButtonText('Revert')
                     .onClick(() => {
                         if (!this.currentProvider) return;
-                        // Restore original provider type
                         const originalProvider = originalSettings.providers[this.currentProvider];
                         if (originalProvider) {
                             this.plugin.settings.providers[this.currentProvider].type = originalProvider.type;
@@ -148,8 +155,10 @@ export class ProviderSettingsUI {
             dropdownRef.setValue(id);
             this.currentProvider = id;
             this.onProviderChange(id);
+            this.refreshDropdown();
             updateProviderType();
             deleteButton.removeClass('disabled');
+            this.plugin.reloadProviderDependentViews();
         });
 
         deleteButton.addEventListener('click', async () => {
@@ -223,5 +232,24 @@ export class ProviderSettingsUI {
             providerTypeDropdown.setValue(provider.type || '');
             hideActionButtons();
         };
+    }
+
+    refreshDropdown(): void {
+        const dropdown = this.providerDropdown;
+        if (!dropdown) return;
+        // Clear current dropdown options
+        if (dropdown.selectEl) {
+            dropdown.selectEl.innerHTML = '';
+        }
+        // Add placeholder option
+        dropdown.addOption('', 'Select a provider...');
+        // Add all providers from settings, sorted alphabetically
+        Object.entries(this.plugin.settings.providers)
+            .sort(([, a], [, b]) => (a.name || '').localeCompare(b.name || ''))
+            .forEach(([id, provider]) => {
+                dropdown.addOption(id, provider.name || id);
+            });
+        // Reset the dropdown's value to currentProvider, if any
+        dropdown.setValue(this.currentProvider || '');
     }
 } 

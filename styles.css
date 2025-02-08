@@ -946,6 +946,9 @@
     box-shadow: 0 0 0 1px var(--interactive-accent);
 }
 
+
+
+
 /* Action Buttons */
 .flare-form-actions {
     display: none;
@@ -955,9 +958,10 @@
 }
 
 .flare-form-actions.is-visible {
-    display: flex;
+    display: flex !important;
     justify-content: flex-end;
     gap: 8px;
+    background-color: rgba(255, 0, 0, 0.2); /* Debug: red background */
 }
 
 /* Models List Styles */

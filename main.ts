@@ -996,4 +996,14 @@ export default class FlarePlugin extends Plugin {
         
         return links;
     }
+
+    async reloadProviderDependentViews(): Promise<void> {
+        const chatLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_AI_CHAT);
+        for (const leaf of chatLeaves) {
+            const view = leaf.view as any; // Using 'any' type here is safe since we'll check for the method
+            if (view && typeof view.refreshProviderSettings === 'function') {
+                await view.refreshProviderSettings();
+            }
+        }
+    }
 } 
