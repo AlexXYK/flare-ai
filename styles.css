@@ -377,6 +377,13 @@
     opacity: 0.7;
 }
 
+/* Remove the loading bar behind assistant messages when loading */
+.flare-message.assistant.is-loading:before {
+    background-image: none !important;
+    background-color: transparent !important;
+}
+
+
 .flare-message.is-streaming .flare-markdown-content {
     opacity: 0.9;
 }
@@ -863,10 +870,9 @@
 }
 
 .flare-section-content {
-    padding: 0 0 12px 0;
+    padding: 8px;
     border-top: none;
     background: var(--background-primary);
-    padding: 16px;
     border-top: 1px solid var(--background-modifier-border);
     display: block;
     transition: opacity 0.15s ease;
@@ -892,6 +898,16 @@
 .provider-settings .setting-item {
     border: none;
     padding: 12px 0;
+}
+
+.provider-settings .setting-item:first-child {
+    padding-top: 0;
+    border-top: none;
+}
+
+.provider-settings .setting-item:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
 }
 
 .provider-settings .setting-item:not(:last-child) {
@@ -961,7 +977,6 @@
     display: flex !important;
     justify-content: flex-end;
     gap: 8px;
-    background-color: rgba(255, 0, 0, 0.2); /* Debug: red background */
 }
 
 /* Models List Styles */
@@ -1832,12 +1847,16 @@
     gap: 8px;
 }
 
-.flare-buttons {
+/* Common button container styles */
+.flare-buttons,
+.flare-provider-buttons {
     display: flex;
     gap: 4px;
 }
 
-.flare-buttons .clickable-icon {
+/* Common button styles */
+.flare-buttons .clickable-icon,
+.flare-provider-buttons .clickable-icon {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1852,12 +1871,14 @@
     transition: all 0.15s ease;
 }
 
-.flare-buttons .clickable-icon:hover {
+.flare-buttons .clickable-icon:hover,
+.flare-provider-buttons .clickable-icon:hover {
     background-color: var(--background-modifier-hover);
     color: var(--text-normal);
 }
 
-.flare-buttons .clickable-icon.disabled {
+.flare-buttons .clickable-icon.disabled,
+.flare-provider-buttons .clickable-icon.disabled {
     opacity: 0.5;
     cursor: not-allowed;
     pointer-events: none;

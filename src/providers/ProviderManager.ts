@@ -31,6 +31,13 @@ export abstract class ProviderManager {
                     settings,
                     async () => {
                         await this.plugin.saveData(this.plugin.settings);
+                    },
+                    () => {
+                        // Show action buttons when settings change
+                        const actionButtons = containerEl.querySelector('.flare-form-actions');
+                        if (actionButtons) {
+                            actionButtons.classList.add('is-visible');
+                        }
                     }
                 );
                 settingsView.display();

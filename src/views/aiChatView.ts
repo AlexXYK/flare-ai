@@ -211,7 +211,7 @@ export class AIChatView extends ItemView {
     /** Current temperature setting */
     public currentTemp: number = CONSTANTS.DEFAULT_TEMPERATURE;
     /** Array of message history */
-    public messageHistory: Array<{role: string; content: string; settings?: any}> = [];
+    public messageHistory: Array<{role: string; content: string; timestamp?: number; settings?: any}> = [];
     /** Reference to the Obsidian app */
     public app: App;
     /** Display element for temperature */
@@ -968,28 +968,372 @@ export class AIChatView extends ItemView {
         }
     }
 
-    private startNewChat() {
-        // Implementation of startNewChat method
+    private async startNewChat() {
+        try {
+            // Clear existing messages
+            if (this.messagesEl) {
+                this.messagesEl.empty();
+            }
+
+            // Reset message history
+            this.messageHistory = [];
+
+            // Reset title
+            const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
+            if (titleEl) {
+                titleEl.textContent = 'New Chat';
+            }
+
+            // Create new history in the manager
+            await this.plugin.chatHistoryManager.createNewHistory();
+
+            // Clear input
+            if (this.inputEl) {
+                this.inputEl.value = '';
+                this.inputEl.classList.remove('has-content', 'has-custom-height');
+            }
+
+            // Reset flare
+            this.currentFlare = undefined;
+            this.updateTempDisplay();
+        } catch (error) {
+            console.error('Error starting new chat:', error);
+            new Notice('Failed to start new chat');
+        }
     }
 
-    private clearChat() {
-        // Implementation of clearChat method
+    private async clearChat() {
+        try {
+            // Clear UI
+            if (this.messagesEl) {
+                this.messagesEl.empty();
+            }
+
+            // Clear history arrays
+            this.messageHistory = [];
+            await this.plugin.chatHistoryManager.clearHistory();
+
+            // Clear input
+            if (this.inputEl) {
+                this.inputEl.value = '';
+                this.inputEl.classList.remove('has-content', 'has-custom-height');
+            }
+
+            new Notice('Chat cleared');
+        } catch (error) {
+            console.error('Error clearing chat:', error);
+            new Notice('Failed to clear chat');
+        }
     }
 
     private updateInputHeight() {
-        // Implementation of updateInputHeight method
+        if (!this.inputEl) return;
+
+        // Reset height to auto to get proper scrollHeight
+        this.inputEl.style.height = 'auto';
+        
+        // Calculate new height
+        const maxHeight = Math.min(200, window.innerHeight * 0.3);
+        const newHeight = Math.min(this.inputEl.scrollHeight, maxHeight);
+        
+        // Set new height
+        this.inputEl.style.height = `${newHeight}px`;
+        
+        // Update container classes
+        const hasContent = this.inputEl.value.trim().length > 0;
+        this.inputEl.classList.toggle('has-content', hasContent);
+        this.inputEl.classList.toggle('has-custom-height', newHeight > 56);
     }
 
     private updateTempDisplay() {
-        // Implementation of updateTempDisplay method
+        if (!this.tempDisplayEl) return;
+
+        // Format temperature with 2 decimal places
+        const tempText = this.currentTemp.toFixed(2);
+        this.tempDisplayEl.textContent = tempText;
+
+        // Update temperature control state
+        const tempControl = this.tempDisplayEl.closest('.flare-temp-control');
+        if (tempControl instanceof HTMLElement) {
+            tempControl.classList.toggle('is-disabled', !this.currentFlare);
+        }
     }
 
-    private showModelSelector() {
-        // Implementation of showModelSelector method
+    private async showModelSelector() {
+        if (!this.currentFlare) return;
+
+        try {
+            const provider = await this.plugin.getProviderInstance(this.currentFlare.provider);
+            if (!provider) {
+                throw new Error('Provider not found');
+            }
+
+            const models = await provider.getAvailableModels();
+            if (!models || models.length === 0) {
+                new Notice('No models available for this provider');
+                return;
+            }
+
+            const menu = new Menu();
+            models.forEach((model: string) => {
+                menu.addItem(item => {
+                    item.setTitle(model)
+                        .setIcon(model === this.currentFlare?.model ? 'check' : 'circuit-board')
+                        .onClick(async () => {
+                            if (this.currentFlare) {
+                                this.currentFlare.model = model;
+                                if (this.modelDisplayEl) {
+                                    this.modelDisplayEl.textContent = this.truncateModelName(model);
+                                }
+                                await this.plugin.saveSettings();
+                            }
+                        });
+                });
+            });
+
+            // Position menu near the model selector
+            const modelControl = this.containerEl.querySelector('.flare-model-control');
+            if (modelControl instanceof HTMLElement) {
+                const rect = modelControl.getBoundingClientRect();
+                menu.showAtPosition({ x: rect.left, y: rect.bottom });
+            }
+        } catch (error) {
+            console.error('Error showing model selector:', error);
+            new Notice('Failed to load available models');
+        }
     }
 
-    private loadCurrentHistory() {
-        // Implementation of loadCurrentHistory method
+    private async loadCurrentHistory() {
+        try {
+            // Get current history from the history manager
+            const history = this.plugin.chatHistoryManager.getCurrentHistory();
+            if (!history) return;
+
+            // Clear existing messages
+            if (this.messagesEl) {
+                this.messagesEl.empty();
+            }
+
+            // Reset message history and expanded reasoning messages
+            this.messageHistory = [];
+            this.expandedReasoningMessages.clear();
+
+            // Update title from the current file (not history object)
+            const currentFile = this.plugin.chatHistoryManager.getCurrentFile();
+            const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
+            if (titleEl && currentFile) {
+                titleEl.textContent = currentFile.basename;
+            }
+
+            // Update flare and settings if available
+            if (history.flare) {
+                const flareConfig = await this.plugin.flareManager.debouncedLoadFlare(history.flare);
+                if (flareConfig) {
+                    this.currentFlare = flareConfig;
+                    
+                    // Update input placeholder
+                    if (this.inputEl) {
+                        this.inputEl.setAttribute('placeholder', `@${flareConfig.name}`);
+                    }
+
+                    // Update model display
+                    if (this.modelDisplayEl) {
+                        this.modelDisplayEl.textContent = this.truncateModelName(flareConfig.model);
+                    }
+
+                    // Enable model and temperature controls
+                    const modelControl = this.containerEl.querySelector('.flare-model-control');
+                    const tempControl = this.containerEl.querySelector('.flare-temp-control');
+                    
+                    if (modelControl instanceof HTMLElement) {
+                        modelControl.classList.remove('is-disabled');
+                    }
+                    if (tempControl instanceof HTMLElement) {
+                        tempControl.classList.remove('is-disabled');
+                    }
+                }
+            }
+
+            // Set temperature
+            this.currentTemp = history.temperature;
+            this.updateTempDisplay();
+
+            // Add each message to the UI
+            for (const message of history.messages) {
+                const messageSettings = {
+                    ...message.settings,
+                    isReasoningModel: this.currentFlare?.isReasoningModel,
+                    reasoningHeader: this.currentFlare?.reasoningHeader
+                };
+
+                // Create message element
+                const messageEl = this.messagesEl.createDiv({
+                    cls: `flare-message ${message.role}`
+                });
+
+                // Add accessibility attributes
+                messageEl.setAttribute('role', 'article');
+                messageEl.setAttribute('aria-label', `${message.role} message`);
+                messageEl.setAttribute('aria-live', message.role === 'assistant' ? 'polite' : 'off');
+
+                // Store original content for comparison
+                messageEl.setAttrs({
+                    'data-content': message.content,
+                    'data-role': message.role
+                });
+
+                // Create message content with proper structure
+                const contentEl = messageEl.createDiv('flare-message-content');
+
+                // Only create meta and actions for non-system messages
+                if (message.role !== 'system') {
+                    // Add metadata (timestamp, etc) and actions
+                    const metaEl = messageEl.createDiv('flare-message-meta');
+                    const timestamp = moment(message.timestamp).format('h:mm A');
+                    metaEl.createSpan({
+                        cls: 'flare-message-time',
+                        text: timestamp
+                    });
+
+                    // Add action buttons container
+                    const actions = metaEl.createDiv('flare-message-actions');
+                    this.addMessageActions(actions, messageEl, message.content);
+                }
+
+                // Handle system messages differently
+                if (message.role === 'system') {
+                    this.renderSystemMessage(messageEl, contentEl, message.content);
+                } else {
+                    // Create content wrapper for actual message content
+                    const contentWrapper = contentEl.createDiv('flare-content-wrapper');
+                    contentWrapper.setAttribute('role', 'presentation');
+
+                    // If the message is from assistant, add flare nametag and metadata at the top
+                    if (message.role === 'assistant') {
+                        const mainText = contentWrapper.createDiv('flare-system-main');
+                        mainText.setAttribute('role', 'presentation');
+                        const flareName = mainText.createSpan('flare-name');
+                        flareName.setAttribute('role', 'button');
+                        flareName.setAttribute('aria-label', `Using flare ${messageSettings.flare || 'default'}`);
+                        flareName.setAttribute('tabindex', '0');
+                        const flameIcon = flareName.createSpan();
+                        setIcon(flameIcon, 'flame');
+                        flareName.createSpan().textContent = `@${messageSettings.flare || 'default'}`;
+
+                        // Create metadata container
+                        const metadataEl = flareName.createDiv('flare-metadata');
+                        metadataEl.setAttribute('role', 'tooltip');
+                        metadataEl.setAttribute('aria-hidden', 'true');
+                        const metadata = this.getFlareMetadata(messageSettings);
+                        Object.entries(metadata).forEach(([key, value]) => {
+                            const item = metadataEl.createDiv('flare-metadata-item');
+                            item.createSpan('metadata-key').textContent = key + ':';
+                            item.createSpan('metadata-value').textContent = ' ' + value;
+                        });
+                    }
+
+                    // Create markdown container AFTER nametag is added
+                    const markdownContainer = contentWrapper.createDiv('flare-markdown-content');
+                    markdownContainer.setAttribute('role', 'presentation');
+
+                    if (message.role === 'assistant' && (messageSettings.isReasoningModel || message.content.includes(messageSettings.reasoningHeader || '<think>'))) {
+                        const reasoningHeader = messageSettings.reasoningHeader || '<think>';
+                        const { reasoningBlocks, responsePart } = this.extractReasoningContent(message.content, reasoningHeader);
+
+                        if (reasoningBlocks.length > 0) {
+                            const messageId = `message-${message.timestamp}-${Math.random().toString(36).substr(2, 9)}`;
+                            messageEl.setAttribute('data-message-id', messageId);
+
+                            // Create reasoning container
+                            const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
+                            reasoningContainer.setAttribute('role', 'region');
+                            reasoningContainer.setAttribute('aria-label', 'AI reasoning process');
+                            reasoningContainer.setAttribute('aria-expanded', 'false');
+
+                            // Create response container
+                            const responseContainer = markdownContainer.createDiv('flare-response-content');
+                            responseContainer.setAttribute('role', 'region');
+                            responseContainer.setAttribute('aria-label', 'AI response');
+
+                            // Add reasoning toggle button
+                            const actionsEl = messageEl.querySelector('.flare-message-actions');
+                            if (actionsEl instanceof HTMLElement) {
+                                const expandBtn = this.createActionButton(actionsEl, 'Toggle reasoning', 'plus-circle');
+                                
+                                this.registerDomEvent(expandBtn, 'click', async () => {
+                                    const isExpanded = this.expandedReasoningMessages.has(messageId);
+                                    if (isExpanded) {
+                                        this.expandedReasoningMessages.delete(messageId);
+                                        reasoningContainer.classList.remove('is-expanded');
+                                        expandBtn.classList.remove('is-active');
+                                        setIcon(expandBtn, 'plus-circle');
+                                    } else {
+                                        // Render reasoning blocks if not already done
+                                        if (!reasoningContainer.querySelector('.markdown-rendered')) {
+                                            const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
+                                            const rendered = reasoningContainer.createDiv('markdown-rendered');
+                                            rendered.setAttribute('role', 'presentation');
+                                            await MarkdownRenderer.renderMarkdown(joinedReasoning, rendered, '', this.plugin);
+                                        }
+                                        this.expandedReasoningMessages.add(messageId);
+                                        reasoningContainer.classList.add('is-expanded');
+                                        expandBtn.classList.add('is-active');
+                                        setIcon(expandBtn, 'minus-circle');
+                                    }
+                                });
+                            }
+
+                            // Render response part separately so that reasoning is hidden until expanded
+                            if (responsePart.trim()) {
+                                const rendered = responseContainer.createDiv('markdown-rendered');
+                                rendered.setAttribute('role', 'presentation');
+                                await MarkdownRenderer.renderMarkdown(responsePart.trim(), rendered, '', this.plugin);
+                            }
+                        } else {
+                            // If no reasoning blocks found, render as normal message
+                            const rendered = markdownContainer.createDiv('markdown-rendered');
+                            rendered.setAttribute('role', 'presentation');
+                            await MarkdownRenderer.renderMarkdown(message.content, rendered, '', this.plugin);
+                        }
+                    } else {
+                        // For non-assistant or non-reasoning messages, render normally
+                        const rendered = markdownContainer.createDiv('markdown-rendered');
+                        rendered.setAttribute('role', 'presentation');
+                        await MarkdownRenderer.renderMarkdown(message.content, rendered, '', this.plugin);
+                    }
+                }
+
+                // Add to message history
+                this.messageHistory.push({
+                    role: message.role,
+                    content: message.content,
+                    timestamp: message.timestamp,
+                    settings: messageSettings
+                });
+            }
+
+            // Scroll to bottom after loading
+            this.scrollToBottom();
+
+            // Update view state
+            this.updateViewState({
+                isStreaming: false,
+                isProcessing: false,
+                hasError: false,
+                errorMessage: '',
+                currentTemp: history.temperature
+            });
+
+        } catch (error) {
+            console.error('Error loading chat history:', error);
+            new Notice('Failed to load chat history');
+            
+            // Update view state to show error
+            this.updateViewState({
+                hasError: true,
+                errorMessage: error instanceof Error ? error.message : 'Failed to load chat history'
+            });
+        }
     }
 
     private createDebouncedHandler(handler: () => void, delay: number, immediate: boolean) {
@@ -1281,7 +1625,7 @@ export class AIChatView extends ItemView {
                     modelControl.classList.remove('is-disabled');
                     // Update model display
                     if (this.modelDisplayEl) {
-                        this.modelDisplayEl.textContent = flare.model ? this.truncateModelName(flare.model, 30) : '--';
+                        this.modelDisplayEl.textContent = this.truncateModelName(flare.model);
                     }
                 } else {
                     modelControl.classList.add('is-disabled');
@@ -1411,8 +1755,8 @@ export class AIChatView extends ItemView {
             await this.plugin.chatHistoryManager.addMessage(messageData);
         }
 
-        // Scroll to bottom
-        this.scrollToBottom();
+        // Force scroll to bottom for new messages
+        this.scrollToBottom(true);
 
         return messageEl;
     }
@@ -1521,12 +1865,7 @@ export class AIChatView extends ItemView {
                 const metadataEl = flareName.createDiv('flare-metadata');
                 
                 // Get metadata directly from the content
-                const metadata = this.getFlareMetadata({
-                    ...switchContent.metadata,
-                    flare: switchContent.main.replace('@', ''),
-                    isReasoningModel: switchContent.metadata.isReasoningModel,
-                    reasoningHeader: switchContent.metadata.reasoningHeader
-                });
+                const metadata = this.getFlareMetadata(switchContent.metadata);
                 
                 Object.entries(metadata).forEach(([key, value]) => {
                     const item = metadataEl.createDiv('flare-metadata-item');
@@ -1643,10 +1982,16 @@ export class AIChatView extends ItemView {
         return { reasoningBlocks, responsePart: responsePart.trim() };
     }
 
-    private scrollToBottom() {
+    private isNearBottom(): boolean {
+        if (!this.messagesEl) return true;
+        const threshold = 100; // pixels from bottom
+        return this.messagesEl.scrollHeight - this.messagesEl.scrollTop - this.messagesEl.clientHeight <= threshold;
+    }
+
+    private scrollToBottom(force: boolean = false) {
         if (this.messagesEl) {
-            const shouldScroll = this.messagesEl.scrollHeight - this.messagesEl.scrollTop <= 100;
-            if (shouldScroll) {
+            // Always scroll if forced, otherwise only scroll if we're near the bottom
+            if (force || this.isNearBottom()) {
                 this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
             }
         }

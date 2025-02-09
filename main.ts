@@ -484,7 +484,7 @@ export default class FlarePlugin extends Plugin {
     }
 
     parseMessageForFlare(message: string): { flare: string; content: string } {
-        const match = message.match(/(?:^|\s)@(\w+)\s*(.*)/);
+        const match = message.match(/(?:^|\s)@(\w+)\s*(.*)/i);
         if (match) {
             // If there's no content after the flare name, treat it as a flare switch
             if (!match[2].trim()) {
