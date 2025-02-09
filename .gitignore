@@ -22,3 +22,4 @@ data.json
 # Development files
 *.log
 .hot-reload
+obsidianrules
