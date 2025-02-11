@@ -1,4 +1,4 @@
-import { Setting, Notice } from 'obsidian';
+import { Setting, Notice, Platform } from 'obsidian';
 import type FlarePlugin from '../../../main';
 import type { ProviderSettings } from '../../types/AIProvider';
 
@@ -206,6 +206,11 @@ export class ProviderSettingsView {
         // Clear the container first
         container.empty();
 
+        // Add mobile class if on mobile platform
+        if (Platform.isMobile) {
+            container.addClass('is-mobile');
+        }
+
         // Add refresh models button
         new Setting(container)
             .setName('Available models')
@@ -255,38 +260,110 @@ export class ProviderSettingsView {
             
             // Add header
             const header = modelsList.createEl('div', { cls: 'models-list-header' });
-            header.createEl('div', { 
-                cls: 'model-header model-name-header',
+            
+            // Create sort state
+            let currentSort = {
+                field: 'name' as 'name' | 'visibility',
+                direction: 'asc' as 'asc' | 'desc'
+            };
+
+            // Create headers with sort functionality
+            const nameHeader = header.createEl('div', { 
+                cls: 'model-header model-name-header is-sorted',
                 text: 'Model'
             });
-            header.createEl('div', { 
+
+            const visibilityHeader = header.createEl('div', { 
                 cls: 'model-header visibility-header',
                 text: 'Show'
             });
 
-            // Sort models alphabetically
-            const sortedModels = [...this.settings.availableModels].sort((a, b) => a.localeCompare(b));
+            // Create content container for scrolling
+            const content = modelsList.createEl('div', { cls: 'models-list-content' });
 
-            sortedModels.forEach((model: string) => {
-                new Setting(modelsList)
-                    .setName(model)
-                    .addToggle(toggle => toggle
-                        .setValue(this.settings.visibleModels?.includes(model) || false)
-                        .onChange(value => {
-                            if (!this.settings.visibleModels) {
-                                this.settings.visibleModels = [];
-                            }
-                            
-                            if (value) {
-                                if (!this.settings.visibleModels.includes(model)) {
-                                    this.settings.visibleModels.push(model);
+            // Sort function
+            const sortModels = (models: string[], field: 'name' | 'visibility', direction: 'asc' | 'desc') => {
+                return [...models].sort((a, b) => {
+                    if (field === 'name') {
+                        return direction === 'asc' ? 
+                            a.localeCompare(b) : 
+                            b.localeCompare(a);
+                    } else {
+                        const aVisible = this.settings.visibleModels?.includes(a) || false;
+                        const bVisible = this.settings.visibleModels?.includes(b) || false;
+                        return direction === 'asc' ? 
+                            Number(aVisible) - Number(bVisible) : 
+                            Number(bVisible) - Number(aVisible);
+                    }
+                });
+            };
+
+            // Render models function
+            const renderModels = () => {
+                content.empty();
+                const sortedModels = sortModels(
+                    this.settings.availableModels || [],
+                    currentSort.field,
+                    currentSort.direction
+                );
+
+                sortedModels.forEach((model: string) => {
+                    new Setting(content)
+                        .setName(model)
+                        .addToggle(toggle => toggle
+                            .setValue(this.settings.visibleModels?.includes(model) || false)
+                            .onChange(value => {
+                                if (!this.settings.visibleModels) {
+                                    this.settings.visibleModels = [];
                                 }
-                            } else {
-                                this.settings.visibleModels = this.settings.visibleModels.filter(m => m !== model);
-                            }
-                            this.onSettingsChange();
-                        }));
-            });
+                                
+                                if (value) {
+                                    if (!this.settings.visibleModels.includes(model)) {
+                                        this.settings.visibleModels.push(model);
+                                    }
+                                } else {
+                                    this.settings.visibleModels = this.settings.visibleModels.filter(m => m !== model);
+                                }
+                                this.onSettingsChange();
+
+                                // Re-render if sorting by visibility
+                                if (currentSort.field === 'visibility') {
+                                    renderModels();
+                                }
+                            }));
+                });
+            };
+
+            // Header click handlers
+            const updateSort = (field: 'name' | 'visibility') => {
+                // Remove sort classes from both headers
+                nameHeader.removeClass('is-sorted', 'sort-desc');
+                visibilityHeader.removeClass('is-sorted', 'sort-desc');
+
+                if (currentSort.field === field) {
+                    // Toggle direction if clicking same field
+                    currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    // New field, reset to ascending
+                    currentSort.field = field;
+                    currentSort.direction = 'asc';
+                }
+
+                // Add appropriate classes
+                const header = field === 'name' ? nameHeader : visibilityHeader;
+                header.addClass('is-sorted');
+                if (currentSort.direction === 'desc') {
+                    header.addClass('sort-desc');
+                }
+
+                renderModels();
+            };
+
+            nameHeader.addEventListener('click', () => updateSort('name'));
+            visibilityHeader.addEventListener('click', () => updateSort('visibility'));
+
+            // Initial render
+            renderModels();
         } else {
             // Show empty state
             const emptyState = container.createDiv('models-empty-state');

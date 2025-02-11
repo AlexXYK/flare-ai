@@ -412,6 +412,17 @@ export class FlareManager {
                         if (value) {
                             this.currentFlare = value;
                             await this.showFlareSettings(wrapper, value);
+                            // Enable delete button when a flare is selected
+                            const deleteButton = wrapper.querySelector('.flare-buttons .clickable-icon[aria-label="Delete flare"]');
+                            if (deleteButton instanceof HTMLElement) {
+                                deleteButton.removeClass('disabled');
+                            }
+                        } else {
+                            // Disable delete button when no flare is selected
+                            const deleteButton = wrapper.querySelector('.flare-buttons .clickable-icon[aria-label="Delete flare"]');
+                            if (deleteButton instanceof HTMLElement) {
+                                deleteButton.addClass('disabled');
+                            }
                         }
                     });
                 });
@@ -859,6 +870,14 @@ export class FlareManager {
 
                     // Reload flares after deletion
                     await this.loadFlares();
+                    
+                    // Find the settings container and recreate the UI
+                    const settingsContainer = document.querySelector('.flare-manager');
+                    if (settingsContainer instanceof HTMLElement) {
+                        settingsContainer.empty();
+                        await this.createSettingsUI(settingsContainer);
+                    }
+                    
                     new Notice(`Deleted flare: ${flareName}`);
                 } catch (error) {
                     console.error('Failed to delete flare:', error);
@@ -1395,8 +1414,10 @@ export class FlareManager {
                 `description: "${this.currentFlareConfig.description}"`,
                 `temperature: ${this.currentFlareConfig.temperature}`,
                 `maxTokens: ${this.currentFlareConfig.maxTokens}`,
-                `historyWindow: ${this.currentFlareConfig.historyWindow}  # Context Window: number of pairs to maintain during chat`,
-                `handoffWindow: ${this.currentFlareConfig.handoffWindow}  # Handoff Context: number of pairs to carry over when switching flares`,
+                '# Context Window: number of pairs to maintain during chat',
+                `historyWindow: ${this.currentFlareConfig.historyWindow}`,
+                '# Handoff Context: number of pairs to carry over when switching flares',
+                `handoffWindow: ${this.currentFlareConfig.handoffWindow}`,
                 `stream: ${this.currentFlareConfig.stream}`,
                 `isReasoningModel: ${this.currentFlareConfig.isReasoningModel}`,
                 `reasoningHeader: "${this.currentFlareConfig.reasoningHeader}"`,
@@ -1451,6 +1472,7 @@ export class FlareManager {
                 maxTokens: 2048,
                 systemPrompt: "You are a helpful AI assistant.",
                 historyWindow: -1, // Default to all history
+                handoffWindow: -1, // Default to no handoff context
                 stream: false, // Default to no streaming
                 isReasoningModel: false,
                 reasoningHeader: '<think>'
@@ -1465,8 +1487,10 @@ export class FlareManager {
                 `description: "${flare.description}"`,
                 `temperature: ${flare.temperature}`,
                 `maxTokens: ${flare.maxTokens}`,
-                `historyWindow: ${flare.historyWindow}  # Context Window: number of pairs to maintain during chat`,
-                `handoffWindow: ${flare.handoffWindow}  # Handoff Context: number of pairs to carry over when switching flares`,
+                '# Context Window: number of pairs to maintain during chat',
+                `historyWindow: ${flare.historyWindow}`,
+                '# Handoff Context: number of pairs to carry over when switching flares',
+                `handoffWindow: ${flare.handoffWindow}`,
                 `stream: ${flare.stream}`,
                 `isReasoningModel: ${flare.isReasoningModel}`,
                 `reasoningHeader: "${flare.reasoningHeader}"`,
@@ -1614,6 +1638,7 @@ export class FlareManager {
                 temperature: frontmatter.temperature ?? 0.7,
                 maxTokens: frontmatter.maxTokens ?? 2048,
                 historyWindow: frontmatter.historyWindow ?? -1,
+                handoffWindow: frontmatter.handoffWindow ?? -1,
                 systemPrompt: systemPrompt,
                 stream: frontmatter.stream ?? false,
                 isReasoningModel: frontmatter.isReasoningModel ?? false,

@@ -203,8 +203,14 @@ export class ModelSelector {
             // Clear existing models first
             container.empty();
             
-            const models = await this.plugin.getModelsForProvider(provider.type);
-            models.forEach(model => {
+            const allModels = await this.plugin.getModelsForProvider(provider.type);
+            
+            // Filter models based on visibility settings
+            const visibleModels = provider.visibleModels && provider.visibleModels.length > 0
+                ? allModels.filter(model => provider.visibleModels.includes(model))
+                : allModels;
+
+            visibleModels.forEach(model => {
                 const option = container.createDiv('flare-model-option');
                 if (this.currentSettings.provider === providerId && this.currentSettings.model === model) {
                     option.addClass('is-selected');

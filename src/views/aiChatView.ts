@@ -1029,20 +1029,22 @@ export class AIChatView extends ItemView {
     private updateInputHeight() {
         if (!this.inputEl) return;
 
-        // Reset height to auto to get proper scrollHeight
+        // Reset height to recalculate
         this.inputEl.style.height = 'auto';
         
-        // Calculate new height
-        const maxHeight = Math.min(200, window.innerHeight * 0.3);
-        const newHeight = Math.min(this.inputEl.scrollHeight, maxHeight);
-        
-        // Set new height
+        // Set height based on scroll height
+        const newHeight = Math.min(this.inputEl.scrollHeight, 144); // 144px = 36px * 4 lines
         this.inputEl.style.height = `${newHeight}px`;
         
-        // Update container classes
+        // Update content state
         const hasContent = this.inputEl.value.trim().length > 0;
         this.inputEl.classList.toggle('has-content', hasContent);
-        this.inputEl.classList.toggle('has-custom-height', newHeight > 56);
+
+        // Update wrapper height
+        const wrapper = this.inputEl.closest('.flare-input-wrapper');
+        if (wrapper instanceof HTMLElement) {
+            wrapper.style.height = hasContent ? `${newHeight + 4}px` : '40px'; // Add padding
+        }
     }
 
     private updateTempDisplay() {
@@ -1068,14 +1070,30 @@ export class AIChatView extends ItemView {
                 throw new Error('Provider not found');
             }
 
-            const models = await provider.getAvailableModels();
-            if (!models || models.length === 0) {
+            const allModels = await provider.getAvailableModels();
+            if (!allModels || allModels.length === 0) {
                 new Notice('No models available for this provider');
                 return;
             }
 
+            // Get provider settings to check visible models
+            const providerSettings = this.plugin.settings.providers[this.currentFlare.provider];
+            if (!providerSettings) {
+                throw new Error('Provider settings not found');
+            }
+
+            // Filter models based on visibility settings
+            const visibleModels: string[] = providerSettings.visibleModels && providerSettings.visibleModels.length > 0
+                ? allModels.filter((model: string) => providerSettings.visibleModels?.includes(model))
+                : allModels;
+
+            if (visibleModels.length === 0) {
+                new Notice('No visible models available for this provider');
+                return;
+            }
+
             const menu = new Menu();
-            models.forEach((model: string) => {
+            visibleModels.forEach((model: string) => {
                 menu.addItem(item => {
                     item.setTitle(model)
                         .setIcon(model === this.currentFlare?.model ? 'check' : 'circuit-board')
@@ -1404,11 +1422,20 @@ export class AIChatView extends ItemView {
             // If the message starts with '@', treat it as a possible flare switch command.
             if (content.trim().startsWith('@')) {
                 const parsed = this.plugin.parseMessageForFlare(content);
-                // If the parsed flare is different from the currently active flare, switch to it.
-                if (parsed.flare !== (this.currentFlare ? this.currentFlare.name : (this.plugin.settings.defaultFlare || 'default'))) {
-                    const newFlareConfig = await this.plugin.flareManager.debouncedLoadFlare(parsed.flare);
-                    if (newFlareConfig) {
-                        await this.handleFlareSwitch(newFlareConfig);
+                // If the parsed flare is different from the currently active flare, switch to it case-insensitively.
+                const currentFlareName = this.currentFlare ? this.currentFlare.name : (this.plugin.settings.defaultFlare || 'default');
+                if (parsed.flare.toLowerCase() !== currentFlareName.toLowerCase()) {
+                    // Lookup available flares for proper casing
+                    const availableFlares = await this.plugin.flareManager.loadFlares();
+                    const matchedFlare = availableFlares.find((f: FlareConfig) => f.name.toLowerCase() === parsed.flare.toLowerCase());
+                    if (matchedFlare) {
+                        const newFlareConfig = await this.plugin.flareManager.debouncedLoadFlare(matchedFlare.name);
+                        if (newFlareConfig) {
+                            await this.handleFlareSwitch(newFlareConfig);
+                        } else {
+                            new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
+                            return false;
+                        }
                     } else {
                         new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
                         return false;
@@ -1485,10 +1512,41 @@ export class AIChatView extends ItemView {
                 maxTokens: this.currentFlare?.maxTokens
             }, false);
 
-            if (loadingMsg) {
-                loadingMsg.setAttribute('role', 'article');
-                loadingMsg.setAttribute('aria-label', 'Assistant message');
-                loadingMsg.classList.add('is-loading');
+            if (!loadingMsg) {
+                throw new Error('Failed to create loading message');
+            }
+
+            loadingMsg.setAttribute('role', 'article');
+            loadingMsg.setAttribute('aria-label', 'Assistant message');
+            loadingMsg.classList.add('is-loading');
+
+            // Set up streaming containers
+            const contentEl = loadingMsg.querySelector('.flare-message-content');
+            if (!(contentEl instanceof HTMLElement)) {
+                throw new Error('Failed to find message content element');
+            }
+
+            const contentWrapper = contentEl.querySelector('.flare-content-wrapper');
+            if (!(contentWrapper instanceof HTMLElement)) {
+                throw new Error('Failed to find content wrapper');
+            }
+
+            // For non-reasoning models, ensure we have a markdown container
+            if (!this.currentFlare?.isReasoningModel) {
+                const markdownContainer = contentWrapper.querySelector('.flare-markdown-content');
+                if (markdownContainer instanceof HTMLElement) {
+                    if (!markdownContainer.querySelector('.markdown-rendered')) {
+                        const rendered = markdownContainer.createDiv('markdown-rendered');
+                        rendered.setAttribute('role', 'presentation');
+                    }
+                }
+            }
+            // For reasoning models, ensure we have both reasoning and response containers
+            else {
+                const responseContainer = contentWrapper.querySelector('.flare-response-content');
+                if (!responseContainer) {
+                    contentWrapper.createDiv('flare-response-content');
+                }
             }
 
             let accumulatedResponse = '';
@@ -1499,15 +1557,14 @@ export class AIChatView extends ItemView {
             const reasoningEndTag = reasoningHeader.replace('<', '</');
 
             const response = await this.plugin.handleMessage(content, {
+                ...options,
+                messageHistory: this.messageHistory,
                 flare: this.currentFlare?.name,
                 provider: this.currentFlare?.provider,
                 model: this.currentFlare?.model,
                 temperature: this.currentTemp,
                 maxTokens: this.currentFlare?.maxTokens,
-                messageHistory: this.messageHistory,
-                historyWindow: this.currentFlare?.historyWindow,
                 stream: options?.stream ?? true,
-                isFlareSwitch: options?.isFlareSwitch,
                 onToken: (token: string) => {
                     if (this.currentFlare?.isReasoningModel) {
                         // Handle reasoning blocks during streaming
@@ -1530,14 +1587,25 @@ export class AIChatView extends ItemView {
                             currentReasoningBlock += token;
                         } else {
                             accumulatedResponse += token;
-                            if (loadingMsg) {
-                                const contentEl = loadingMsg.querySelector('.flare-response-content');
-                                if (contentEl instanceof HTMLElement) {
-                                    contentEl.textContent = accumulatedResponse;
-                                }
+                            const responseContainer = contentWrapper.querySelector('.flare-response-content');
+                            if (responseContainer instanceof HTMLElement) {
+                                responseContainer.textContent = accumulatedResponse;
+                            }
+                        }
+                    } else {
+                        // For non-reasoning models, stream directly to markdown container
+                        accumulatedResponse += token;
+                        const markdownContainer = contentWrapper.querySelector('.flare-markdown-content');
+                        if (markdownContainer instanceof HTMLElement) {
+                            const rendered = markdownContainer.querySelector('.markdown-rendered');
+                            if (rendered instanceof HTMLElement) {
+                                rendered.textContent = accumulatedResponse;
                             }
                         }
                     }
+
+                    // Scroll to bottom during streaming
+                    this.scrollToBottom();
                 }
             });
 
@@ -1556,6 +1624,24 @@ export class AIChatView extends ItemView {
                         isReasoningModel: this.currentFlare?.isReasoningModel,
                         reasoningHeader: this.currentFlare?.reasoningHeader
                     });
+
+                    // Add the assistant message to history manager
+                    const messageData = {
+                        role: 'assistant',
+                        content: response,
+                        settings: {
+                            flare: this.currentFlare?.name || 'default',
+                            provider: this.currentFlare?.provider || 'default',
+                            model: this.currentFlare?.model || 'default',
+                            temperature: this.currentTemp,
+                            maxTokens: this.currentFlare?.maxTokens,
+                            isReasoningModel: this.currentFlare?.isReasoningModel,
+                            reasoningHeader: this.currentFlare?.reasoningHeader
+                        },
+                        timestamp: Date.now()
+                    };
+                    this.messageHistory.push(messageData);
+                    await this.plugin.chatHistoryManager.addMessage(messageData);
 
                     // Add reasoning toggle if we have reasoning blocks
                     if (accumulatedReasoningBlocks.length > 0) {
@@ -1764,9 +1850,42 @@ export class AIChatView extends ItemView {
     private addMessageActions(actions: HTMLElement, messageEl: HTMLElement, content: string) {
         // Add copy button
         const copyBtn = this.createActionButton(actions, 'Copy message', 'copy');
-        this.registerDomEvent(copyBtn, 'click', () => {
-            navigator.clipboard.writeText(content);
-            new Notice('Message copied to clipboard');
+        this.registerDomEvent(copyBtn, 'click', async () => {
+            try {
+                // Get the live text content from the rendered message container
+                const container = messageEl.querySelector('.flare-message-content') as HTMLElement | null;
+                const textToCopy = container ? container.innerText.trim() : content;
+                // Check if we have a secure context (https or localhost)
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(textToCopy);
+                    new Notice('Message copied to clipboard');
+                } else {
+                    // Fallback for non-secure contexts
+                    const textarea = document.createElement('textarea');
+                    textarea.value = textToCopy;
+                    textarea.style.position = 'absolute';
+                    textarea.style.left = '-9999px';
+                    textarea.style.top = '0';
+                    textarea.style.whiteSpace = 'pre';
+                    textarea.setAttribute('readonly', '');
+                    document.body.appendChild(textarea);
+                    try {
+                        textarea.select();
+                        textarea.setSelectionRange(0, textarea.value.length);
+                        const success = document.execCommand('copy');
+                        if (success) {
+                            new Notice('Message copied to clipboard');
+                        } else {
+                            throw new Error('Copy command failed');
+                        }
+                    } finally {
+                        document.body.removeChild(textarea);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to copy message:', error);
+                new Notice('Failed to copy message to clipboard');
+            }
         });
 
         // Add delete button
@@ -1921,11 +2040,13 @@ export class AIChatView extends ItemView {
         } else {
             const rendered = markdownContainer.createDiv('markdown-rendered');
             rendered.setAttribute('role', 'presentation');
-            if (this.needsMarkdownRendering(content)) {
-                await MarkdownRenderer.renderMarkdown(content, rendered, '', this.plugin);
-                this.cleanupParagraphWrapping(rendered);
-            } else {
-                rendered.textContent = content;
+            if (content) {  // Only render if we have content
+                if (this.needsMarkdownRendering(content)) {
+                    await MarkdownRenderer.renderMarkdown(content, rendered, '', this.plugin);
+                    this.cleanupParagraphWrapping(rendered);
+                } else {
+                    rendered.textContent = content;
+                }
             }
         }
     }
@@ -2344,5 +2465,47 @@ export class AIChatView extends ItemView {
         
         // Hide suggestions after inserting
         this.hideSuggestions();
+    }
+
+    /**
+     * Refreshes provider settings in the view
+     * Called when provider settings change to update the UI and state
+     */
+    async refreshProviderSettings(): Promise<void> {
+        try {
+            // Update model display if we have a current flare
+            if (this.currentFlare) {
+                const provider = await this.plugin.getProviderInstance(this.currentFlare.provider);
+                if (provider) {
+                    // Update model display
+                    if (this.modelDisplayEl) {
+                        this.modelDisplayEl.textContent = this.truncateModelName(this.currentFlare.model);
+                    }
+
+                    // Update model control state
+                    const modelControl = this.containerEl.querySelector('.flare-model-control');
+                    if (modelControl instanceof HTMLElement) {
+                        modelControl.classList.remove('is-disabled');
+                    }
+                }
+            }
+
+            // Update temperature display
+            this.updateTempDisplay();
+
+            // Update view state
+            this.updateViewState({
+                isStreaming: false,
+                isProcessing: false,
+                hasError: false,
+                errorMessage: ''
+            });
+        } catch (error) {
+            console.error('Failed to refresh provider settings:', error);
+            this.updateViewState({
+                hasError: true,
+                errorMessage: error instanceof Error ? error.message : 'Failed to refresh provider settings'
+            });
+        }
     }
 } 

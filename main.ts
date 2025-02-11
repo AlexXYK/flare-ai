@@ -22,6 +22,16 @@ import { OpenRouterManager } from './src/providers/implementations/OpenRouter/Op
 import { ChatHistoryManager } from './src/history/ChatHistoryManager';
 import { MarkdownRenderer } from 'obsidian';
 
+/** Custom error class for FLARE.ai specific errors */
+class FlareError extends Error {
+    constructor(message: string, public code: string) {
+        super(message);
+        this.name = 'FlareError';
+        // Maintains proper stack trace for where error was thrown
+        Error.captureStackTrace(this, FlareError);
+    }
+}
+
 interface DataviewApi {
     queryMarkdown(query: string, sourcePath: string): Promise<string>;
     executeJs(code: string, sourcePath: string): Promise<{ container: { innerHTML: string } }>;
@@ -42,6 +52,14 @@ interface DataviewPlugin {
 interface ObsidianPlugins {
     plugins: {
         dataview?: DataviewPlugin;
+    };
+}
+
+interface ObsidianApp extends App {
+    plugins: {
+        plugins: {
+            dataview?: DataviewPlugin;
+        };
     };
 }
 
@@ -452,6 +470,13 @@ export default class FlarePlugin extends Plugin {
                 throw new Error('No active provider available');
             }
 
+            let accumulatedResponse = '';
+            let accumulatedReasoningBlocks: string[] = [];
+            let currentReasoningBlock = '';
+            let isInReasoningBlock = false;
+            const reasoningHeader = flareConfig.reasoningHeader || '<think>';
+            const reasoningEndTag = reasoningHeader.replace('<', '</');
+
             const response = await provider.sendMessage(processedMessage, {
                 ...options,
                 messageHistory: finalMessageHistory,
@@ -460,7 +485,32 @@ export default class FlarePlugin extends Plugin {
                 temperature: options?.temperature ?? flareConfig.temperature ?? 0.7,
                 maxTokens: options?.maxTokens ?? flareConfig.maxTokens,
                 stream: options?.stream ?? true,
-                onToken: options?.onToken
+                onToken: (token: string) => {
+                    if (flareConfig.isReasoningModel) {
+                        if (token.includes(reasoningHeader)) {
+                            isInReasoningBlock = true;
+                            currentReasoningBlock = '';
+                            token = token.replace(reasoningHeader, '');
+                        }
+                        if (token.includes(reasoningEndTag)) {
+                            isInReasoningBlock = false;
+                            if (currentReasoningBlock.trim()) {
+                                accumulatedReasoningBlocks.push(currentReasoningBlock.trim());
+                            }
+                            token = token.replace(reasoningEndTag, '');
+                        }
+                        if (isInReasoningBlock) {
+                            currentReasoningBlock += token;
+                        } else {
+                            accumulatedResponse += token;
+                        }
+                    } else {
+                        accumulatedResponse += token;
+                    }
+                    if (options?.onToken) {
+                        options.onToken(token);
+                    }
+                }
             });
 
             // After getting response, update the full history with both messages
@@ -720,32 +770,23 @@ export default class FlarePlugin extends Plugin {
         }
     }
 
-    async getProviderInstance(providerId: string): Promise<AIProvider | null> {
-        try {
-            const providerSettings = this.settings.providers[providerId];
-            if (!providerSettings || !providerSettings.type) {
-                console.error(`No settings found for provider: ${providerId}`);
-                return null;
-            }
-
-            const manager = this.providers.get(providerSettings.type);
-            if (!manager) {
-                console.error(`No manager found for provider type: ${providerSettings.type}`);
-                return null;
-            }
-
-            // Create a new provider instance
-            const provider = manager.createProvider(providerSettings);
-            if (!provider) {
-                console.error(`Failed to create provider instance for ${providerId}`);
-                return null;
-            }
-
-            return provider;
-        } catch (error) {
-            console.error('Error getting provider instance:', error);
-            return null;
+    async getProviderInstance(providerId: string): Promise<AIProvider> {
+        const providerSettings = this.settings.providers[providerId];
+        if (!providerSettings?.type) {
+            throw new Error(`No settings found for provider: ${providerId}`);
         }
+
+        const manager = this.providers.get(providerSettings.type);
+        if (!manager) {
+            throw new Error(`No manager found for provider type: ${providerSettings.type}`);
+        }
+
+        const provider = manager.createProvider(providerSettings);
+        if (!provider) {
+            throw new Error(`Failed to create provider instance for ${providerId}`);
+        }
+
+        return provider;
     }
 
     // Add method to notify views of flare changes
@@ -895,92 +936,33 @@ export default class FlarePlugin extends Plugin {
         const wikilinks = this.extractWikiLinks(text);
         const result: Record<string, string> = {};
         
-        for (const link of wikilinks) {
+        await Promise.all(wikilinks.map(async (link) => {
             try {
-                // Handle potential aliases in wikilinks
                 const [fileName, alias] = link.split('|').map(s => s.trim());
-                
-                // Get the file from the vault
                 const file = this.app.metadataCache.getFirstLinkpathDest(fileName, '');
-                if (!file) continue;
+                
+                if (!file) {
+                    console.warn(`File not found for wikilink: ${fileName}`);
+                    return;
+                }
 
-                // Get file content
                 const content = await this.app.vault.cachedRead(file);
-                
-                // Process Dataview queries if the plugin is available
                 let processedContent = content;
-                const plugins = (this.app as any as { plugins: ObsidianPlugins }).plugins;
-                const dataviewPlugin = plugins.plugins.dataview;
-                
-                if (dataviewPlugin?.api) {
-                    // Find all dataview codeblocks
-                    const dataviewBlocks = content.match(/```dataview\n([\s\S]*?)\n```/g) || [];
-                    const dataviewJSBlocks = content.match(/```dataviewjs\n([\s\S]*?)\n```/g) || [];
-                    
-                    // Process each dataview block
-                    for (const block of dataviewBlocks) {
-                        try {
-                            const query = block.replace(/```dataview\n/, '').replace(/\n```$/, '');
-                            // Execute the query and get results
-                            const queryResult = await dataviewPlugin.api.query(query, file.path);
-                            
-                            if (queryResult && queryResult.successful) {
-                                let resultText = '';
-                                const result = queryResult.value;
-                                if (result.type === 'table') {
-                                    // Format table results
-                                    const headers = result.headers || [];
-                                    const values = result.values;
-                                    resultText = '| ' + headers.join(' | ') + ' |\n';
-                                    resultText += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
-                                    values.forEach((row: any[]) => {
-                                        resultText += '| ' + row.map(cell => String(cell)).join(' | ') + ' |\n';
-                                    });
-                                } else if (result.type === 'list') {
-                                    // Format list results
-                                    resultText = result.values.map((item: any) => `- ${item}`).join('\n');
-                                } else if (result.type === 'task') {
-                                    // Format task results
-                                    resultText = result.values.map((task: any) => `- [ ] ${task}`).join('\n');
-                                }
-                                
-                                // Replace the codeblock with the formatted results
-                                processedContent = processedContent.replace(block, resultText);
-                            }
-                        } catch (err) {
-                            // Keep the original block if evaluation fails
-                        }
-                    }
 
-                    // Process each dataviewjs block
-                    for (const block of dataviewJSBlocks) {
-                        try {
-                            const code = block.replace(/```dataviewjs\n/, '').replace(/\n```$/, '');
-                            // Execute the JS code and get results
-                            const component = await dataviewPlugin.api.executeJs(code, file.path);
-                            if (component?.container?.innerHTML) {
-                                // Create a temporary container
-                                const tempContainer = document.createElement('div');
-                                
-                                // Use Obsidian's sanitization utility
-                                const sanitizedContent = sanitizeHTMLToDom(component.container.innerHTML);
-                                tempContainer.appendChild(sanitizedContent);
-                                
-                                // Replace the original block with the sanitized content
-                                processedContent = processedContent.replace(block, tempContainer.innerHTML);
-                            }
-                        } catch (err) {
-                            // Keep the original block if evaluation fails
-                            console.warn('Failed to process dataviewjs block:', err);
-                        }
-                    }
+                const app = this.app as ObsidianApp;
+                const dataviewPlugin = app.plugins.plugins.dataview;
+
+                if (dataviewPlugin?.api) {
+                    processedContent = await this.processDataviewContent(content, file, dataviewPlugin.api);
                 }
 
                 result[fileName] = processedContent;
-            } catch (err) {
-                console.warn(`Failed to load note for [[${link}]]:`, err);
+            } catch (error) {
+                console.error(`Error processing wikilink ${link}:`, error);
+                throw new FlareError(`Failed to process wikilink ${link}`, 'WIKILINK_ERROR');
             }
-        }
+        }));
+
         return result;
     }
 
@@ -999,11 +981,72 @@ export default class FlarePlugin extends Plugin {
 
     async reloadProviderDependentViews(): Promise<void> {
         const chatLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_AI_CHAT);
-        for (const leaf of chatLeaves) {
-            const view = leaf.view as any; // Using 'any' type here is safe since we'll check for the method
-            if (view && typeof view.refreshProviderSettings === 'function') {
+        return Promise.all(chatLeaves.map(async (leaf) => {
+            const view = leaf.view;
+            if (view instanceof AIChatView) {
                 await view.refreshProviderSettings();
             }
+        })).then(() => void 0);
+    }
+
+    private async processDataviewContent(
+        content: string,
+        file: TFile,
+        dataviewApi: DataviewApi
+    ): Promise<string> {
+        let processedContent = content;
+
+        // Process dataview blocks
+        const dataviewBlocks = content.match(/```dataview\n([\s\S]*?)\n```/g) || [];
+        for (const block of dataviewBlocks) {
+            try {
+                const query = block.replace(/```dataview\n/, '').replace(/\n```$/, '');
+                const result = await dataviewApi.query(query, file.path);
+                
+                if (result?.successful) {
+                    const formattedResult = this.formatDataviewResult(result.value);
+                    processedContent = processedContent.replace(block, formattedResult);
+                }
+            } catch (error) {
+                console.error('Dataview query failed:', error);
+                throw new FlareError('Dataview query failed', 'DATAVIEW_ERROR');
+            }
         }
+
+        return processedContent;
+    }
+
+    private formatDataviewResult(result: {
+        type: 'table' | 'list' | 'task';
+        headers?: string[];
+        values: any[];
+    }): string {
+        switch (result.type) {
+            case 'table':
+                return this.formatTableResult(result.headers || [], result.values);
+            case 'list':
+                return this.formatListResult(result.values);
+            case 'task':
+                return this.formatTaskResult(result.values);
+            default:
+                throw new FlareError(`Unknown result type: ${result.type}`, 'FORMAT_ERROR');
+        }
+    }
+
+    private formatTableResult(headers: string[], values: any[]): string {
+        let resultText = '| ' + headers.join(' | ') + ' |\n';
+        resultText += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
+        values.forEach((row: any[]) => {
+            resultText += '| ' + row.map(cell => String(cell)).join(' | ') + ' |\n';
+        });
+        return resultText;
+    }
+
+    private formatListResult(values: any[]): string {
+        return values.map((item: any) => `- ${item}`).join('\n');
+    }
+
+    private formatTaskResult(values: any[]): string {
+        return values.map((task: any) => `- [ ] ${task}`).join('\n');
     }
 } 

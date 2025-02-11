@@ -173,13 +173,16 @@
     padding: 2px;
     margin: 0;
     flex: 1;
+    min-height: 40px; /* Base height + padding */
+    height: auto;
+    transition: all 0.15s ease;
 }
 
 .flare-chat-container .flare-input {
     flex: 1;
     min-height: 36px;
-    max-height: calc(36px * 4); /* 4 lines maximum */
-    padding: 6px 8px;
+    max-height: calc(36px * 4);
+    padding: 9px 8px 6px 8px; /* Reduced top padding to shift up by 2px */
     border: none;
     background: transparent;
     resize: none;
@@ -187,40 +190,43 @@
     line-height: 1.4;
     margin: 0;
     box-sizing: border-box;
-    overflow-y: hidden;
+    overflow-y: auto;
     height: 36px;
-    transition: height 0.2s ease-in-out;
+    transition: all 0.15s ease;
+    display: block;
+    width: 100%;
 }
 
-.flare-chat-container .flare-input.has-custom-height {
-    height: calc(var(--base-height, 36px) + attr(data-content-height number));
+.flare-chat-container .flare-input.has-content {
+    height: auto;
+    padding: 9px 8px 6px 8px; /* Matching reduced top padding */
 }
 
+/* Update wrapper height when input expands */
+.flare-chat-container .flare-input-wrapper:has(.flare-input.has-content) {
+    height: auto;
+    align-items: stretch;
+}
+
+/* Ensure proper scrollbar styling */
+.flare-chat-container .flare-input::-webkit-scrollbar {
+    width: 6px;
+}
+
+.flare-chat-container .flare-input::-webkit-scrollbar-track {
+    background: var(--background-modifier-border);
+}
+
+.flare-chat-container .flare-input::-webkit-scrollbar-thumb {
+    background-color: var(--interactive-accent);
+    border-radius: 3px;
+}
+
+/* Placeholder styling for flare chat input */
 .flare-chat-container .flare-input::placeholder {
     line-height: 1.4;
     vertical-align: middle;
     opacity: 0.6;
-}
-
-/* Input States */
-.flare-chat-container .flare-input.is-empty {
-    height: 36px !important; /* Base height when empty */
-}
-
-.flare-chat-container .flare-input.is-measuring {
-    height: 0 !important;
-    overflow: hidden;
-}
-
-.flare-chat-container .flare-input.has-content {
-    height: var(--content-height, auto);
-    overflow-y: auto; /* Enable scrolling when content exceeds max-height */
-}
-
-/* Ensure input maintains base height when empty */
-.flare-chat-container .flare-input:not(.has-content) {
-    height: 36px;
-    overflow-y: hidden;
 }
 
 /* Add scrollbar styling for the input when it's scrollable */
@@ -983,9 +989,12 @@
 .models-list {
     margin-top: 12px;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
+    border-radius: 8px;
     overflow: hidden;
     background: var(--background-primary);
+    max-height: 300px;
+    display: flex;
+    flex-direction: column;
 }
 
 .models-list-header {
@@ -994,11 +1003,51 @@
     padding: 8px 16px;
     background: var(--background-secondary-alt);
     border-bottom: 1px solid var(--background-modifier-border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    user-select: none;
 }
 
 .model-header {
     font-weight: 500;
     color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: color 0.15s ease;
+}
+
+.model-header:hover {
+    color: var(--text-accent);
+}
+
+.model-header::after {
+    content: '';
+    width: 12px;
+    height: 12px;
+    opacity: 0;
+    background-color: currentColor;
+    -webkit-mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
+    mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    transition: all 0.15s ease;
+}
+
+.model-header:hover::after {
+    opacity: 0.5;
+}
+
+.model-header.is-sorted::after {
+    opacity: 1;
+}
+
+.model-header.is-sorted.sort-desc::after {
+    transform: rotate(180deg);
 }
 
 .model-name-header {
@@ -1011,15 +1060,33 @@
     text-align: center;
 }
 
+.models-list-content {
+    overflow-y: auto;
+    flex: 1;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+    padding: 4px 0;
+}
+
 .models-list .setting-item {
     margin: 0;
     padding: 8px 16px;
     border-bottom: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
+    transition: background-color 0.15s ease;
+}
+
+.models-list .setting-item:hover {
+    background: var(--background-modifier-hover);
+}
+
+.models-list .setting-item:last-child {
+    border-bottom: none;
 }
 
 .models-list .setting-item-name {
     padding-left: 4px;
+    font-size: 0.95em;
 }
 
 .models-list .setting-item-control {
@@ -1027,8 +1094,65 @@
     padding-right: 4px;
 }
 
-.models-list .setting-item:last-child {
-    border-bottom: none;
+/* Mobile optimizations */
+/* Replace media query with platform-specific class */
+.is-mobile .models-list {
+    max-height: 50vh; /* Larger on mobile for better usability */
+}
+
+.is-mobile .models-list-header {
+    padding: 12px 16px; /* Larger touch target */
+}
+
+.is-mobile .models-list .setting-item {
+    padding: 12px 16px; /* Larger touch target */
+}
+
+.is-mobile .model-header {
+    min-height: 32px; /* Ensure good touch target size */
+}
+
+/* Keep some responsive styles for small screens regardless of platform */
+@media (max-width: 768px) {
+    .models-list {
+        max-height: 60vh; /* Slightly larger for small screens */
+    }
+}
+
+/* Touch-specific optimizations */
+@supports (-webkit-touch-callout: none) {
+    .is-mobile .models-list {
+        /* Better scrolling on iOS */
+        -webkit-overflow-scrolling: touch;
+        /* Prevent elastic scrolling issues */
+        overscroll-behavior: contain;
+    }
+}
+
+/* Add platform-specific scrollbar styles */
+.is-mobile .models-list-content::-webkit-scrollbar {
+    width: 4px; /* Thinner scrollbar on mobile */
+}
+
+.is-mobile .models-list-content::-webkit-scrollbar-thumb {
+    background-color: var(--background-modifier-border);
+    border-radius: 2px;
+}
+
+/* Ensure proper touch targets on mobile */
+.is-mobile .setting-item-control {
+    min-height: 36px; /* Minimum touch target size */
+    display: flex;
+    align-items: center;
+}
+
+.is-mobile .setting-item-control button,
+.is-mobile .setting-item-control .checkbox-container {
+    min-width: 36px;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* Empty state */
@@ -1417,7 +1541,7 @@
 
     .flare-chat-container .flare-input {
         font-size: 16px;
-        padding: 8px 8px; /* Increased top/bottom padding for better vertical centering */
+        padding: 6px 6px; /* Increased top/bottom padding for better vertical centering */
         line-height: 1.3; /* Slightly tighter line height on mobile */
         min-height: 36px;
         margin: 0;
@@ -1951,11 +2075,20 @@
 .flare-temp-dialog {
     max-width: 400px;
     width: 90vw;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
 }
 
 .flare-temp-dialog .setting-item {
     border: none;
     padding: 0;
+    width: 100%;
+}
+
+.flare-temp-dialog .setting-item-info {
+    display: none;
 }
 
 .flare-temp-dialog .setting-item-control {
@@ -1973,14 +2106,22 @@
 .flare-temp-dialog .modal-button-container {
     display: flex;
     gap: 8px;
-    justify-content: flex-end;
+    justify-content: center;
     margin-top: 1em;
+    width: 100%;
 }
 
 .flare-temp-dialog .flare-temp-button {
     padding: 6px 12px;
     border-radius: 4px;
     font-size: 14px;
+}
+
+/* Keep the close button in its original position */
+.flare-temp-dialog .modal-close-button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
 }
 
 /* Consistent metadata item styling */
@@ -2010,11 +2151,11 @@
 .flare-system-message {
     position: relative;
     z-index: 9999;
-    margin: 4px auto;
+    margin: 0px auto;
     width: 100%;
     display: flex;
     justify-content: center;
-    padding: 4px 16px;
+    padding: 0px 16px;
     box-sizing: border-box;
 }
 
