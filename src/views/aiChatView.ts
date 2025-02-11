@@ -454,7 +454,7 @@ export class AIChatView extends ItemView {
             cls: 'flare-input',
             attr: { 
                 rows: '1',
-                placeholder: 'Select a flare using the flame button, or type @flarename to start...'
+                placeholder: '@flarename or select a Flare'
             }
         });
         
@@ -991,11 +991,45 @@ export class AIChatView extends ItemView {
             if (this.inputEl) {
                 this.inputEl.value = '';
                 this.inputEl.classList.remove('has-content', 'has-custom-height');
+                // Reset input placeholder to default
+                this.inputEl.setAttribute('placeholder', '@flarename or select a Flare');
             }
 
-            // Reset flare
+            // Reset flare and related UI elements
             this.currentFlare = undefined;
-            this.updateTempDisplay();
+            
+            // Reset model display
+            if (this.modelDisplayEl) {
+                this.modelDisplayEl.textContent = '--';
+                const modelControl = this.modelDisplayEl.closest('.flare-model-control');
+                if (modelControl instanceof HTMLElement) {
+                    modelControl.classList.add('is-disabled');
+                }
+            }
+
+            // Reset temperature to default and update display
+            this.currentTemp = CONSTANTS.DEFAULT_TEMPERATURE;
+            if (this.tempDisplayEl) {
+                this.tempDisplayEl.textContent = this.currentTemp.toFixed(2);
+                const tempControl = this.tempDisplayEl.closest('.flare-temp-control');
+                if (tempControl instanceof HTMLElement) {
+                    tempControl.classList.add('is-disabled');
+                }
+            }
+
+            // Reset plugin state
+            this.plugin.isFlareSwitchActive = false;
+            this.plugin.lastUsedFlare = null;
+
+            // Update view state
+            this.updateViewState({
+                isStreaming: false,
+                isProcessing: false,
+                hasError: false,
+                errorMessage: '',
+                currentTemp: CONSTANTS.DEFAULT_TEMPERATURE,
+                currentFlare: undefined
+            });
         } catch (error) {
             console.error('Error starting new chat:', error);
             new Notice('Failed to start new chat');
@@ -1733,7 +1767,7 @@ export class AIChatView extends ItemView {
                 // Keep input enabled always to allow @flarename commands
                 this.inputEl.value = '';
                 // Update placeholder based on current flare
-                this.inputEl.setAttribute('placeholder', flare ? `@${flare.name}` : '@flarename or select a flare');
+                this.inputEl.setAttribute('placeholder', flare ? `@${flare.name}` : '');
             }
 
             // Always update temperature to flare's default

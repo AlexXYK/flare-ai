@@ -173,16 +173,17 @@
     padding: 2px;
     margin: 0;
     flex: 1;
-    min-height: 40px; /* Base height + padding */
+    min-height: 40px;
     height: auto;
     transition: all 0.15s ease;
 }
 
 .flare-chat-container .flare-input {
     flex: 1;
+    height: auto;
     min-height: 36px;
     max-height: calc(36px * 4);
-    padding: 9px 8px 6px 8px; /* Reduced top padding to shift up by 2px */
+    padding: 8px;
     border: none;
     background: transparent;
     resize: none;
@@ -191,21 +192,9 @@
     margin: 0;
     box-sizing: border-box;
     overflow-y: auto;
-    height: 36px;
     transition: all 0.15s ease;
     display: block;
     width: 100%;
-}
-
-.flare-chat-container .flare-input.has-content {
-    height: auto;
-    padding: 9px 8px 6px 8px; /* Matching reduced top padding */
-}
-
-/* Update wrapper height when input expands */
-.flare-chat-container .flare-input-wrapper:has(.flare-input.has-content) {
-    height: auto;
-    align-items: stretch;
 }
 
 /* Ensure proper scrollbar styling */
@@ -1541,11 +1530,20 @@
 
     .flare-chat-container .flare-input {
         font-size: 16px;
-        padding: 6px 6px; /* Increased top/bottom padding for better vertical centering */
-        line-height: 1.3; /* Slightly tighter line height on mobile */
+        padding: 8px;
+        line-height: 1.4;
         min-height: 36px;
         margin: 0;
         flex: 1;
+    }
+
+    .flare-chat-container .flare-input.has-content {
+        padding: 8px;
+    }
+
+    .flare-chat-container .flare-input::placeholder {
+        transform: translateY(3px); /* Keep consistent with desktop transform */
+        line-height: 1.4;
     }
 
     /* System message and flare nametag tooltips */
@@ -1634,7 +1632,6 @@
         background: var(--background-primary);
         box-shadow: 0 2px 20px rgba(0, 0, 0, 0.2);
         z-index: 1000;
-        transform: none;
     }
 
     /* Larger touch targets */
@@ -1718,10 +1715,6 @@
 .flare-input.is-measuring {
     height: 0 !important;
     overflow: hidden;
-}
-
-.flare-input.has-content {
-    height: var(--content-height) !important;
 }
 
 /* Suggestions positioning */

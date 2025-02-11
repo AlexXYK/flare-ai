@@ -1,6 +1,6 @@
 {
 	"name": "flare-ai",
-	"version": "1.0.0",
+	"version": "1.0.3",
 	"description": "A powerful and flexible AI chat interface featuring customizable personas (Flares), multiple provider support, and seamless conversation management.",
 	"main": "main.js",
 	"scripts": {
