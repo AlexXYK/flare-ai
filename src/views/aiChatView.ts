@@ -1439,7 +1439,18 @@ export class AIChatView extends ItemView {
         this.isTitleGenerationInProgress = true;
 
         try {
-            // Implementation will be added later
+            new Notice('Generating title...');
+            
+            // Generate title
+            const newTitle = await this.plugin.chatHistoryManager.generateTitle();
+            
+            // Update UI with new title
+            const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
+            if (titleEl) {
+                titleEl.textContent = newTitle;
+            }
+            
+            new Notice('Title generated successfully');
             return true;
         } catch (error: unknown) {
             console.error('Error generating title:', error);
@@ -1451,60 +1462,12 @@ export class AIChatView extends ItemView {
         }
     }
 
-    private async handleMessage(content: string): Promise<boolean> {
-        try {
-            // If the message starts with '@', treat it as a possible flare switch command.
-            if (content.trim().startsWith('@')) {
-                const parsed = this.plugin.parseMessageForFlare(content);
-                // If the parsed flare is different from the currently active flare, switch to it case-insensitively.
-                const currentFlareName = this.currentFlare ? this.currentFlare.name : (this.plugin.settings.defaultFlare || 'default');
-                if (parsed.flare.toLowerCase() !== currentFlareName.toLowerCase()) {
-                    // Lookup available flares for proper casing
-                    const availableFlares = await this.plugin.flareManager.loadFlares();
-                    const matchedFlare = availableFlares.find((f: FlareConfig) => f.name.toLowerCase() === parsed.flare.toLowerCase());
-                    if (matchedFlare) {
-                        const newFlareConfig = await this.plugin.flareManager.debouncedLoadFlare(matchedFlare.name);
-                        if (newFlareConfig) {
-                            await this.handleFlareSwitch(newFlareConfig);
-                        } else {
-                            new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
-                            return false;
-                        }
-                    } else {
-                        new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
-                        return false;
-                    }
-                    // If there's no additional message content, we're done.
-                    if (!parsed.content.trim()) {
-                        return true;
-                    }
-                    // Otherwise, update content with the remainder of the user's input.
-                    content = parsed.content;
-                }
-            }
-
-            // At this point, this.currentFlare should be set via handleFlareSwitch.
-            if (!this.currentFlare) {
-                new Notice('Please select a flare first');
-                return false;
-            }
-
-            // Process message normally
-            try {
-                return await this.sendMessage(content, {
-                    stream: this.currentFlare?.stream ?? false,
-                    isFlareSwitch: false
-                });
-            } catch (error: unknown) {
-                console.error('Error processing message:', error);
-                new Notice('Error: ' + getErrorMessage(error));
-                return false;
-            }
-        } catch (error: unknown) {
-            console.error('Error in handleMessage:', error);
-            new Notice('Error: ' + getErrorMessage(error));
-            return false;
-        }
+    private sanitizeMessageForAPI(message: string, reasoningHeader: string): string {
+        if (!message) return message;
+        
+        // Use existing extractReasoningContent function to get only the response part
+        const { responsePart } = this.extractReasoningContent(message, reasoningHeader);
+        return responsePart.trim();
     }
 
     /**
@@ -1590,9 +1553,15 @@ export class AIChatView extends ItemView {
             const reasoningHeader = this.currentFlare?.reasoningHeader || '<think>';
             const reasoningEndTag = reasoningHeader.replace('<', '</');
 
+            // Create sanitized message history for API
+            const sanitizedHistory = this.messageHistory.map(msg => ({
+                ...msg,
+                content: this.sanitizeMessageForAPI(msg.content, reasoningHeader)
+            }));
+
             const response = await this.plugin.handleMessage(content, {
                 ...options,
-                messageHistory: this.messageHistory,
+                messageHistory: sanitizedHistory,
                 flare: this.currentFlare?.name,
                 provider: this.currentFlare?.provider,
                 model: this.currentFlare?.model,
@@ -2540,6 +2509,62 @@ export class AIChatView extends ItemView {
                 hasError: true,
                 errorMessage: error instanceof Error ? error.message : 'Failed to refresh provider settings'
             });
+        }
+    }
+
+    private async handleMessage(content: string): Promise<boolean> {
+        try {
+            // If the message starts with '@', treat it as a possible flare switch command.
+            if (content.trim().startsWith('@')) {
+                const parsed = this.plugin.parseMessageForFlare(content);
+                // If the parsed flare is different from the currently active flare, switch to it case-insensitively.
+                const currentFlareName = this.currentFlare ? this.currentFlare.name : (this.plugin.settings.defaultFlare || 'default');
+                if (parsed.flare.toLowerCase() !== currentFlareName.toLowerCase()) {
+                    // Lookup available flares for proper casing
+                    const availableFlares = await this.plugin.flareManager.loadFlares();
+                    const matchedFlare = availableFlares.find((f: FlareConfig) => f.name.toLowerCase() === parsed.flare.toLowerCase());
+                    if (matchedFlare) {
+                        const newFlareConfig = await this.plugin.flareManager.debouncedLoadFlare(matchedFlare.name);
+                        if (newFlareConfig) {
+                            await this.handleFlareSwitch(newFlareConfig);
+                        } else {
+                            new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
+                            return false;
+                        }
+                    } else {
+                        new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
+                        return false;
+                    }
+                    // If there's no additional message content, we're done.
+                    if (!parsed.content.trim()) {
+                        return true;
+                    }
+                    // Otherwise, update content with the remainder of the user's input.
+                    content = parsed.content;
+                }
+            }
+
+            // At this point, this.currentFlare should be set via handleFlareSwitch.
+            if (!this.currentFlare) {
+                new Notice('Please select a flare first');
+                return false;
+            }
+
+            // Process message normally
+            try {
+                return await this.sendMessage(content, {
+                    stream: this.currentFlare?.stream ?? false,
+                    isFlareSwitch: false
+                });
+            } catch (error: unknown) {
+                console.error('Error processing message:', error);
+                new Notice('Error: ' + getErrorMessage(error));
+                return false;
+            }
+        } catch (error: unknown) {
+            console.error('Error in handleMessage:', error);
+            new Notice('Error: ' + getErrorMessage(error));
+            return false;
         }
     }
 } 

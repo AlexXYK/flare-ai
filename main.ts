@@ -470,13 +470,7 @@ export default class FlarePlugin extends Plugin {
                 throw new Error('No active provider available');
             }
 
-            let accumulatedResponse = '';
-            let accumulatedReasoningBlocks: string[] = [];
-            let currentReasoningBlock = '';
-            let isInReasoningBlock = false;
-            const reasoningHeader = flareConfig.reasoningHeader || '<think>';
-            const reasoningEndTag = reasoningHeader.replace('<', '</');
-
+            // Send message to provider
             const response = await provider.sendMessage(processedMessage, {
                 ...options,
                 messageHistory: finalMessageHistory,
@@ -485,32 +479,7 @@ export default class FlarePlugin extends Plugin {
                 temperature: options?.temperature ?? flareConfig.temperature ?? 0.7,
                 maxTokens: options?.maxTokens ?? flareConfig.maxTokens,
                 stream: options?.stream ?? true,
-                onToken: (token: string) => {
-                    if (flareConfig.isReasoningModel) {
-                        if (token.includes(reasoningHeader)) {
-                            isInReasoningBlock = true;
-                            currentReasoningBlock = '';
-                            token = token.replace(reasoningHeader, '');
-                        }
-                        if (token.includes(reasoningEndTag)) {
-                            isInReasoningBlock = false;
-                            if (currentReasoningBlock.trim()) {
-                                accumulatedReasoningBlocks.push(currentReasoningBlock.trim());
-                            }
-                            token = token.replace(reasoningEndTag, '');
-                        }
-                        if (isInReasoningBlock) {
-                            currentReasoningBlock += token;
-                        } else {
-                            accumulatedResponse += token;
-                        }
-                    } else {
-                        accumulatedResponse += token;
-                    }
-                    if (options?.onToken) {
-                        options.onToken(token);
-                    }
-                }
+                onToken: options?.onToken
             });
 
             // After getting response, update the full history with both messages
