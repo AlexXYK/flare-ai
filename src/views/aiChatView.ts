@@ -143,11 +143,12 @@ class NoteLinkSuggestModal extends SuggestModal<TFile> {
     ) {
         super(app);
         this.setPlaceholder("Type to find a note...");
+        this.limit = 10;
     }
 
     getSuggestions(query: string): TFile[] {
         const files = this.app.vault.getMarkdownFiles();
-        if (!query) return files.slice(0, 10); // Show first 10 files when no query
+        if (!query) return files.slice(0, this.limit);
         
         const lowerQuery = query.toLowerCase();
         return files
@@ -168,33 +169,24 @@ class NoteLinkSuggestModal extends SuggestModal<TFile> {
                 // Then alphabetical
                 return a.basename.localeCompare(b.basename);
             })
-            .slice(0, 10); // Limit to 10 results for performance
+            .slice(0, this.limit);
     }
 
     renderSuggestion(file: TFile, el: HTMLElement) {
-        const container = el.createDiv({
-            cls: 'suggestion-item mod-complex'
-        });
-
-        const content = container.createDiv({
-            cls: 'suggestion-content'
-        });
-
-        const title = content.createDiv({
-            cls: 'suggestion-title'
-        });
+        // Use Obsidian's native suggestion rendering
+        el.addClass('suggestion-item', 'mod-complex');
+        
+        const content = el.createDiv('suggestion-content');
+        const title = content.createDiv('suggestion-title');
         title.setText(file.basename);
 
-        // Add file path as note if parent exists and isn't root
         if (file.parent && file.parent.path !== '/') {
-            const note = content.createDiv({
-                cls: 'suggestion-note'
-            });
+            const note = content.createDiv('suggestion-note');
             note.setText(file.parent.path);
         }
     }
 
-    onChooseSuggestion(file: TFile, evt: MouseEvent | KeyboardEvent) {
+    onChooseSuggestion(file: TFile) {
         this.onChoose(file);
     }
 }
@@ -1018,18 +1010,26 @@ export class AIChatView extends ItemView {
 
         // Save chat
         const saveBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Save chat"]');
-        if (saveBtn instanceof HTMLElement) {
+        if (saveBtn instanceof HTMLElement && !saveBtn.hasAttribute('data-handler-registered')) {
+            saveBtn.setAttribute('data-handler-registered', 'true');
             this.registerDomEvent(saveBtn, 'click', async () => {
                 try {
-                    await this.plugin.chatHistoryManager.saveCurrentHistory(true);
-                    const currentFile = await this.plugin.chatHistoryManager.getCurrentFile();
+                    // Temporarily disable auto-title generation
+                    const autoTitleEnabled = this.plugin.settings.titleSettings.autoGenerate;
+                    this.plugin.settings.titleSettings.autoGenerate = false;
+                    
+                    await this.plugin.chatHistoryManager.saveCurrentHistory(true, false);  // Force save but don't show notice
+                    const currentFile = this.plugin.chatHistoryManager.getCurrentFile();
                     if (currentFile) {
                         const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
                         if (titleEl) {
                             titleEl.textContent = currentFile.basename;
                         }
-                        new Notice('Chat saved successfully');
+                        new Notice('Chat saved successfully');  // Single notice for successful save
                     }
+                    
+                    // Restore auto-title generation setting
+                    this.plugin.settings.titleSettings.autoGenerate = autoTitleEnabled;
                 } catch (error) {
                     console.error('Error saving chat:', error);
                     new Notice('Failed to save chat');
@@ -2056,9 +2056,67 @@ export class AIChatView extends ItemView {
             const copyBtn = this.createActionButton(actions, 'Copy message', 'copy');
             this.registerDomEvent(copyBtn, 'click', async () => {
                 try {
-                    const textToCopy = content.trim();
-                    await navigator.clipboard.writeText(textToCopy);
-                    new Notice('Message copied to clipboard');
+                    // Get the message container
+                    const container = messageEl.querySelector('.flare-message-content') as HTMLElement | null;
+                    if (!container) {
+                        throw new Error('Message content container not found');
+                    }
+
+                    // Initialize text to copy
+                    let textToCopy = '';
+
+                    // Check if this is an assistant message with reasoning
+                    const reasoningContainer = container.querySelector('.flare-reasoning-content') as HTMLElement | null;
+                    const responseContainer = container.querySelector('.flare-response-content') as HTMLElement | null;
+                    
+                    // If we have reasoning content and it's expanded, include it
+                    if (reasoningContainer && reasoningContainer.classList.contains('is-expanded')) {
+                        textToCopy += reasoningContainer.innerText.trim() + '\n\n';
+                    }
+
+                    // Add response content if it exists
+                    if (responseContainer) {
+                        textToCopy += responseContainer.innerText.trim();
+                    } else {
+                        // For regular messages without reasoning/response split
+                        const markdownContainer = container.querySelector('.flare-markdown-content') as HTMLElement | null;
+                        if (markdownContainer) {
+                            textToCopy = markdownContainer.innerText.trim();
+                        }
+                    }
+
+                    // If we still don't have text, fall back to the entire container
+                    if (!textToCopy) {
+                        textToCopy = container.innerText.trim();
+                    }
+
+                    // Check if we have a secure context (https or localhost)
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(textToCopy);
+                        new Notice('Message copied to clipboard');
+                    } else {
+                        // Fallback for non-secure contexts
+                        const textarea = document.createElement('textarea');
+                        textarea.value = textToCopy;
+                        textarea.style.position = 'absolute';
+                        textarea.style.left = '-9999px';
+                        textarea.style.top = '0';
+                        textarea.style.whiteSpace = 'pre';
+                        textarea.setAttribute('readonly', '');
+                        document.body.appendChild(textarea);
+                        try {
+                            textarea.select();
+                            textarea.setSelectionRange(0, textarea.value.length);
+                            const success = document.execCommand('copy');
+                            if (success) {
+                                new Notice('Message copied to clipboard');
+                            } else {
+                                throw new Error('Copy command failed');
+                            }
+                        } finally {
+                            document.body.removeChild(textarea);
+                        }
+                    }
                 } catch (error) {
                     console.error('Failed to copy message:', error);
                     new Notice('Failed to copy message to clipboard');
@@ -2112,9 +2170,40 @@ export class AIChatView extends ItemView {
         const copyBtn = this.createActionButton(actions, 'Copy message', 'copy');
         this.registerDomEvent(copyBtn, 'click', async () => {
             try {
-                // Get the live text content from the rendered message container
+                // Get the message container
                 const container = messageEl.querySelector('.flare-message-content') as HTMLElement | null;
-                const textToCopy = container ? container.innerText.trim() : content;
+                if (!container) {
+                    throw new Error('Message content container not found');
+                }
+
+                // Initialize text to copy
+                let textToCopy = '';
+
+                // Check if this is an assistant message with reasoning
+                const reasoningContainer = container.querySelector('.flare-reasoning-content') as HTMLElement | null;
+                const responseContainer = container.querySelector('.flare-response-content') as HTMLElement | null;
+                
+                // If we have reasoning content and it's expanded, include it
+                if (reasoningContainer && reasoningContainer.classList.contains('is-expanded')) {
+                    textToCopy += reasoningContainer.innerText.trim() + '\n\n';
+                }
+
+                // Add response content if it exists
+                if (responseContainer) {
+                    textToCopy += responseContainer.innerText.trim();
+                } else {
+                    // For regular messages without reasoning/response split
+                    const markdownContainer = container.querySelector('.flare-markdown-content') as HTMLElement | null;
+                    if (markdownContainer) {
+                        textToCopy = markdownContainer.innerText.trim();
+                    }
+                }
+
+                // If we still don't have text, fall back to the entire container
+                if (!textToCopy) {
+                    textToCopy = container.innerText.trim();
+                }
+
                 // Check if we have a secure context (https or localhost)
                 if (navigator.clipboard && window.isSecureContext) {
                     await navigator.clipboard.writeText(textToCopy);
@@ -2148,7 +2237,7 @@ export class AIChatView extends ItemView {
             }
         });
 
-        // Add delete button for both user and assistant messages
+        // Add delete button
         const deleteBtn = this.createActionButton(actions, 'Delete message', 'trash-2', 'delete');
         this.registerDomEvent(deleteBtn, 'click', async () => {
             await this.deleteMessage(messageEl);
@@ -2246,7 +2335,7 @@ export class AIChatView extends ItemView {
                 history.lastModified = Date.now();
                 // Force an immediate save of the history note
                 try {
-                    await this.plugin.chatHistoryManager.saveCurrentHistory(true);  // Force the save
+                    await this.plugin.chatHistoryManager.saveCurrentHistory(true, false);  // Force save but don't show notice
                     console.debug('History note saved immediately after deletion');
                 } catch (error) {
                     console.error('Failed to save history note:', error);
@@ -2349,33 +2438,6 @@ export class AIChatView extends ItemView {
                     rendered.textContent = content;
                 }
             }
-        }
-    }
-
-    private async renderReasoningContent(
-        markdownContainer: HTMLElement,
-        content: string,
-        settings: MessageSettings
-    ) {
-        const { reasoningBlocks, responsePart } = this.extractReasoningContent(
-            content,
-            settings.reasoningHeader || '<think>'
-        );
-
-        if (reasoningBlocks.length > 0) {
-            const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
-            reasoningContainer.setAttribute('role', 'region');
-            reasoningContainer.setAttribute('aria-label', 'AI reasoning process');
-            reasoningContainer.setAttribute('aria-expanded', 'false');
-            const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
-            await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
-        }
-
-        const responseContainer = markdownContainer.createDiv('flare-response-content');
-        responseContainer.setAttribute('role', 'region');
-        responseContainer.setAttribute('aria-label', 'AI response');
-        if (responsePart.trim()) {
-            await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
         }
     }
 
@@ -2531,7 +2593,7 @@ export class AIChatView extends ItemView {
      */
     private updateLayout() {
         const width = this.containerEl.offsetWidth;
-        const isMobile = width <= CONSTANTS.MOBILE_BREAKPOINT;
+        const isMobile = Platform.isMobile;
         this.containerEl.classList.toggle('is-mobile', isMobile);
         this.updateSuggestionsPosition();
     }
@@ -2943,5 +3005,32 @@ export class AIChatView extends ItemView {
         }
 
         return pairs;
+    }
+
+    private async renderReasoningContent(
+        markdownContainer: HTMLElement,
+        content: string,
+        settings: MessageSettings
+    ) {
+        const { reasoningBlocks, responsePart } = this.extractReasoningContent(
+            content,
+            settings.reasoningHeader || '<think>'
+        );
+
+        if (reasoningBlocks.length > 0) {
+            const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
+            reasoningContainer.setAttribute('role', 'region');
+            reasoningContainer.setAttribute('aria-label', 'AI reasoning process');
+            reasoningContainer.setAttribute('aria-expanded', 'false');
+            const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
+            await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
+        }
+
+        const responseContainer = markdownContainer.createDiv('flare-response-content');
+        responseContainer.setAttribute('role', 'region');
+        responseContainer.setAttribute('aria-label', 'AI response');
+        if (responsePart.trim()) {
+            await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
+        }
     }
 } 

@@ -1,6 +1,7 @@
 import { TFile, TFolder } from 'obsidian';
 import type FlarePlugin from '../../main';
 import { getErrorMessage } from '../utils/errors';
+import { Notice } from 'obsidian';
 
 interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
@@ -125,7 +126,7 @@ export class ChatHistoryManager {
         try {
             // Save current history if exists
             if (this.unsavedChanges) {
-                await this.saveCurrentHistory();
+                await this.saveCurrentHistory(false, false);
             }
 
             // Reset current history first
@@ -177,58 +178,62 @@ export class ChatHistoryManager {
 
             // Only save to disk if auto-save is enabled
             if (this.plugin.settings.autoSaveEnabled) {
-                await this.saveCurrentHistory();
+                await this.saveCurrentHistory(false, false);
             }
         }
     }
 
-    async saveCurrentHistory(force: boolean = false): Promise<void> {
+    async saveCurrentHistory(force: boolean = false, showNotice: boolean = false): Promise<void> {
         if (!this.currentHistory || (!this.unsavedChanges && !force)) {
             return;
         }
 
-        // If we don't have a file yet and we need to save, create one
-        if (!this.currentFile && (this.plugin.settings.autoSaveEnabled || force)) {
-            const basePath = this.plugin.settings.historyFolder;
-            await this.ensureFolderExists(basePath);
+        try {
+            // If we don't have a file yet and we need to save, create one
+            if (!this.currentFile && (this.plugin.settings.autoSaveEnabled || force)) {
+                const basePath = this.plugin.settings.historyFolder;
+                await this.ensureFolderExists(basePath);
 
-            const now = new Date();
-            const dateStr = this.formatDate(now, this.plugin.settings.dateFormat || 'MM-DD-YYYY');
-            
-            let counter = 0;
-            let fileName: string;
-            let filePath: string;
-            
-            do {
-                fileName = counter === 0 ? 
-                    `chat-${dateStr}.md` : 
-                    `chat-${dateStr}-${counter}.md`;
-                filePath = `${basePath}/${fileName}`;
-                counter++;
-            } while (await this.plugin.app.vault.adapter.exists(filePath));
+                const now = new Date();
+                const dateStr = this.formatDate(now, this.plugin.settings.dateFormat || 'MM-DD-YYYY');
+                
+                let counter = 0;
+                let fileName: string;
+                let filePath: string;
+                
+                do {
+                    fileName = counter === 0 ? 
+                        `chat-${dateStr}.md` : 
+                        `chat-${dateStr}-${counter}.md`;
+                    filePath = `${basePath}/${fileName}`;
+                    counter++;
+                } while (await this.plugin.app.vault.adapter.exists(filePath));
 
-            this.currentHistory.title = fileName.slice(0, -3);
-            const content = this.formatHistoryForSave(this.currentHistory);
-            this.currentFile = await this.plugin.app.vault.create(filePath, content);
-        }
-
-        // Only save to disk if we have a file and either auto-save is enabled or we're forced
-        if (this.currentFile && (this.plugin.settings.autoSaveEnabled || force)) {
-            // Deduplicate messages before saving
-            const uniqueMessages = new Map<string, ChatMessage>();
-            for (const msg of this.currentHistory.messages) {
-                const key = `${msg.role}-${msg.timestamp}`;
-                uniqueMessages.set(key, msg);
+                this.currentHistory.title = fileName.slice(0, -3);
+                const content = this.formatHistoryForSave(this.currentHistory);
+                this.currentFile = await this.plugin.app.vault.create(filePath, content);
             }
 
-            this.currentHistory.messages = Array.from(uniqueMessages.values());
-            this.currentHistory.lastModified = Date.now();
+            // Only save to disk if we have a file and either auto-save is enabled or we're forced
+            if (this.currentFile && (this.plugin.settings.autoSaveEnabled || force)) {
+                // Deduplicate messages before saving
+                const uniqueMessages = new Map<string, ChatMessage>();
+                for (const msg of this.currentHistory.messages) {
+                    const key = `${msg.role}-${msg.timestamp}`;
+                    uniqueMessages.set(key, msg);
+                }
 
-            const content = this.formatHistoryForSave(this.currentHistory);
-            await this.plugin.app.vault.modify(this.currentFile, content);
+                this.currentHistory.messages = Array.from(uniqueMessages.values());
+                this.currentHistory.lastModified = Date.now();
+
+                const content = this.formatHistoryForSave(this.currentHistory);
+                await this.plugin.app.vault.modify(this.currentFile, content);
+            }
+
+            this.unsavedChanges = false;
+        } catch (error) {
+            throw error;
         }
-
-        this.unsavedChanges = false;
     }
 
     private formatHistoryForSave(history: ChatHistory): string {
@@ -371,7 +376,7 @@ export class ChatHistoryManager {
 
     async cleanup(): Promise<void> {
         if (this.unsavedChanges) {
-            await this.saveCurrentHistory();
+            await this.saveCurrentHistory(false, false);
         }
     }
 
@@ -435,7 +440,7 @@ export class ChatHistoryManager {
             
             // Save changes to current file first (this will update the frontmatter)
             this.unsavedChanges = true;  // Force a save by marking as unsaved
-            await this.saveCurrentHistory(true);  // Force immediate save
+            await this.saveCurrentHistory(true, false);  // Force immediate save but don't show notice
 
             // Now rename the file
             const oldPath = this.currentFile.path;
@@ -454,7 +459,7 @@ export class ChatHistoryManager {
                 // Revert title in memory if rename fails
                 this.currentHistory.title = oldTitle;
                 this.unsavedChanges = true;  // Mark as unsaved to ensure reversion is saved
-                await this.saveCurrentHistory(true);  // Force save of the reversion
+                await this.saveCurrentHistory(true, false);  // Force save of the reversion but don't show notice
                 console.error('Failed to rename file:', error);
                 throw new Error('Failed to rename chat file');
             }

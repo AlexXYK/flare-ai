@@ -75,22 +75,55 @@ export class ProviderSettingsView {
     }
 
     private createAuthSettings(container: HTMLElement): void {
-        switch (this.settings.type) {
-            case 'anthropic':
-                this.createAnthropicSettings(container);
-                break;
-            case 'openai':
-                this.createOpenAISettings(container);
-                break;
-            case 'azure':
-                this.createAzureSettings(container);
-                break;
-            case 'ollama':
-                this.createOllamaSettings(container);
-                break;
-            case 'openrouter':
-                this.createOpenRouterSettings(container);
-                break;
+        if (!container) {
+            console.error('Container element is null in createAuthSettings');
+            return;
+        }
+
+        // Set default base URLs based on provider type
+        try {
+            const defaultUrls: Record<string, string> = {
+                anthropic: 'https://api.anthropic.com',
+                openai: 'https://api.openai.com/v1',
+                ollama: 'http://localhost:11434',
+                openrouter: 'https://openrouter.ai/api/v1'
+            };
+
+            if (this.settings.type && this.settings.type in defaultUrls) {
+                this.settings.baseUrl = this.settings.baseUrl || defaultUrls[this.settings.type];
+            }
+
+            switch (this.settings.type) {
+                case 'anthropic':
+                    this.createAnthropicSettings(container);
+                    break;
+                case 'openai':
+                    this.createOpenAISettings(container);
+                    break;
+                case 'azure':
+                    // Azure doesn't have a default URL as it's customer-specific
+                    this.createAzureSettings(container);
+                    break;
+                case 'ollama':
+                    this.createOllamaSettings(container);
+                    break;
+                case 'openrouter':
+                    this.createOpenRouterSettings(container);
+                    break;
+                default:
+                    console.warn(`Unknown provider type: ${this.settings.type}`);
+            }
+
+            // Trigger settings change to ensure the new default is saved
+            if (this.settings.type) {
+                this.onSettingsChange();
+            }
+        } catch (error) {
+            console.error('Error in createAuthSettings:', error);
+            const errorEl = container.createEl('div', {
+                cls: 'flare-settings-error',
+                text: 'Error creating authentication settings. Please check console for details.'
+            });
         }
     }
 
@@ -186,7 +219,10 @@ export class ProviderSettingsView {
     }
 
     private createOpenRouterSettings(container: HTMLElement): void {
-        new Setting(container)
+        if (!container) return;
+
+        // API Key Setting
+        const apiKeySetting = new Setting(container)
             .setName('API Key')
             .setDesc('Your OpenRouter API key')
             .addText(text => {
@@ -194,12 +230,30 @@ export class ProviderSettingsView {
                     .setPlaceholder('Enter API key')
                     .setValue(this.settings.apiKey || '')
                     .onChange(value => {
-                        this.settings.apiKey = value;
+                        this.settings.apiKey = value.trim();
                         this.onSettingsChange();
                     });
                 input.inputEl.type = 'password';
                 this.addPasswordToggle(input.inputEl);
             });
+
+        // Base URL Setting
+        const baseUrlSetting = new Setting(container)
+            .setName('Base URL')
+            .setDesc('Optional: Custom base URL for API requests')
+            .addText(text => {
+                const input = text
+                    .setPlaceholder('https://openrouter.ai/api/v1')
+                    .setValue(this.settings.baseUrl || '')
+                    .onChange(value => {
+                        this.settings.baseUrl = value.trim();
+                        this.onSettingsChange();
+                    });
+            });
+
+        // Add appropriate classes for styling
+        apiKeySetting.settingEl.addClass('flare-setting-api-key');
+        baseUrlSetting.settingEl.addClass('flare-setting-base-url');
     }
 
     private async createModelsSection(container: HTMLElement): Promise<void> {
@@ -373,12 +427,18 @@ export class ProviderSettingsView {
     }
 
     private addPasswordToggle(inputEl: HTMLInputElement): void {
-        const toggleBtn = inputEl.parentElement?.createEl('button', {
+        if (!inputEl || !inputEl.parentElement) return;
+
+        const toggleBtn = inputEl.parentElement.createEl('button', {
             cls: 'password-visibility-toggle',
-            attr: { 'aria-label': 'Toggle password visibility' }
+            attr: {
+                'type': 'button',
+                'aria-label': 'Toggle password visibility'
+            }
         });
-        toggleBtn?.createEl('span', { text: '👁️' });
-        toggleBtn?.addEventListener('click', (e) => {
+        toggleBtn.createEl('span', { text: '👁️' });
+        
+        toggleBtn.addEventListener('click', (e: MouseEvent) => {
             e.preventDefault();
             inputEl.type = inputEl.type === 'password' ? 'text' : 'password';
         });
