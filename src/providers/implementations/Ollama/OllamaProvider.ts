@@ -93,12 +93,10 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
         const onToken = options?.onToken;
 
         const messages = this.buildMessages(message, options?.messageHistory);
-        const controller = new AbortController();
-        const signal = controller.signal;
+        this.abortController = new AbortController();
 
         try {
-            const requestParams: RequestUrlParam = {
-                url: `${this.config.baseUrl}/api/chat`,
+            const response = await fetch(`${this.config.baseUrl}/api/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -113,46 +111,60 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
                         num_predict: maxTokens
                     }
                 }),
-                throw: false // Don't throw on non-200 responses
-            };
+                signal: this.abortController.signal
+            });
 
-            const response = await requestUrl(requestParams);
-
-            if (response.status !== 200) {
+            if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             if (stream && onToken) {
-                // Handle streaming response
-                const lines = response.text.split('\n');
-                let finalResponse = '';
+                let completeResponse = '';
+                const reader = response.body?.getReader();
+                const decoder = new TextDecoder();
 
-                for (const line of lines) {
-                    if (!line.trim()) continue;
-
-                    try {
-                        const data = JSON.parse(line);
-                        if (data.done) {
-                            // Store context for future requests if available
-                            if (data.context) {
-                                this.context = data.context;
-                            }
-                            continue;
-                        }
-
-                        const token = data.message?.content || '';
-                        if (token) {
-                            finalResponse += token;
-                            onToken(token);
-                        }
-                    } catch (e) {
-                        // Skip invalid JSON
-                    }
+                if (!reader) {
+                    throw new Error('Failed to get response reader');
                 }
 
-                return finalResponse;
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n');
+
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+
+                            try {
+                                const data = JSON.parse(line);
+                                if (data.done) {
+                                    // Store context for future requests if available
+                                    if (data.context) {
+                                        this.context = data.context;
+                                    }
+                                    continue;
+                                }
+
+                                const token = data.message?.content || '';
+                                if (token) {
+                                    completeResponse += token;
+                                    onToken(token);
+                                }
+                            } catch (e) {
+                                // Skip invalid JSON
+                            }
+                        }
+                    }
+                } finally {
+                    reader.releaseLock();
+                }
+
+                return completeResponse;
             } else {
-                const result = response.json;
+                const result = await response.json();
                 // Store context for future requests if available
                 if (result.context) {
                     this.context = result.context;
@@ -160,10 +172,13 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
                 return result.message?.content || '';
             }
         } catch (error) {
-            if (error.name === 'AbortError') {
+            if (error instanceof Error && error.name === 'AbortError') {
+                console.log('Request aborted');
                 return 'Request aborted';
             }
             throw error;
+        } finally {
+            this.abortController = undefined;
         }
     }
 
@@ -175,9 +190,9 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
             messages.push(...history);
         }
 
-        // Add current message if not empty
+        // Only add current message if it's not already the last message in history
         const trimmedMessage = message.trim();
-        if (trimmedMessage) {
+        if (trimmedMessage && (!history?.length || history[history.length - 1].content !== trimmedMessage)) {
             messages.push({
                 role: 'user',
                 content: trimmedMessage

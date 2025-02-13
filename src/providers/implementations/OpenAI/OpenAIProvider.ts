@@ -44,6 +44,7 @@ interface MessageOptions {
 export class OpenAIProvider extends BaseProvider {
     name = 'OpenAI';
     private url: string;
+    protected abortController?: AbortController;
 
     constructor(private apiKey: string, endpoint?: string) {
         super();
@@ -98,12 +99,10 @@ export class OpenAIProvider extends BaseProvider {
         stream?: boolean,
         onToken?: (token: string) => void
     ): Promise<string> {
-        const controller = new AbortController();
-        const signal = controller.signal;
+        this.abortController = new AbortController();
 
         try {
-            const requestParams: RequestUrlParam = {
-                url: 'https://api.openai.com/v1/chat/completions',
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -116,48 +115,63 @@ export class OpenAIProvider extends BaseProvider {
                     max_tokens: maxTokens,
                     stream
                 }),
-                throw: false // Don't throw on non-200 responses
-            };
+                signal: this.abortController.signal
+            });
 
-            const response = await requestUrl(requestParams);
-
-            if (response.status !== 200) {
+            if (!response.ok) {
                 throw new Error(`OpenAI API error: ${response.status}`);
             }
 
             if (stream && onToken) {
-                // Streaming is handled differently with requestUrl
-                // We need to process the response text as a stream of SSE events
-                const lines = response.text.split('\n');
-                let finalResponse = '';
+                let completeResponse = '';
+                const reader = response.body?.getReader();
+                const decoder = new TextDecoder();
 
-                for (const line of lines) {
-                    if (line.trim() === '' || line.trim() === 'data: [DONE]') continue;
-
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const json = JSON.parse(line.slice(6));
-                            const token = json.choices?.[0]?.delta?.content || '';
-                            if (token) {
-                                finalResponse += token;
-                                onToken(token);
-                            }
-                        } catch (e) {
-                            // Skip invalid JSON
-                        }
-                    }
+                if (!reader) {
+                    throw new Error('Failed to get response reader');
                 }
 
-                return finalResponse;
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value);
+                        const lines = chunk.split('\n');
+
+                        for (const line of lines) {
+                            if (!line.trim() || line === 'data: [DONE]') continue;
+
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const json = JSON.parse(line.slice(6));
+                                    const token = json.choices?.[0]?.delta?.content || '';
+                                    if (token) {
+                                        completeResponse += token;
+                                        onToken(token);
+                                    }
+                                } catch (e) {
+                                    // Skip invalid JSON
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    reader.releaseLock();
+                }
+
+                return completeResponse;
             } else {
-                const result = response.json;
+                const result = await response.json();
                 return result.choices?.[0]?.message?.content || '';
             }
         } catch (error) {
-            if (error.name === 'AbortError') {
+            if (error instanceof Error && error.name === 'AbortError') {
                 return 'Request aborted';
             }
             throw error;
+        } finally {
+            this.abortController = undefined;
         }
     }
 

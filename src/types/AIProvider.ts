@@ -14,7 +14,7 @@ export interface AIProviderOptions {
     maxTokens?: number;
     systemPrompt?: string;
     messageHistory?: Array<{role: string; content: string; settings?: any}>;
-    historyWindow?: number;
+    contextWindow?: number;
     flare?: string;
     handoffSettings?: HandoffSettings;
     isFlareSwitch?: boolean;
@@ -75,8 +75,21 @@ export interface MessageSettings {
     flare?: string;
     timestamp?: number;
     maxTokens?: number;
-    historyWindow?: number;
-    handoffWindow?: number;
+    contextWindow?: number;
+    handoffContext?: number;
     isFlareSwitch?: boolean;
     stream?: boolean;
+}
+
+export interface MessageOptions {
+    messageHistory?: Array<{role: string; content: string}>;
+    stream?: boolean;
+    temperature?: number;
+    maxTokens?: number;
+    contextWindow?: number;
+    handoffContext?: number;
+    flare?: string;
+    provider?: string;
+    model?: string;
+    onToken?: (token: string) => void;
 } 

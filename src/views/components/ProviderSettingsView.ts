@@ -1,55 +1,36 @@
-import { Setting, Notice } from 'obsidian';
+import { Setting, Notice, Platform } from 'obsidian';
 import type FlarePlugin from '../../../main';
 import type { ProviderSettings } from '../../types/AIProvider';
 
 export class ProviderSettingsView {
+    private originalSettings: ProviderSettings;
+    private actionButtons: HTMLElement | null = null;
+
     constructor(
         private plugin: FlarePlugin,
         private container: HTMLElement,
         private settings: ProviderSettings,
-        private onSave: () => Promise<void>
-    ) {}
+        private onSave: () => Promise<void>,
+        private onSettingsChange: () => void
+    ) {
+        // Store original settings for revert
+        this.originalSettings = JSON.parse(JSON.stringify(settings));
+    }
 
     display(): void {
         const settingsContainer = this.container.createEl('div', { cls: 'provider-settings' });
-        const actionButtons = settingsContainer.createEl('div', { cls: 'flare-form-actions' });
-
+        
         // Create General Settings Section
         const generalSection = this.createSection(settingsContainer, 'General');
-        this.createGeneralSettings(generalSection, actionButtons);
+        this.createGeneralSettings(generalSection);
 
         // Create Authentication Section
         const authSection = this.createSection(settingsContainer, 'Authentication');
-        this.createAuthSettings(authSection, actionButtons);
+        this.createAuthSettings(authSection);
 
         // Create Models Section
         const modelsSection = this.createSection(settingsContainer, 'Available models');
-        this.createModelsSection(modelsSection, actionButtons);
-
-        // Add save and cancel buttons
-        const saveBtn = actionButtons.createEl('button', {
-            text: 'Save',
-            cls: 'mod-cta'
-        });
-        saveBtn.addEventListener('click', async () => {
-            try {
-                await this.validateSettings();
-                await this.onSave();
-                new Notice('Provider settings saved');
-                this.hideActionButtons(actionButtons);
-            } catch (error) {
-                if (error instanceof Error) {
-                    new Notice('Error saving settings: ' + error.message);
-                }
-            }
-        });
-
-        const cancelBtn = actionButtons.createEl('button', {
-            text: 'Cancel'
-        });
-        cancelBtn.addEventListener('click', () => {
-            this.hideActionButtons(actionButtons);
-        });
+        this.createModelsSection(modelsSection);
     }
 
     private createSection(container: HTMLElement, title: string): HTMLElement {
@@ -68,7 +49,7 @@ export class ProviderSettingsView {
         return content;
     }
 
-    private createGeneralSettings(container: HTMLElement, actionButtons: HTMLElement): void {
+    private createGeneralSettings(container: HTMLElement): void {
         // Add name setting
         new Setting(container)
             .setName('Name')
@@ -78,7 +59,7 @@ export class ProviderSettingsView {
                 .setValue(this.settings.name || '')
                 .onChange(value => {
                     this.settings.name = value;
-                    this.showActionButtons(actionButtons);
+                    this.onSettingsChange();
                 }));
 
         // Add enabled toggle
@@ -89,31 +70,31 @@ export class ProviderSettingsView {
                 .setValue(this.settings.enabled || false)
                 .onChange(value => {
                     this.settings.enabled = value;
-                    this.showActionButtons(actionButtons);
+                    this.onSettingsChange();
                 }));
     }
 
-    private createAuthSettings(container: HTMLElement, actionButtons: HTMLElement): void {
+    private createAuthSettings(container: HTMLElement): void {
         switch (this.settings.type) {
             case 'anthropic':
-                this.createAnthropicSettings(container, actionButtons);
+                this.createAnthropicSettings(container);
                 break;
             case 'openai':
-                this.createOpenAISettings(container, actionButtons);
+                this.createOpenAISettings(container);
                 break;
             case 'azure':
-                this.createAzureSettings(container, actionButtons);
+                this.createAzureSettings(container);
                 break;
             case 'ollama':
-                this.createOllamaSettings(container, actionButtons);
+                this.createOllamaSettings(container);
                 break;
             case 'openrouter':
-                this.createOpenRouterSettings(container, actionButtons);
+                this.createOpenRouterSettings(container);
                 break;
         }
     }
 
-    private createAnthropicSettings(container: HTMLElement, actionButtons: HTMLElement): void {
+    private createAnthropicSettings(container: HTMLElement): void {
         new Setting(container)
             .setName('API Key')
             .setDesc('Your Anthropic API key')
@@ -123,14 +104,14 @@ export class ProviderSettingsView {
                     .setValue(this.settings.apiKey || '')
                     .onChange(value => {
                         this.settings.apiKey = value;
-                        this.showActionButtons(actionButtons);
+                        this.onSettingsChange();
                     });
                 input.inputEl.type = 'password';
                 this.addPasswordToggle(input.inputEl);
             });
     }
 
-    private createOpenAISettings(container: HTMLElement, actionButtons: HTMLElement): void {
+    private createOpenAISettings(container: HTMLElement): void {
         // API Key
         new Setting(container)
             .setName('API Key')
@@ -141,7 +122,7 @@ export class ProviderSettingsView {
                     .setValue(this.settings.apiKey || '')
                     .onChange(value => {
                         this.settings.apiKey = value;
-                        this.showActionButtons(actionButtons);
+                        this.onSettingsChange();
                     });
                 input.inputEl.type = 'password';
                 this.addPasswordToggle(input.inputEl);
@@ -156,11 +137,11 @@ export class ProviderSettingsView {
                 .setValue(this.settings.baseUrl || '')
                 .onChange(value => {
                     this.settings.baseUrl = value;
-                    this.showActionButtons(actionButtons);
+                    this.onSettingsChange();
                 }));
     }
 
-    private createAzureSettings(container: HTMLElement, actionButtons: HTMLElement): void {
+    private createAzureSettings(container: HTMLElement): void {
         // API Key
         new Setting(container)
             .setName('API Key')
@@ -171,7 +152,7 @@ export class ProviderSettingsView {
                     .setValue(this.settings.apiKey || '')
                     .onChange(value => {
                         this.settings.apiKey = value;
-                        this.showActionButtons(actionButtons);
+                        this.onSettingsChange();
                     });
                 input.inputEl.type = 'password';
                 this.addPasswordToggle(input.inputEl);
@@ -186,11 +167,11 @@ export class ProviderSettingsView {
                 .setValue(this.settings.baseUrl || '')
                 .onChange(value => {
                     this.settings.baseUrl = value;
-                    this.showActionButtons(actionButtons);
+                    this.onSettingsChange();
                 }));
     }
 
-    private createOllamaSettings(container: HTMLElement, actionButtons: HTMLElement): void {
+    private createOllamaSettings(container: HTMLElement): void {
         // Base URL setting
         new Setting(container)
             .setName('Endpoint URL')
@@ -200,11 +181,11 @@ export class ProviderSettingsView {
                 .setValue(this.settings.baseUrl || 'http://localhost:11434')
                 .onChange(async value => {
                     this.settings.baseUrl = value;
-                    this.showActionButtons(actionButtons);
+                    this.onSettingsChange();
                 }));
     }
 
-    private createOpenRouterSettings(container: HTMLElement, actionButtons: HTMLElement): void {
+    private createOpenRouterSettings(container: HTMLElement): void {
         new Setting(container)
             .setName('API Key')
             .setDesc('Your OpenRouter API key')
@@ -214,16 +195,21 @@ export class ProviderSettingsView {
                     .setValue(this.settings.apiKey || '')
                     .onChange(value => {
                         this.settings.apiKey = value;
-                        this.showActionButtons(actionButtons);
+                        this.onSettingsChange();
                     });
                 input.inputEl.type = 'password';
                 this.addPasswordToggle(input.inputEl);
             });
     }
 
-    private async createModelsSection(container: HTMLElement, actionButtons: HTMLElement): Promise<void> {
+    private async createModelsSection(container: HTMLElement): Promise<void> {
         // Clear the container first
         container.empty();
+
+        // Add mobile class if on mobile platform
+        if (Platform.isMobile) {
+            container.addClass('is-mobile');
+        }
 
         // Add refresh models button
         new Setting(container)
@@ -241,8 +227,8 @@ export class ProviderSettingsView {
                         this.settings.availableModels = models;
                         this.settings.visibleModels = this.settings.visibleModels || [];
                         
-                        this.showActionButtons(actionButtons);
-                        await this.createModelsSection(container, actionButtons);
+                        this.onSettingsChange();
+                        await this.createModelsSection(container);
                         new Notice('Models refreshed');
                     } catch (error) {
                         if (error instanceof Error) {
@@ -255,14 +241,15 @@ export class ProviderSettingsView {
                     }
                 }));
 
-        // Try to load models if none are loaded
+        // Try to load models if none are loaded, but only show errors if this isn't a new provider
         if (!this.settings.availableModels?.length) {
             try {
                 const models = await this.plugin.providerManager.getAvailableModels(this.settings);
                 this.settings.availableModels = models;
                 this.settings.visibleModels = this.settings.visibleModels || [];
             } catch (error) {
-                if (error instanceof Error) {
+                // Only show error if this isn't a new provider (i.e., has a type but no models)
+                if (this.settings.type && error instanceof Error) {
                     new Notice('Error loading models: ' + error.message);
                 }
             }
@@ -274,38 +261,110 @@ export class ProviderSettingsView {
             
             // Add header
             const header = modelsList.createEl('div', { cls: 'models-list-header' });
-            header.createEl('div', { 
-                cls: 'model-header model-name-header',
+            
+            // Create sort state
+            let currentSort = {
+                field: 'name' as 'name' | 'visibility',
+                direction: 'asc' as 'asc' | 'desc'
+            };
+
+            // Create headers with sort functionality
+            const nameHeader = header.createEl('div', { 
+                cls: 'model-header model-name-header is-sorted',
                 text: 'Model'
             });
-            header.createEl('div', { 
+
+            const visibilityHeader = header.createEl('div', { 
                 cls: 'model-header visibility-header',
                 text: 'Show'
             });
 
-            // Sort models alphabetically
-            const sortedModels = [...this.settings.availableModels].sort((a, b) => a.localeCompare(b));
+            // Create content container for scrolling
+            const content = modelsList.createEl('div', { cls: 'models-list-content' });
 
-            sortedModels.forEach((model: string) => {
-                new Setting(modelsList)
-                    .setName(model)
-                    .addToggle(toggle => toggle
-                        .setValue(this.settings.visibleModels?.includes(model) || false)
-                        .onChange(value => {
-                            if (!this.settings.visibleModels) {
-                                this.settings.visibleModels = [];
-                            }
-                            
-                            if (value) {
-                                if (!this.settings.visibleModels.includes(model)) {
-                                    this.settings.visibleModels.push(model);
+            // Sort function
+            const sortModels = (models: string[], field: 'name' | 'visibility', direction: 'asc' | 'desc') => {
+                return [...models].sort((a, b) => {
+                    if (field === 'name') {
+                        return direction === 'asc' ? 
+                            a.localeCompare(b) : 
+                            b.localeCompare(a);
+                    } else {
+                        const aVisible = this.settings.visibleModels?.includes(a) || false;
+                        const bVisible = this.settings.visibleModels?.includes(b) || false;
+                        return direction === 'asc' ? 
+                            Number(aVisible) - Number(bVisible) : 
+                            Number(bVisible) - Number(aVisible);
+                    }
+                });
+            };
+
+            // Render models function
+            const renderModels = () => {
+                content.empty();
+                const sortedModels = sortModels(
+                    this.settings.availableModels || [],
+                    currentSort.field,
+                    currentSort.direction
+                );
+
+                sortedModels.forEach((model: string) => {
+                    new Setting(content)
+                        .setName(model)
+                        .addToggle(toggle => toggle
+                            .setValue(this.settings.visibleModels?.includes(model) || false)
+                            .onChange(value => {
+                                if (!this.settings.visibleModels) {
+                                    this.settings.visibleModels = [];
                                 }
-                            } else {
-                                this.settings.visibleModels = this.settings.visibleModels.filter(m => m !== model);
-                            }
-                            this.showActionButtons(actionButtons);
-                        }));
-            });
+                                
+                                if (value) {
+                                    if (!this.settings.visibleModels.includes(model)) {
+                                        this.settings.visibleModels.push(model);
+                                    }
+                                } else {
+                                    this.settings.visibleModels = this.settings.visibleModels.filter(m => m !== model);
+                                }
+                                this.onSettingsChange();
+
+                                // Re-render if sorting by visibility
+                                if (currentSort.field === 'visibility') {
+                                    renderModels();
+                                }
+                            }));
+                });
+            };
+
+            // Header click handlers
+            const updateSort = (field: 'name' | 'visibility') => {
+                // Remove sort classes from both headers
+                nameHeader.removeClass('is-sorted', 'sort-desc');
+                visibilityHeader.removeClass('is-sorted', 'sort-desc');
+
+                if (currentSort.field === field) {
+                    // Toggle direction if clicking same field
+                    currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    // New field, reset to ascending
+                    currentSort.field = field;
+                    currentSort.direction = 'asc';
+                }
+
+                // Add appropriate classes
+                const header = field === 'name' ? nameHeader : visibilityHeader;
+                header.addClass('is-sorted');
+                if (currentSort.direction === 'desc') {
+                    header.addClass('sort-desc');
+                }
+
+                renderModels();
+            };
+
+            nameHeader.addEventListener('click', () => updateSort('name'));
+            visibilityHeader.addEventListener('click', () => updateSort('visibility'));
+
+            // Initial render
+            renderModels();
         } else {
             // Show empty state
             const emptyState = container.createDiv('models-empty-state');
@@ -325,7 +384,7 @@ export class ProviderSettingsView {
         });
     }
 
-    private async validateSettings(): Promise<void> {
+    async validateSettings(): Promise<void> {
         // Name is always required
         if (!this.settings.name?.trim()) {
             throw new Error('Provider name is required');
@@ -347,21 +406,5 @@ export class ProviderSettingsView {
         if (this.settings.type === 'ollama' && !this.settings.baseUrl?.trim()) {
             this.settings.baseUrl = 'http://localhost:11434';
         }
-    }
-
-    private toggleActionButtons(actionButtons: HTMLElement, show: boolean): void {
-        if (show) {
-            actionButtons.classList.add('is-visible');
-        } else {
-            actionButtons.classList.remove('is-visible');
-        }
-    }
-
-    private showActionButtons(actionButtons: HTMLElement): void {
-        this.toggleActionButtons(actionButtons, true);
-    }
-
-    private hideActionButtons(actionButtons: HTMLElement): void {
-        this.toggleActionButtons(actionButtons, false);
     }
 } 

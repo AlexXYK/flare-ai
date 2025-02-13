@@ -21,17 +21,29 @@ export class HistorySidebar {
     private isSelecting: boolean = false;
     private selectionTimeout: NodeJS.Timeout | null = null;
     private currentPath: string | null = null;
+    private plugin: FlarePlugin;
+    private onSelect: (file: TFile) => Promise<void>;
 
-    constructor(
-        private plugin: FlarePlugin,
-        private onSelect: (file: TFile) => Promise<void>
-    ) {
+    constructor(plugin: FlarePlugin, onSelect: (file: TFile) => Promise<void>) {
+        this.plugin = plugin;
+        this.onSelect = onSelect;
+        
+        // Initialize DOM elements
+        this.sidebarEl = document.createElement('div');
+        this.sidebarEl.classList.add('flare-history-sidebar');
+        
+        this.searchInput = document.createElement('input');
+        this.searchInput.type = 'text';
+        this.searchInput.placeholder = 'Search history...';
+        this.searchInput.classList.add('flare-history-search');
+        
+        this.treeContainer = document.createElement('div');
+        this.treeContainer.classList.add('flare-history-tree');
+        
         this.createSidebar();
     }
 
     private createSidebar() {
-        this.sidebarEl = createDiv('flare-history-sidebar');
-        
         // Create header
         const header = this.sidebarEl.createDiv('flare-history-header');
         header.createEl('h2', { text: 'Chat History' });
@@ -51,11 +63,7 @@ export class HistorySidebar {
 
         // Create search
         const searchContainer = this.sidebarEl.createDiv('flare-history-search');
-        this.searchInput = searchContainer.createEl('input', {
-            type: 'text',
-            placeholder: 'Search history...',
-            cls: 'flare-history-search-input'
-        });
+        searchContainer.appendChild(this.searchInput);
 
         // Add clear button
         const clearButton = searchContainer.createDiv('flare-history-search-clear');

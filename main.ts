@@ -1,4 +1,4 @@
-import { App, Plugin, WorkspaceLeaf, Notice, TFile } from 'obsidian';
+import { App, Plugin, WorkspaceLeaf, Notice, TFile, sanitizeHTMLToDom } from 'obsidian';
 import { GeneralSettingTab } from './src/settings/GeneralSettingTab';
 import { AIChatView, VIEW_TYPE_AI_CHAT } from './src/views/aiChatView';
 import { 
@@ -20,6 +20,17 @@ import {
 } from './src/utils/constants';
 import { OpenRouterManager } from './src/providers/implementations/OpenRouter/OpenRouterManager';
 import { ChatHistoryManager } from './src/history/ChatHistoryManager';
+import { MarkdownRenderer } from 'obsidian';
+
+/** Custom error class for FLARE.ai specific errors */
+class FlareError extends Error {
+    constructor(message: string, public code: string) {
+        super(message);
+        this.name = 'FlareError';
+        // Maintains proper stack trace for where error was thrown
+        Error.captureStackTrace(this, FlareError);
+    }
+}
 
 interface DataviewApi {
     queryMarkdown(query: string, sourcePath: string): Promise<string>;
@@ -44,51 +55,63 @@ interface ObsidianPlugins {
     };
 }
 
+interface ObsidianApp extends App {
+    plugins: {
+        plugins: {
+            dataview?: DataviewPlugin;
+        };
+    };
+}
+
 export default class FlarePlugin extends Plugin {
-    settings: PluginSettings;
+    settings!: PluginSettings;
     providers: Map<string, ProviderManager> = new Map();
-    providerManager: MainProviderManager;
+    providerManager!: MainProviderManager;
     activeProvider: AIProvider | null = null;
-    flareManager: FlareManager;
-    chatHistoryManager: ChatHistoryManager;
+    flareManager!: FlareManager;
+    chatHistoryManager!: ChatHistoryManager;
     private flareWatcher: NodeJS.Timer | null = null;
     flares: Array<{ name: string; path: string }> = [];
     isFlareSwitchActive: boolean = false;
     lastUsedFlare: string | null = null;
 
     async onload() {
+        console.log(`Loading ${PLUGIN_NAME} v${PLUGIN_VERSION}`);
+        
         try {
-            // Load settings first
-            this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+            await this.loadSettings();
+            await this.initializePlugin();
+            this.addCommands();
+            this.setupUI();
             
+            // Start watching Flares folder
+            this.startFlareWatcher();
+            
+            console.log(`${PLUGIN_NAME} loaded successfully`);
+        } catch (error) {
+            console.error(`${PLUGIN_NAME} failed to initialize:`, error);
+            new Notice(`${PLUGIN_NAME} failed to initialize. Check console for details.`);
+        }
+    }
+
+    private async initializePlugin() {
+        try {
             // Initialize managers
             this.providerManager = new MainProviderManager(this);
             this.flareManager = new FlareManager(this);
             this.chatHistoryManager = new ChatHistoryManager(this);
             
-            // Ensure Flares folder exists BEFORE initializing manager
+            // Ensure folders exist
             await this.ensureFlaresFolderExists();
             
             // Load initial flares
             await this.flareManager.loadFlares();
             
-            // Register providers with error handling
-            const providers = [
-                new OllamaManager(this),
-                new OpenAIManager(this),
-                new OpenRouterManager(this)
-            ];
-
-            for (const provider of providers) {
-                try {
-                    this.registerProvider(provider);
-                } catch (error) {
-                    console.error(`Failed to register provider: ${provider.constructor.name}`, error);
-                }
-            }
+            // Register providers
+            await this.registerProviders();
             
-            // Only initialize default provider if explicitly set and valid
-            if (this.settings?.defaultProvider && this.providers.has(this.settings.defaultProvider)) {
+            // Initialize default provider if set
+            if (this.settings?.defaultProvider) {
                 await this.initializeProvider();
             }
 
@@ -98,37 +121,92 @@ export default class FlarePlugin extends Plugin {
                 (leaf) => new AIChatView(leaf, this)
             );
 
-            // Add ribbon icon
-            this.addRibbonIcon('flame', 'Open Flares Chat', () => {
-                this.activateView();
-            });
-
             // Add settings tab
             this.addSettingTab(new GeneralSettingTab(this.app, this));
-
-            // Add commands
-            this.addCommands();
-
-            // Start watching Flares folder
-            this.startFlareWatcher();
         } catch (error) {
-            console.error('Failed to initialize plugin:', error);
-            new Notice('Failed to initialize Flare plugin. Please check the console for details.');
+            console.error('FLARE.ai: Plugin initialization failed:', error);
+            throw new Error(
+                'Failed to initialize FLARE.ai plugin. ' + 
+                'Please check your settings and try reloading Obsidian.'
+            );
+        }
+    }
+
+    private async registerProviders() {
+        const providers = [
+            new OllamaManager(this),
+            new OpenAIManager(this),
+            new OpenRouterManager(this)
+        ];
+
+        let registeredCount = 0;
+        const errors: string[] = [];
+
+        for (const provider of providers) {
+            try {
+                this.registerProvider(provider);
+                registeredCount++;
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                errors.push(`${provider.constructor.name}: ${errorMessage}`);
+                console.error(
+                    `FLARE.ai: Failed to register provider ${provider.constructor.name}:`,
+                    error
+                );
+            }
+        }
+
+        if (errors.length > 0) {
+            new Notice(
+                `Some providers failed to register (${registeredCount}/${providers.length} succeeded). ` +
+                'Check settings and console for details.'
+            );
+        }
+    }
+
+    private setupUI() {
+        try {
+            // Add ribbon icon with proper aria label and tooltip
+            this.addRibbonIcon('flame', PLUGIN_NAME, (evt: MouseEvent) => {
+                this.activateView();
+            }).setAttribute('aria-label', 'Open FLARE.ai Chat');
+        } catch (error) {
+            console.error('FLARE.ai: Failed to setup UI:', error);
+            new Notice('Failed to setup FLARE.ai UI components');
         }
     }
 
     async onunload() {
-        if (this.flareWatcher) {
-            clearInterval(this.flareWatcher);
-        }
-        if (this.chatHistoryManager) {
-            await this.chatHistoryManager.cleanup();
-        }
-        if (this.flareManager) {
-            await this.flareManager.cleanup();
-        }
+        console.log(`Unloading ${PLUGIN_NAME}`);
+        
+        const cleanupTasks: Array<Promise<void>> = [];
+        
+        try {
+            // Clean up watchers and timers
+            if (this.flareWatcher) {
+                clearInterval(this.flareWatcher);
+                this.flareWatcher = null;
+            }
 
-        await this.saveData(this.settings);
+            // Clean up managers
+            if (this.chatHistoryManager) {
+                cleanupTasks.push(this.chatHistoryManager.cleanup());
+            }
+            if (this.flareManager) {
+                cleanupTasks.push(this.flareManager.cleanup());
+            }
+
+            // Wait for all cleanup tasks to complete
+            await Promise.all(cleanupTasks);
+
+            // Save final state
+            await this.saveData(this.settings);
+            
+            console.log(`${PLUGIN_NAME} unloaded successfully`);
+        } catch (error) {
+            console.error(`FLARE.ai: Error during cleanup:`, error);
+            // Don't show notice during unload as it may not be visible
+        }
     }
 
     private addCommands() {
@@ -293,10 +371,10 @@ export default class FlarePlugin extends Plugin {
         temperature?: number;
         maxTokens?: number;
         messageHistory?: Array<{role: string; content: string; settings?: any}>;
-        historyWindow?: number;
+        contextWindow?: number;
         stream?: boolean;
         onToken?: (token: string) => void;
-        isResend?: boolean;
+        isFlareSwitch?: boolean;
     }): Promise<string> {
         try {
             const lastFlare = this.lastUsedFlare || null;
@@ -307,8 +385,7 @@ export default class FlarePlugin extends Plugin {
                 `${this.settings.flaresFolder}/${newFlareName}.md`
             );
             if (!flareExists) {
-                new Notice(`Flare "${newFlareName}" does not exist. Please create it first.`);
-                return '';
+                throw new Error(`Flare "${newFlareName}" does not exist. Please create it first.`);
             }
             
             // Load flare config
@@ -317,19 +394,29 @@ export default class FlarePlugin extends Plugin {
                 throw new Error(`Failed to load flare: ${newFlareName}`);
             }
 
-            // Determine if this is a flare switch
-            let isFlareSwitch = false;
-            if (options?.messageHistory?.length) {
-                // Check if any of the last N messages used a different flare
-                const lastMessages = options.messageHistory.slice(-3); // Look at last few messages
-                const lastFlares = new Set(lastMessages.map(msg => msg.settings?.flare).filter(Boolean));
-                isFlareSwitch = lastFlares.size > 1 || !lastFlares.has(newFlareName);
+            // Handle context windows for flare switches differently
+            let isFlareSwitch: boolean;
+            if (options?.messageHistory && options.messageHistory.length > 0) {
+                // Consider only non-system (user/assistant) messages
+                const nonSystemMessages = options.messageHistory.filter(msg => msg.role !== 'system');
+                // If there are no non-system messages, then assume it's not a flare switch
+                if (nonSystemMessages.length === 0) {
+                    isFlareSwitch = false;
+                } else {
+                    // If every non-system message is from the current flare, there's no flare switch
+                    isFlareSwitch = !nonSystemMessages.every(msg => msg.settings?.flare === newFlareName);
+                }
             } else {
-                isFlareSwitch = true; // First message is always a flare switch
+                isFlareSwitch = true; // First message is considered a flare switch
             }
 
             // Start with complete message history
             let finalMessageHistory = [...(options?.messageHistory || [])];
+
+            // Apply handoff context if this is a flare switch
+            if (isFlareSwitch && flareConfig.handoffContext !== undefined && flareConfig.handoffContext !== -1) {
+                finalMessageHistory = this.applyHandoffContext(finalMessageHistory, flareConfig.handoffContext);
+            }
 
             // Handle system message
             if (flareConfig.systemPrompt) {
@@ -387,86 +474,22 @@ export default class FlarePlugin extends Plugin {
                 }
             };
 
-            // Determine what history to send to the provider
-            let historyToSend = [...finalMessageHistory];
-
-            // Handle history windows for flare switches differently
-            if (isFlareSwitch) {
-                // Keep system message separate
-                const systemMessages = historyToSend.filter(m => m.role === 'system');
-                const nonSystemMessages = historyToSend.filter(m => m.role !== 'system');
-
-                // For flare switches, first apply handoff window
-                const handoffSize = flareConfig.handoffWindow ?? -1;
-                if (handoffSize === -1) {
-                    // If handoff is -1, use all messages
-                    historyToSend = [...systemMessages, ...nonSystemMessages];
-                } else {
-                    // Group into pairs for handoff
-                    const pairs: Array<Array<{role: string; content: string; settings?: any}>> = [];
-                    let currentPair: Array<{role: string; content: string; settings?: any}> = [];
-                    
-                    for (const msg of nonSystemMessages) {
-                        if (msg.role === 'user') {
-                            if (currentPair.length > 0) {
-                                pairs.push([...currentPair]);
-                            }
-                            currentPair = [msg];
-                        } else if (msg.role === 'assistant' && currentPair.length === 1) {
-                            currentPair.push(msg);
-                            pairs.push([...currentPair]);
-                            currentPair = [];
-                        }
-                    }
-
-                    // Get the last N complete pairs based on handoff window
-                    const handoffPairs = pairs.slice(-handoffSize);
-                    const handoffMessages = handoffPairs.flat();
-
-                    // Now check if history window is smaller than handoff
-                    const historySize = flareConfig.historyWindow ?? -1;
-                    if (historySize === -1) {
-                        // If history is -1, use all handoff messages
-                        historyToSend = [...systemMessages, ...handoffMessages];
-                    } else if (historySize < handoffSize) {
-                        // If history window is smaller, get the last N pairs from handoff
-                        const historyPairs = handoffPairs.slice(-historySize);
-                        historyToSend = [...systemMessages, ...historyPairs.flat()];
-                    } else {
-                        // If history window is larger or equal, use all handoff messages
-                        // The history window will build up from the handoff size as more messages come in
-                        historyToSend = [...systemMessages, ...handoffMessages];
-                    }
-                }
-            } else if (!isFlareSwitch) {
-                // For regular messages, apply history window if set
-                const historySize = flareConfig.historyWindow ?? -1;
-                if (historySize !== -1) {
-                    const systemMessages = historyToSend.filter(m => m.role === 'system');
-                    const nonSystemMessages = historyToSend.filter(m => m.role !== 'system');
-                    const windowedNonSystem = this.applyHistoryWindow(nonSystemMessages, historySize);
-                    historyToSend = [...systemMessages, ...windowedNonSystem];
-                }
-            }
-
-            // Strip reasoning content from messages when switching flares or if current flare is not a reasoning model
-            if (isFlareSwitch || !flareConfig.isReasoningModel) {
-                historyToSend = this.stripReasoningContent(historyToSend, flareConfig.reasoningHeader);
-            }
-
             // Get provider and send message
             const provider = await this.getProviderInstance(flareConfig.provider);
             if (!provider) {
                 throw new Error('No active provider available');
             }
 
+            // Send message to provider
             const response = await provider.sendMessage(processedMessage, {
                 ...options,
-                messageHistory: historyToSend,
+                messageHistory: finalMessageHistory,
                 flare: newFlareName,
                 model: flareConfig.model,
                 temperature: options?.temperature ?? flareConfig.temperature ?? 0.7,
-                maxTokens: options?.maxTokens ?? flareConfig.maxTokens
+                maxTokens: options?.maxTokens ?? flareConfig.maxTokens,
+                stream: options?.stream ?? true,
+                onToken: options?.onToken
             });
 
             // After getting response, update the full history with both messages
@@ -480,6 +503,14 @@ export default class FlarePlugin extends Plugin {
                     model: flareConfig.model
                 }
             });
+            // After appending new messages, trim the message history using the context window so that subsequent messages receive only a reduced history
+            if (!isFlareSwitch) {
+                if (flareConfig.contextWindow !== undefined) {
+                    finalMessageHistory = this.applyContextWindow(finalMessageHistory, flareConfig.contextWindow);
+                } else {
+                    throw new Error('Context window is undefined');
+                }
+            }
 
             this.lastUsedFlare = newFlareName;
             return response;
@@ -490,7 +521,7 @@ export default class FlarePlugin extends Plugin {
     }
 
     parseMessageForFlare(message: string): { flare: string; content: string } {
-        const match = message.match(/(?:^|\s)@(\w+)\s*(.*)/);
+        const match = message.match(/(?:^|\s)@(\w+)\s*(.*)/i);
         if (match) {
             // If there's no content after the flare name, treat it as a flare switch
             if (!match[2].trim()) {
@@ -539,6 +570,7 @@ export default class FlarePlugin extends Plugin {
                 }
             }
 
+            // If no file exists, return default config
             if (!flareFile) {
                 return {
                     name: flareName,
@@ -546,57 +578,38 @@ export default class FlarePlugin extends Plugin {
                     model: model,
                     enabled: true,
                     description: '',
-                    temperature: 0.7,
-                    maxTokens: 2048,
-                    historyWindow: -1,
-                    handoffWindow: -1,
-                    systemPrompt: 'You are a helpful AI assistant.',
+                    contextWindow: -1,
+                    handoffContext: -1,
                     stream: false,
-                    isReasoningModel: false,
-                    reasoningHeader: '<think>'
+                    systemPrompt: "You are a helpful AI assistant.",
+                    isReasoningModel: false
                 };
             }
 
-            // Get frontmatter and content
-            const frontmatter = this.app.metadataCache.getFileCache(flareFile)?.frontmatter;
-            const content = await this.app.vault.cachedRead(flareFile);
-            const systemPrompt = content.replace(/^---[\s\S]*?---/, '').trim();
-
-            const provider = frontmatter?.provider || defaultProvider;
-            const providerSettings2 = this.settings.providers[provider];
-            
-            // Ensure we have a valid model from frontmatter or provider
-            let finalModel = frontmatter?.model;
-            if (!finalModel && providerSettings2) {
-                if (providerSettings2.defaultModel) {
-                    finalModel = providerSettings2.defaultModel;
-                } else {
-                    // Try to get first available model
-                    try {
-                        const models = await this.getModelsForProvider(providerSettings2.type);
-                        if (models.length > 0) {
-                            finalModel = models[0];
-                        }
-                    } catch (error) {
-                        console.error('Failed to get models for provider:', error);
-                    }
-                }
+            // Read and parse file content
+            const content = await this.app.vault.read(flareFile);
+            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+            if (!frontmatterMatch) {
+                throw new Error('Invalid flare file format');
             }
+
+            const [_, frontmatterContent, systemPrompt] = frontmatterMatch;
+            const frontmatter = this.parseFrontmatter(frontmatterContent);
 
             return {
                 name: flareName,
-                provider: provider,
-                model: finalModel || model || '',  // Fallback to initial model if needed
-                enabled: frontmatter?.enabled ?? true,
-                description: frontmatter?.description || '',
-                temperature: frontmatter?.temperature ?? 0.7,
-                maxTokens: frontmatter?.maxTokens ?? 2048,
-                historyWindow: frontmatter?.historyWindow ?? -1,
-                handoffWindow: frontmatter?.handoffWindow ?? -1,
-                systemPrompt: systemPrompt || 'You are a helpful AI assistant.',
-                stream: frontmatter?.stream ?? false,
-                isReasoningModel: frontmatter?.isReasoningModel ?? false,
-                reasoningHeader: frontmatter?.reasoningHeader || '<think>'
+                provider: frontmatter.provider || defaultProvider,
+                model: frontmatter.model || model,
+                enabled: frontmatter.enabled ?? true,
+                description: frontmatter.description || '',
+                temperature: frontmatter.temperature ?? 0.7,
+                maxTokens: frontmatter.maxTokens,
+                contextWindow: frontmatter.contextWindow ?? -1,
+                handoffContext: frontmatter.handoffContext ?? -1,
+                systemPrompt: systemPrompt.trim(),
+                stream: frontmatter.stream ?? false,
+                isReasoningModel: frontmatter.isReasoningModel ?? false,
+                reasoningHeader: frontmatter.reasoningHeader || '<think>'
             };
         } catch (error) {
             console.error('Failed to load flare config:', error);
@@ -719,39 +732,30 @@ export default class FlarePlugin extends Plugin {
             return await Promise.race([modelFetch, timeout]);
         } catch (error) {
             console.error('Failed to get models:', error);
-            if (error.message === 'Request timed out') {
+            if (error instanceof Error && error.message === 'Request timed out') {
                 throw new Error('Failed to load models: Request timed out. Please check your connection and try again.');
             }
             throw error;
         }
     }
 
-    async getProviderInstance(providerId: string): Promise<AIProvider | null> {
-        try {
-            const providerSettings = this.settings.providers[providerId];
-            if (!providerSettings || !providerSettings.type) {
-                console.error(`No settings found for provider: ${providerId}`);
-                return null;
-            }
-
-            const manager = this.providers.get(providerSettings.type);
-            if (!manager) {
-                console.error(`No manager found for provider type: ${providerSettings.type}`);
-                return null;
-            }
-
-            // Create a new provider instance
-            const provider = manager.createProvider(providerSettings);
-            if (!provider) {
-                console.error(`Failed to create provider instance for ${providerId}`);
-                return null;
-            }
-
-            return provider;
-        } catch (error) {
-            console.error('Error getting provider instance:', error);
-            return null;
+    async getProviderInstance(providerId: string): Promise<AIProvider> {
+        const providerSettings = this.settings.providers[providerId];
+        if (!providerSettings?.type) {
+            throw new Error(`No settings found for provider: ${providerId}`);
         }
+
+        const manager = this.providers.get(providerSettings.type);
+        if (!manager) {
+            throw new Error(`No manager found for provider type: ${providerSettings.type}`);
+        }
+
+        const provider = manager.createProvider(providerSettings);
+        if (!provider) {
+            throw new Error(`Failed to create provider instance for ${providerId}`);
+        }
+
+        return provider;
     }
 
     // Add method to notify views of flare changes
@@ -784,14 +788,14 @@ export default class FlarePlugin extends Plugin {
                         temperature: view.currentTemp,
                         maxTokens: newFlare.maxTokens,
                         messageHistory: view.messageHistory,
-                        historyWindow: newFlare.historyWindow
+                        contextWindow: newFlare.contextWindow
                     });
                 }
             }
         });
     }
 
-    public applyHistoryWindow(messages: Array<{role: string; content: string; settings?: any}>, window: number): Array<{role: string; content: string; settings?: any}> {
+    public applyContextWindow(messages: Array<{role: string; content: string; settings?: any}>, window: number): Array<{role: string; content: string; settings?: any}> {
         // If window is -1 or no messages, return as is
         if (window === -1 || !messages.length) return messages;
         
@@ -827,8 +831,10 @@ export default class FlarePlugin extends Plugin {
         // Get the last N complete pairs
         const result: Array<{role: string; content: string; settings?: any}> = [];
         
-        // Add system messages first
-        result.push(...systemMessages);
+        // Add only the last system message, if any, to the result
+        if (systemMessages.length) {
+            result.push(systemMessages[systemMessages.length - 1]);
+        }
         
         // Add the last N pairs
         const targetPairs = pairs.slice(-window);
@@ -844,7 +850,7 @@ export default class FlarePlugin extends Plugin {
         return result;
     }
 
-    private applyHandoffSlicing(messages: Array<{role: string; content: string; settings?: any}>, window: number): Array<{role: string; content: string; settings?: any}> {
+    private applyHandoffContext(messages: Array<{role: string; content: string; settings?: any}>, window: number): Array<{role: string; content: string; settings?: any}> {
         // Keep system message if it exists
         const systemMessage = messages.find(msg => msg.role === 'system');
         const nonSystemMessages = messages.filter(msg => msg.role !== 'system');
@@ -901,130 +907,33 @@ export default class FlarePlugin extends Plugin {
         const wikilinks = this.extractWikiLinks(text);
         const result: Record<string, string> = {};
         
-        for (const link of wikilinks) {
+        await Promise.all(wikilinks.map(async (link) => {
             try {
-                // Handle potential aliases in wikilinks
                 const [fileName, alias] = link.split('|').map(s => s.trim());
-                
-                // Get the file from the vault
                 const file = this.app.metadataCache.getFirstLinkpathDest(fileName, '');
-                if (!file) continue;
+                
+                if (!file) {
+                    console.warn(`File not found for wikilink: ${fileName}`);
+                    return;
+                }
 
-                // Get file content
                 const content = await this.app.vault.cachedRead(file);
-                
-                // Process Dataview queries if the plugin is available
                 let processedContent = content;
-                const plugins = (this.app as any as { plugins: ObsidianPlugins }).plugins;
-                const dataviewPlugin = plugins.plugins.dataview;
-                
+
+                const app = this.app as ObsidianApp;
+                const dataviewPlugin = app.plugins.plugins.dataview;
+
                 if (dataviewPlugin?.api) {
-                    // Find all dataview codeblocks
-                    const dataviewBlocks = content.match(/```dataview\n([\s\S]*?)\n```/g) || [];
-                    const dataviewJSBlocks = content.match(/```dataviewjs\n([\s\S]*?)\n```/g) || [];
-                    
-                    // Process each dataview block
-                    for (const block of dataviewBlocks) {
-                        try {
-                            const query = block.replace(/```dataview\n/, '').replace(/\n```$/, '');
-                            // Execute the query and get results
-                            const queryResult = await dataviewPlugin.api.query(query, file.path);
-                            
-                            if (queryResult && queryResult.successful) {
-                                let resultText = '';
-                                const result = queryResult.value;
-                                if (result.type === 'table') {
-                                    // Format table results
-                                    const headers = result.headers || [];
-                                    const values = result.values;
-                                    resultText = '| ' + headers.join(' | ') + ' |\n';
-                                    resultText += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
-                                    values.forEach((row: any[]) => {
-                                        resultText += '| ' + row.map(cell => String(cell)).join(' | ') + ' |\n';
-                                    });
-                                } else if (result.type === 'list') {
-                                    // Format list results
-                                    resultText = result.values.map((item: any) => `- ${item}`).join('\n');
-                                } else if (result.type === 'task') {
-                                    // Format task results
-                                    resultText = result.values.map((task: any) => `- [ ] ${task}`).join('\n');
-                                }
-                                
-                                // Replace the codeblock with the formatted results
-                                processedContent = processedContent.replace(block, resultText);
-                            }
-                        } catch (err) {
-                            // Keep the original block if evaluation fails
-                        }
-                    }
-
-                    // Process each dataviewjs block
-                    for (const block of dataviewJSBlocks) {
-                        try {
-                            const code = block.replace(/```dataviewjs\n/, '').replace(/\n```$/, '');
-                            // Execute the JS code and get results
-                            const component = await dataviewPlugin.api.executeJs(code, file.path);
-                            if (component?.container?.innerHTML) {
-                                // Create a temporary container to safely handle the HTML content
-                                const tempContainer = document.createElement('div');
-                                // Parse the HTML content into DOM elements
-                                const parser = new DOMParser();
-                                const doc = parser.parseFromString(component.container.innerHTML, 'text/html');
-                                // Only copy over safe elements and attributes
-                                const safeElements = ['p', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'strong', 'em', 'code', 'pre'];
-                                const safeAttributes = ['class', 'id', 'style'];
-                                
-                                const sanitizeNode = (node: Node): Node | null => {
-                                    if (node.nodeType === Node.TEXT_NODE) {
-                                        return node.cloneNode(true);
-                                    }
-                                    if (node.nodeType === Node.ELEMENT_NODE) {
-                                        const el = node as Element;
-                                        if (!safeElements.includes(el.tagName.toLowerCase())) {
-                                            return document.createTextNode(el.textContent || '');
-                                        }
-                                        const newEl = document.createElement(el.tagName.toLowerCase());
-                                        // Copy safe attributes
-                                        for (const attr of safeAttributes) {
-                                            if (el.hasAttribute(attr)) {
-                                                newEl.setAttribute(attr, el.getAttribute(attr)!);
-                                            }
-                                        }
-                                        // Recursively sanitize child nodes
-                                        for (const child of Array.from(el.childNodes)) {
-                                            const sanitizedChild = sanitizeNode(child);
-                                            if (sanitizedChild) {
-                                                newEl.appendChild(sanitizedChild);
-                                            }
-                                        }
-                                        return newEl;
-                                    }
-                                    return null;
-                                };
-
-                                // Sanitize the content
-                                for (const node of Array.from(doc.body.childNodes)) {
-                                    const sanitizedNode = sanitizeNode(node);
-                                    if (sanitizedNode) {
-                                        tempContainer.appendChild(sanitizedNode);
-                                    }
-                                }
-
-                                // Use the sanitized content
-                                const sanitizedContent = tempContainer.outerHTML;
-                                processedContent = processedContent.replace(block, sanitizedContent);
-                            }
-                        } catch (err) {
-                            // Keep the original block if evaluation fails
-                        }
-                    }
+                    processedContent = await this.processDataviewContent(content, file, dataviewPlugin.api);
                 }
 
                 result[fileName] = processedContent;
-            } catch (err) {
-                console.warn(`Failed to load note for [[${link}]]:`, err);
+            } catch (error) {
+                console.error(`Error processing wikilink ${link}:`, error);
+                throw new FlareError(`Failed to process wikilink ${link}`, 'WIKILINK_ERROR');
             }
-        }
+        }));
+
         return result;
     }
 
@@ -1039,5 +948,97 @@ export default class FlarePlugin extends Plugin {
         }
         
         return links;
+    }
+
+    async reloadProviderDependentViews(): Promise<void> {
+        const chatLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_AI_CHAT);
+        return Promise.all(chatLeaves.map(async (leaf) => {
+            const view = leaf.view;
+            if (view instanceof AIChatView) {
+                await view.refreshProviderSettings();
+            }
+        })).then(() => void 0);
+    }
+
+    private async processDataviewContent(
+        content: string,
+        file: TFile,
+        dataviewApi: DataviewApi
+    ): Promise<string> {
+        let processedContent = content;
+
+        // Process dataview blocks
+        const dataviewBlocks = content.match(/```dataview\n([\s\S]*?)\n```/g) || [];
+        for (const block of dataviewBlocks) {
+            try {
+                const query = block.replace(/```dataview\n/, '').replace(/\n```$/, '');
+                const result = await dataviewApi.query(query, file.path);
+                
+                if (result?.successful) {
+                    const formattedResult = this.formatDataviewResult(result.value);
+                    processedContent = processedContent.replace(block, formattedResult);
+                }
+            } catch (error) {
+                console.error('Dataview query failed:', error);
+                throw new FlareError('Dataview query failed', 'DATAVIEW_ERROR');
+            }
+        }
+
+        return processedContent;
+    }
+
+    private formatDataviewResult(result: {
+        type: 'table' | 'list' | 'task';
+        headers?: string[];
+        values: any[];
+    }): string {
+        switch (result.type) {
+            case 'table':
+                return this.formatTableResult(result.headers || [], result.values);
+            case 'list':
+                return this.formatListResult(result.values);
+            case 'task':
+                return this.formatTaskResult(result.values);
+            default:
+                throw new FlareError(`Unknown result type: ${result.type}`, 'FORMAT_ERROR');
+        }
+    }
+
+    private formatTableResult(headers: string[], values: any[]): string {
+        let resultText = '| ' + headers.join(' | ') + ' |\n';
+        resultText += '| ' + headers.map(() => '---').join(' | ') + ' |\n';
+        values.forEach((row: any[]) => {
+            resultText += '| ' + row.map(cell => String(cell)).join(' | ') + ' |\n';
+        });
+        return resultText;
+    }
+
+    private formatListResult(values: any[]): string {
+        return values.map((item: any) => `- ${item}`).join('\n');
+    }
+
+    private formatTaskResult(values: any[]): string {
+        return values.map((task: any) => `- [ ] ${task}`).join('\n');
+    }
+
+    private parseFrontmatter(content: string): any {
+        const frontmatter: any = {};
+        content.split('\n').forEach(line => {
+            const match = line.match(/^(\w+):\s*(.*)$/);
+            if (match) {
+                const [_, key, value] = match;
+                // Handle quoted strings
+                if (value.startsWith('"') && value.endsWith('"')) {
+                    frontmatter[key] = value.slice(1, -1);
+                } else if (value === 'true' || value === 'false') {
+                    frontmatter[key] = value === 'true';
+                } else if (!isNaN(Number(value))) {
+                    frontmatter[key] = Number(value);
+                } else {
+                    frontmatter[key] = value;
+                }
+            }
+        });
+        return frontmatter;
     }
 } 

@@ -6,8 +6,8 @@ export interface FlareConfig {
     description?: string;
     temperature?: number;
     maxTokens?: number;
-    historyWindow?: number;
-    handoffWindow?: number;
+    contextWindow?: number;
+    handoffContext?: number;
     systemPrompt?: string;
     stream?: boolean;
     isReasoningModel?: boolean;

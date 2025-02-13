@@ -69,7 +69,7 @@ class TempDialog extends Modal {
 }
 
 export class ModelSelector {
-    private settingsBarEl: HTMLElement;
+    private settingsBarEl!: HTMLElement;
     private dropupEl: HTMLElement | null = null;
     private isActive = false;
     private currentSettings: {
@@ -78,17 +78,24 @@ export class ModelSelector {
         temperature: number;
     };
     private onSettingsChange: (settings: any) => void;
-    private modelButton: HTMLDivElement;
-    private modelNameEl: HTMLSpanElement;
+    private modelButton: HTMLDivElement | null = null;
+    private modelNameEl!: HTMLSpanElement;
+    private plugin: FlarePlugin;
+    private currentModel: string | undefined;
+    private footerLeftEl: HTMLElement | null = null;
+    private footerRightEl: HTMLElement | null = null;
+    private clickHandler: () => void;
 
     constructor(
         private containerEl: HTMLElement,
-        private plugin: FlarePlugin,
+        plugin: FlarePlugin,
         initialSettings: any,
         onChange: (settings: any) => void
     ) {
+        this.plugin = plugin;
         this.currentSettings = { ...initialSettings };
         this.onSettingsChange = onChange;
+        this.clickHandler = () => this.showModelMenu();
         this.createUI();
     }
 
@@ -101,30 +108,24 @@ export class ModelSelector {
     }
 
     private createUI() {
-        // If we previously created something, remove it
-        // or just re-populate to avoid duplicates
-        if (this.settingsBarEl) {
-            this.settingsBarEl.empty?.();
+        // Clean up any existing UI elements
+        this.cleanup();
+
+        // Find or create footer elements
+        this.footerLeftEl = this.containerEl.querySelector('.flare-footer-left');
+        this.footerRightEl = this.containerEl.querySelector('.flare-footer-right');
+
+        // Create them if they don't exist
+        if (!this.footerLeftEl) {
+            this.footerLeftEl = this.containerEl.createDiv('flare-footer-left');
         }
-
-        // containerEl should be the .flare-footer (or parent).
-        // Let's find .flare-footer-left and .flare-footer-right inside it.
-        const footerLeftEl = this.containerEl.querySelector('.flare-footer-left');
-        const footerRightEl = this.containerEl.querySelector('.flare-footer-right');
-
-        // If they're missing for any reason, bail out
-        if (!footerLeftEl || !footerRightEl) {
-            console.warn('Footer left/right not found');
-            return;
+        if (!this.footerRightEl) {
+            this.footerRightEl = this.containerEl.createDiv('flare-footer-right');
         }
-
-        // Clear them for a fresh UI
-        footerLeftEl.empty();
-        footerRightEl.empty();
 
         // -- Model selector on the left --
-        this.modelButton = footerLeftEl.createDiv('flare-model-display');
-        this.modelButton.addEventListener('click', () => this.showModelMenu());
+        this.modelButton = this.footerLeftEl.createDiv('flare-model-display');
+        this.modelButton.addEventListener('click', this.clickHandler);
 
         const modelIcon = this.modelButton.createSpan('flare-model-icon');
         setIcon(modelIcon, 'cpu');
@@ -133,7 +134,7 @@ export class ModelSelector {
         this.modelNameEl.setText(this.truncateModelName(this.currentSettings.model));
 
         // -- Temperature control on the right --
-        const tempControl = footerRightEl.createDiv('flare-temp-control');
+        const tempControl = this.footerRightEl.createDiv('flare-temp-control');
         tempControl.onclick = () => {
             new TempDialog(
                 this.plugin,
@@ -149,35 +150,43 @@ export class ModelSelector {
         tempValue.setText(String(this.currentSettings.temperature));
 
         // Keep track, e.g. for future checks
-        this.settingsBarEl = footerLeftEl as HTMLElement;
+        this.settingsBarEl = this.footerLeftEl;
     }
 
     private createDropup() {
+        // Remove any existing dropup
         if (this.dropupEl) {
             this.dropupEl.remove();
+            this.dropupEl = null;
         }
 
+        // Create new dropup
         this.dropupEl = document.body.createDiv('flare-model-dropup');
         
         // Position the dropup above the settings bar
         this.updateDropupPosition();
         
-        // Group models by provider
-        Object.entries(this.plugin.settings.providers).forEach(([providerId, provider]) => {
-            if (!provider.enabled) return;
+        // Clear any existing provider sections
+        if (this.dropupEl) {
+            this.dropupEl.empty();
             
-            const section = (this.dropupEl as HTMLElement).createDiv('flare-provider-section');
-            
-            // Provider header
-            const header = section.createDiv('flare-provider-header');
-            const icon = header.createDiv('flare-provider-icon');
-            setIcon(icon, this.getProviderIcon(providerId));
-            header.createSpan().setText(provider.name);
-            
-            // Models list
-            const modelList = section.createDiv('flare-model-list');
-            this.loadModels(modelList, providerId, provider);
-        });
+            // Group models by provider
+            Object.entries(this.plugin.settings.providers).forEach(([providerId, provider]) => {
+                if (!provider.enabled) return;
+                
+                const section = this.dropupEl!.createDiv('flare-provider-section');
+                
+                // Provider header
+                const header = section.createDiv('flare-provider-header');
+                const icon = header.createDiv('flare-provider-icon');
+                setIcon(icon, this.getProviderIcon(providerId));
+                header.createSpan().setText(provider.name);
+                
+                // Models list
+                const modelList = section.createDiv('flare-model-list');
+                this.loadModels(modelList, providerId, provider);
+            });
+        }
     }
 
     private updateDropupPosition() {
@@ -191,8 +200,17 @@ export class ModelSelector {
 
     private async loadModels(container: HTMLElement, providerId: string, provider: any) {
         try {
-            const models = await this.plugin.getModelsForProvider(provider.type);
-            models.forEach(model => {
+            // Clear existing models first
+            container.empty();
+            
+            const allModels = await this.plugin.getModelsForProvider(provider.type);
+            
+            // Filter models based on visibility settings
+            const visibleModels = provider.visibleModels && provider.visibleModels.length > 0
+                ? allModels.filter(model => provider.visibleModels.includes(model))
+                : allModels;
+
+            visibleModels.forEach(model => {
                 const option = container.createDiv('flare-model-option');
                 if (this.currentSettings.provider === providerId && this.currentSettings.model === model) {
                     option.addClass('is-selected');
@@ -236,7 +254,11 @@ export class ModelSelector {
     public updateSettings(newSettings: Partial<typeof this.currentSettings>) {
         this.currentSettings = { ...this.currentSettings, ...newSettings };
         this.onSettingsChange(this.currentSettings);
-        this.createUI();
+        
+        // Update the display without recreating the entire UI
+        if (this.modelNameEl) {
+            this.modelNameEl.setText(this.truncateModelName(this.currentSettings.model));
+        }
     }
 
     public getCurrentSettings() {
@@ -290,5 +312,36 @@ export class ModelSelector {
 
     private showModelMenu() {
         this.toggleDropup();
+    }
+
+    private cleanup() {
+        // Remove event listeners first
+        if (this.modelButton) {
+            this.modelButton.removeEventListener('click', this.clickHandler);
+            this.modelButton = null;
+        }
+
+        // Remove dropup if it exists
+        if (this.dropupEl) {
+            this.dropupEl.remove();
+            this.dropupEl = null;
+        }
+
+        // Clean up footer elements
+        if (this.footerLeftEl) {
+            this.footerLeftEl.empty();
+        }
+        if (this.footerRightEl) {
+            this.footerRightEl.empty();
+        }
+    }
+
+    public destroy() {
+        this.cleanup();
+        // Remove the footer elements completely
+        this.footerLeftEl?.remove();
+        this.footerRightEl?.remove();
+        this.footerLeftEl = null;
+        this.footerRightEl = null;
     }
 } 
