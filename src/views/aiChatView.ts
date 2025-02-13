@@ -641,6 +641,12 @@ export class AIChatView extends ItemView {
                         if (this.inputEl) {
                             this.inputEl.value = '';
                             this.inputEl.classList.remove('has-content', 'has-custom-height');
+                            this.inputEl.removeAttribute('data-content-height');
+                            this.inputEl.style.height = 'auto';
+                            const wrapper = this.inputEl.closest('.flare-input-wrapper');
+                            if (wrapper instanceof HTMLElement) {
+                                wrapper.style.height = '40px';
+                            }
                         }
                         // Run title generation in the background
                         this.handleTitleGeneration().catch(error => {
@@ -657,16 +663,23 @@ export class AIChatView extends ItemView {
                     sendBtn.setAttribute('aria-label', 'Stop streaming');
                     
                     try {
-                        // Clear input before sending
+                        // Store input value and clear input immediately with proper height reset
                         const inputValue = this.inputEl.value;
                         this.inputEl.value = '';
                         this.inputEl.classList.remove('has-content', 'has-custom-height');
+                        this.inputEl.removeAttribute('data-content-height');
+                        this.inputEl.style.height = 'auto';
+                        const wrapper = this.inputEl.closest('.flare-input-wrapper');
+                        if (wrapper instanceof HTMLElement) {
+                            wrapper.style.height = '40px';
+                        }
                         
                         // Try to send the message
                         const success = await this.handleMessage(content);
                         // If message failed to send, restore the input
                         if (!success) {
                             this.inputEl.value = inputValue;
+                            this.debouncedHeightUpdate();
                         }
                     } finally {
                         // Reset streaming state
@@ -2803,7 +2816,7 @@ export class AIChatView extends ItemView {
     private async handleMessage(content: string): Promise<boolean> {
         try {
             // If the message starts with '@', treat it as a possible flare switch command.
-            if (content.trim().startsWith('@')) {
+            if (content.startsWith('@')) {
                 const parsed = this.plugin.parseMessageForFlare(content);
                 // If the parsed flare is different from the currently active flare, switch to it case-insensitively.
                 const currentFlareName = this.currentFlare ? this.currentFlare.name : (this.plugin.settings.defaultFlare || 'default');
@@ -2852,10 +2865,25 @@ export class AIChatView extends ItemView {
                     }
                 }
 
-                return await this.sendMessage(content, {
+                const success = await this.sendMessage(content, {
                     stream: this.currentFlare?.stream ?? false,
                     isFlareSwitch: false
                 });
+
+                // Reset input field height and classes after sending
+                if (success && this.inputEl) {
+                    this.inputEl.style.height = 'auto';
+                    this.inputEl.classList.remove('has-content', 'has-custom-height');
+                    this.inputEl.removeAttribute('data-content-height');
+                    
+                    // Reset wrapper height
+                    const wrapper = this.inputEl.closest('.flare-input-wrapper');
+                    if (wrapper instanceof HTMLElement) {
+                        wrapper.style.height = '40px';
+                    }
+                }
+
+                return success;
             } catch (error: unknown) {
                 console.error('Error processing message:', error);
                 new Notice('Error: ' + getErrorMessage(error));
