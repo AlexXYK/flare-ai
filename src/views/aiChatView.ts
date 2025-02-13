@@ -1373,8 +1373,7 @@ export class AIChatView extends ItemView {
                         const { reasoningBlocks, responsePart } = this.extractReasoningContent(message.content, reasoningHeader);
 
                         if (reasoningBlocks.length > 0) {
-                            const messageId = `message-${message.timestamp}-${Math.random().toString(36).substr(2, 9)}`;
-                            messageEl.setAttribute('data-message-id', messageId);
+                            messageEl.setAttribute('data-timestamp', message.timestamp.toString());
 
                             // Create reasoning container
                             const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
@@ -1391,11 +1390,13 @@ export class AIChatView extends ItemView {
                             const actionsEl = messageEl.querySelector('.flare-message-actions');
                             if (actionsEl instanceof HTMLElement) {
                                 const expandBtn = this.createActionButton(actionsEl, 'Toggle reasoning', 'plus-circle');
-                                
                                 this.registerDomEvent(expandBtn, 'click', async () => {
-                                    const isExpanded = this.expandedReasoningMessages.has(messageId);
+                                    const timestamp = messageEl.getAttribute('data-timestamp');
+                                    if (!timestamp) return;  // Skip if no timestamp found
+                                    
+                                    const isExpanded = this.expandedReasoningMessages.has(timestamp);
                                     if (isExpanded) {
-                                        this.expandedReasoningMessages.delete(messageId);
+                                        this.expandedReasoningMessages.delete(timestamp);
                                         reasoningContainer.classList.remove('is-expanded');
                                         expandBtn.classList.remove('is-active');
                                         setIcon(expandBtn, 'plus-circle');
@@ -1403,11 +1404,9 @@ export class AIChatView extends ItemView {
                                         // Render reasoning blocks if not already done
                                         if (!reasoningContainer.querySelector('.markdown-rendered')) {
                                             const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
-                                            const rendered = reasoningContainer.createDiv('markdown-rendered');
-                                            rendered.setAttribute('role', 'presentation');
-                                            await MarkdownRenderer.renderMarkdown(joinedReasoning, rendered, '', this.plugin);
+                                            await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
                                         }
-                                        this.expandedReasoningMessages.add(messageId);
+                                        this.expandedReasoningMessages.add(timestamp);
                                         reasoningContainer.classList.add('is-expanded');
                                         expandBtn.classList.add('is-active');
                                         setIcon(expandBtn, 'minus-circle');
@@ -1523,6 +1522,13 @@ export class AIChatView extends ItemView {
             new Notice('Title generation already in progress');
             return false;
         }
+
+        // Check if autosave is disabled and no file exists yet
+        if (!this.plugin.settings.autoSaveEnabled && !this.plugin.chatHistoryManager.getCurrentFile()) {
+            new Notice('Please save the chat first before generating a title');
+            return false;
+        }
+
         this.isTitleGenerationInProgress = true;
 
         try {
@@ -1640,6 +1646,7 @@ export class AIChatView extends ItemView {
 
             loadingMsg.setAttribute('role', 'article');
             loadingMsg.setAttribute('aria-label', 'Assistant message');
+            loadingMsg.setAttribute('data-timestamp', Date.now().toString());
             loadingMsg.classList.add('is-loading');
 
             // Set up streaming containers
@@ -1751,7 +1758,18 @@ export class AIChatView extends ItemView {
                     const contentEl = loadingMsg.querySelector('.flare-message-content') as HTMLElement | null;
                     if (contentEl) {
                         contentEl.textContent = '';
-                        await this.renderUserOrAssistantMessage('assistant', contentEl, finalResponse, {
+                        
+                        // Construct the full content including reasoning blocks
+                        let fullContent = finalResponse;
+                        if (accumulatedReasoningBlocks.length > 0) {
+                            const reasoningHeader = this.currentFlare?.reasoningHeader || '<think>';
+                            const reasoningEndTag = reasoningHeader.replace('<', '</');
+                            fullContent = accumulatedReasoningBlocks.map(block => 
+                                `${reasoningHeader}${block}${reasoningEndTag}`
+                            ).join('\n') + '\n' + finalResponse;
+                        }
+
+                        await this.renderUserOrAssistantMessage('assistant', contentEl, fullContent, {
                             flare: this.currentFlare?.name || 'default',
                             provider: this.currentFlare?.provider || 'default',
                             model: this.currentFlare?.model || 'default',
@@ -1764,7 +1782,7 @@ export class AIChatView extends ItemView {
                         });
 
                         // Set content and role attributes for the message
-                        loadingMsg.setAttribute('data-content', finalResponse.trim());
+                        loadingMsg.setAttribute('data-content', fullContent.trim());
                         loadingMsg.setAttribute('data-role', 'assistant');
 
                         // Add the assistant message to history manager
@@ -1774,7 +1792,7 @@ export class AIChatView extends ItemView {
 
                         const messageData = {
                             role: 'assistant',
-                            content: finalResponse,
+                            content: fullContent,
                             settings: {
                                 flare: this.currentFlare?.name || 'default',
                                 provider: providerName,  // Use common name instead of ID
@@ -1783,10 +1801,9 @@ export class AIChatView extends ItemView {
                                 maxTokens: this.currentFlare?.maxTokens,
                                 contextWindow: this.currentFlare?.contextWindow,
                                 handoffContext: this.currentFlare?.handoffContext,
-                                isReasoningModel: this.currentFlare?.isReasoningModel,
-                                reasoningHeader: this.currentFlare?.reasoningHeader
+                                timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
                             },
-                            timestamp: Date.now()
+                            timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
                         };
                         this.messageHistory.push(messageData);
                         await this.plugin.chatHistoryManager.addMessage(messageData);
@@ -1800,8 +1817,9 @@ export class AIChatView extends ItemView {
                                 const messagePairs = this.countMessagePairs();
                                 const requiredPairs = this.plugin.settings.titleSettings.autoGenerateAfterPairs;
 
-                                // If we have at least as many pairs as required, try generating
-                                if (messagePairs >= requiredPairs) {
+                                // If we have at least as many pairs as required and either autosave is enabled or we have a file, try generating
+                                if (messagePairs >= requiredPairs && 
+                                    (this.plugin.settings.autoSaveEnabled || this.plugin.chatHistoryManager.getCurrentFile())) {
                                     // Schedule title generation to run after message sending is complete
                                     setTimeout(async () => {
                                         try {
@@ -2648,17 +2666,19 @@ export class AIChatView extends ItemView {
         this.containerEl.classList.toggle('has-error', this.viewState.hasError);
 
         // Update expanded messages
-        this.viewState.expandedMessages.forEach(messageId => {
-            const messageEl = this.containerEl.querySelector(`[data-message-id="${messageId}"]`);
-            if (messageEl instanceof HTMLElement) {
+        this.viewState.expandedMessages.forEach(timestamp => {
+            const messageEl = this.containerEl.querySelector(`[data-timestamp="${timestamp}"]`);
+            if (messageEl) {
                 const reasoningContent = messageEl.querySelector('.flare-reasoning-content');
+                const toggleBtn = messageEl.querySelector('.flare-message-actions button[aria-label="Toggle reasoning"]');
+                
                 if (reasoningContent instanceof HTMLElement) {
-                    reasoningContent.classList.toggle('is-expanded', this.expandedReasoningMessages.has(messageId));
+                    reasoningContent.classList.toggle('is-expanded', this.expandedReasoningMessages.has(timestamp));
                 }
-                const toggleBtn = messageEl.querySelector('.flare-action-button[aria-label="Toggle reasoning"]');
+                
                 if (toggleBtn instanceof HTMLElement) {
-                    toggleBtn.classList.toggle('is-active', this.expandedReasoningMessages.has(messageId));
-                    setIcon(toggleBtn, this.expandedReasoningMessages.has(messageId) ? 'minus-circle' : 'plus-circle');
+                    toggleBtn.classList.toggle('is-active', this.expandedReasoningMessages.has(timestamp));
+                    setIcon(toggleBtn, this.expandedReasoningMessages.has(timestamp) ? 'minus-circle' : 'plus-circle');
                 }
             }
         });
