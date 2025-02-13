@@ -183,10 +183,16 @@ export class ProviderSettingsUI {
                 // Set current value
                 dropdown.setValue(provider.type || '');
 
-                dropdown.onChange(value => {
+                dropdown.onChange(async value => {
                     if (!this.currentProvider) return;
+                    
+                    // Store old type to check if this is a new provider
+                    const oldType = this.plugin.settings.providers[this.currentProvider].type;
+                    const isNewProvider = !oldType;
+                    
                     this.plugin.settings.providers[this.currentProvider].type = value;
-                    this.onProviderChange(this.currentProvider);
+                    
+                    // Skip the provider change callback since the display() call below will handle it
                     this.display(); // Refresh the UI to show appropriate settings
                     this.showActionButtons(); // Always show action buttons on type change
                 });

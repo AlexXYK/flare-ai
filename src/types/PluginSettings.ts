@@ -18,6 +18,7 @@ export interface PluginSettings {
     autoSaveEnabled: boolean;
     autoSaveInterval: number;
     maxHistoryFiles: number;
+    dateFormat: string;
     titleSettings: TitleSettings;
     handoffSettings: HandoffSettings;
 }
@@ -31,6 +32,7 @@ export const DEFAULT_SETTINGS: Partial<PluginSettings> = {
     autoSaveEnabled: true,
     autoSaveInterval: 30,
     maxHistoryFiles: 100,
+    dateFormat: 'MM-DD-YYYY',
     titleSettings: {
         provider: '',
         model: '',

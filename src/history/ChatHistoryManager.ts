@@ -16,7 +16,7 @@ interface ChatMessage {
 }
 
 interface ChatHistory {
-    created: number;
+    date: number;
     lastModified: number;
     title: string;
     flare?: string;
@@ -27,7 +27,7 @@ interface ChatHistory {
 }
 
 interface FrontMatter {
-    created?: number;
+    date?: number;
     lastModified?: number;
     title?: string;
     flare?: string;
@@ -35,86 +35,89 @@ interface FrontMatter {
 }
 
 export class ChatHistoryManager {
-    private autoSaveTimer: NodeJS.Timer | null = null;
     private currentHistory: ChatHistory | null = null;
     private currentFile: TFile | null = null;
     private unsavedChanges: boolean = false;
 
-    constructor(private plugin: FlarePlugin) {
-        this.startAutoSave();
-    }
-
-    private startAutoSave() {
-        if (this.autoSaveTimer) {
-            clearInterval(this.autoSaveTimer);
-        }
-
-        if (!this.plugin.settings.autoSaveEnabled) {
-            return;
-        }
-
-        const intervalSeconds = Math.max(this.plugin.settings.autoSaveInterval, 10);
-
-        this.autoSaveTimer = setInterval(() => {
-            if (this.unsavedChanges) {
-                this.saveCurrentHistory();
-            }
-        }, intervalSeconds * 1000);
-    }
-
-    public updateAutoSave() {
-        this.startAutoSave();
-    }
+    constructor(private plugin: FlarePlugin) {}
 
     async createNewHistory(title?: string) {
         try {
-            // Generate title if not provided
-            if (!title) {
-                title = 'New Chat';
-            }
-
             // Create new history object with default values
+            const now = new Date();
             this.currentHistory = {
-                created: Date.now(),
-                lastModified: Date.now(),
-                title,
+                date: now.getTime(),
+                lastModified: now.getTime(),
+                title: title || 'New Chat',
                 messages: [],
                 provider: this.plugin.settings.defaultProvider || 'default',
                 model: this.plugin.settings.providers[this.plugin.settings.defaultProvider || 'default']?.defaultModel || 'default',
                 temperature: 0.7
             };
 
-            // Create file path
-            const basePath = this.plugin.settings.historyFolder;
-            
-            // Ensure folder exists
-            await this.ensureFolderExists(basePath);
+            // Only create file if auto-save is enabled
+            if (this.plugin.settings.autoSaveEnabled) {
+                // Create file path
+                const basePath = this.plugin.settings.historyFolder;
+                
+                // Ensure folder exists
+                await this.ensureFolderExists(basePath);
 
-            // Create initial filename with timestamp for uniqueness
-            const timestamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 12);
-            let fileName = `chat-${timestamp}.md`;
-            let filePath = `${basePath}/${fileName}`;
+                // Create a user-friendly date-based filename
+                const dateStr = this.formatDate(now, this.plugin.settings.dateFormat || 'MM-DD-YYYY');
+                
+                // Try to create file with date-based name, append number if exists
+                let counter = 0;
+                let fileName: string;
+                let filePath: string;
+                
+                do {
+                    fileName = counter === 0 ? 
+                        `chat-${dateStr}.md` : 
+                        `chat-${dateStr}-${counter}.md`;
+                    filePath = `${basePath}/${fileName}`;
+                    counter++;
+                } while (await this.plugin.app.vault.adapter.exists(filePath));
 
-            // Check if file already exists and generate new unique ID if needed
-            let counter = 1;
-            while (await this.plugin.app.vault.adapter.exists(filePath)) {
-                fileName = `chat-${timestamp}-${counter}.md`;
-                filePath = `${basePath}/${fileName}`;
-                counter++;
-            }
+                // Use the filename (without extension) as the title
+                this.currentHistory.title = fileName.slice(0, -3); // Remove .md extension
 
-            // Create file with initial content
-            const content = this.formatHistoryForSave(this.currentHistory);
-            this.currentFile = await this.plugin.app.vault.create(filePath, content);
-            
-            if (!this.currentFile) {
-                throw new Error('Failed to create history file');
+                // Create file with initial content
+                const content = this.formatHistoryForSave(this.currentHistory);
+                this.currentFile = await this.plugin.app.vault.create(filePath, content);
+                
+                if (!this.currentFile) {
+                    throw new Error('Failed to create history file');
+                }
             }
 
             this.unsavedChanges = false;
             return this.currentHistory;
         } catch (error: unknown) {
             throw new Error(`Failed to create new history: ${getErrorMessage(error)}`);
+        }
+    }
+
+    private formatDate(date: Date, format: string): string {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const shortYear = String(year).slice(-2);
+
+        switch (format) {
+            case 'DD-MM-YYYY':
+                return `${day}-${month}-${year}`;
+            case 'YYYY-MM-DD':
+                return `${year}-${month}-${day}`;
+            case 'MM-DD-YY':
+                return `${month}-${day}-${shortYear}`;
+            case 'DD-MM-YY':
+                return `${day}-${month}-${shortYear}`;
+            case 'YY-MM-DD':
+                return `${shortYear}-${month}-${day}`;
+            case 'MM-DD-YYYY':
+            default:
+                return `${month}-${day}-${year}`;
         }
     }
 
@@ -135,7 +138,7 @@ export class ChatHistoryManager {
 
             // Create new history object with default values
             this.currentHistory = {
-                created: frontmatter.created || Date.now(),
+                date: frontmatter.date || Date.now(),
                 lastModified: frontmatter.lastModified || Date.now(),
                 title: frontmatter.title || file.basename.split('-').slice(1).join('-'), // Remove timestamp prefix
                 flare: frontmatter.flare,
@@ -156,58 +159,89 @@ export class ChatHistoryManager {
         }
     }
 
-    async addMessage(message: Omit<ChatMessage, 'timestamp'>): Promise<void> {
+    async addMessage(message: Partial<ChatMessage>): Promise<void> {
         if (!this.currentHistory) {
             await this.createNewHistory();
         }
 
         if (this.currentHistory) {
+            const time = message.timestamp ?? Date.now();
             const fullMessage: ChatMessage = {
                 ...message,
-                timestamp: Date.now(),
-                settings: {
-                    // Preserve ALL settings from the original message
-                    ...(message.settings ?? {}),
-                    // Add timestamp for uniqueness in deduplication
-                    timestamp: Date.now()
-                }
-            };
-
+                timestamp: time,
+                settings: { ...(message.settings ?? {}), timestamp: time }
+            } as ChatMessage;
             this.currentHistory.messages.push(fullMessage);
             this.currentHistory.lastModified = Date.now();
             this.unsavedChanges = true;
 
-            // Save history after each message
-            await this.saveCurrentHistory();
+            // Only save to disk if auto-save is enabled
+            if (this.plugin.settings.autoSaveEnabled) {
+                await this.saveCurrentHistory();
+            }
         }
     }
 
-    async saveCurrentHistory(): Promise<void> {
-        if (!this.currentHistory || !this.currentFile || !this.unsavedChanges) {
+    async saveCurrentHistory(force: boolean = false): Promise<void> {
+        if (!this.currentHistory || (!this.unsavedChanges && !force)) {
             return;
         }
 
-        // Deduplicate messages before saving, keeping only the latest version of each message
-        const uniqueMessages = new Map<string, ChatMessage>();
-        
-        for (const msg of this.currentHistory.messages) {
-            const key = `${msg.role}-${msg.timestamp}`;
-            uniqueMessages.set(key, msg);
+        // If we don't have a file yet and we need to save, create one
+        if (!this.currentFile && (this.plugin.settings.autoSaveEnabled || force)) {
+            const basePath = this.plugin.settings.historyFolder;
+            await this.ensureFolderExists(basePath);
+
+            const now = new Date();
+            const dateStr = this.formatDate(now, this.plugin.settings.dateFormat || 'MM-DD-YYYY');
+            
+            let counter = 0;
+            let fileName: string;
+            let filePath: string;
+            
+            do {
+                fileName = counter === 0 ? 
+                    `chat-${dateStr}.md` : 
+                    `chat-${dateStr}-${counter}.md`;
+                filePath = `${basePath}/${fileName}`;
+                counter++;
+            } while (await this.plugin.app.vault.adapter.exists(filePath));
+
+            this.currentHistory.title = fileName.slice(0, -3);
+            const content = this.formatHistoryForSave(this.currentHistory);
+            this.currentFile = await this.plugin.app.vault.create(filePath, content);
         }
 
-        this.currentHistory.messages = Array.from(uniqueMessages.values());
-        this.currentHistory.lastModified = Date.now();
+        // Only save to disk if we have a file and either auto-save is enabled or we're forced
+        if (this.currentFile && (this.plugin.settings.autoSaveEnabled || force)) {
+            // Deduplicate messages before saving
+            const uniqueMessages = new Map<string, ChatMessage>();
+            for (const msg of this.currentHistory.messages) {
+                const key = `${msg.role}-${msg.timestamp}`;
+                uniqueMessages.set(key, msg);
+            }
 
-        const content = this.formatHistoryForSave(this.currentHistory);
-        await this.plugin.app.vault.modify(this.currentFile, content);
+            this.currentHistory.messages = Array.from(uniqueMessages.values());
+            this.currentHistory.lastModified = Date.now();
+
+            const content = this.formatHistoryForSave(this.currentHistory);
+            await this.plugin.app.vault.modify(this.currentFile, content);
+        }
+
         this.unsavedChanges = false;
     }
 
     private formatHistoryForSave(history: ChatHistory): string {
+        const formatDate = (timestamp: number) => {
+            const date = new Date(timestamp);
+            // Format as YYYY-MM-DD HH:mm:ss
+            return date.toISOString().replace('T', ' ').split('.')[0];
+        };
+
         const frontmatter = [
             '---',
-            `created: ${history.created}`,
-            `lastModified: ${history.lastModified}`,
+            `date: ${formatDate(history.date)}`,
+            `last-modified: ${formatDate(history.lastModified)}`,
             `title: "${history.title}"`,
             history.flare ? `flare: ${history.flare}` : null,
             '---\n'
@@ -336,9 +370,6 @@ export class ChatHistoryManager {
     }
 
     async cleanup(): Promise<void> {
-        if (this.autoSaveTimer) {
-            clearInterval(this.autoSaveTimer);
-        }
         if (this.unsavedChanges) {
             await this.saveCurrentHistory();
         }
@@ -398,14 +429,15 @@ export class ChatHistoryManager {
             // Ensure title starts with chat- prefix
             const finalTitle = newTitle.startsWith('chat-') ? newTitle : `chat-${newTitle}`;
 
-            // Update history object
+            // Update both the history object title and file name
             const oldTitle = this.currentHistory.title;
             this.currentHistory.title = finalTitle;
             
-            // Save changes to current file first
-            await this.saveCurrentHistory();
+            // Save changes to current file first (this will update the frontmatter)
+            this.unsavedChanges = true;  // Force a save by marking as unsaved
+            await this.saveCurrentHistory(true);  // Force immediate save
 
-            // Rename the file
+            // Now rename the file
             const oldPath = this.currentFile.path;
             const newPath = oldPath.replace(oldTitle, finalTitle);
             
@@ -421,6 +453,8 @@ export class ChatHistoryManager {
             } catch (error) {
                 // Revert title in memory if rename fails
                 this.currentHistory.title = oldTitle;
+                this.unsavedChanges = true;  // Mark as unsaved to ensure reversion is saved
+                await this.saveCurrentHistory(true);  // Force save of the reversion
                 console.error('Failed to rename file:', error);
                 throw new Error('Failed to rename chat file');
             }

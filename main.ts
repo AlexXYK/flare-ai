@@ -371,7 +371,7 @@ export default class FlarePlugin extends Plugin {
         temperature?: number;
         maxTokens?: number;
         messageHistory?: Array<{role: string; content: string; settings?: any}>;
-        historyWindow?: number;
+        contextWindow?: number;
         stream?: boolean;
         onToken?: (token: string) => void;
         isFlareSwitch?: boolean;
@@ -395,18 +395,28 @@ export default class FlarePlugin extends Plugin {
             }
 
             // Handle context windows for flare switches differently
-            let isFlareSwitch = options?.isFlareSwitch ?? false;
-            if (options?.messageHistory?.length) {
-                // Check if any of the last N messages used a different flare
-                const lastMessages = options.messageHistory.slice(-3); // Look at last few messages
-                const lastFlares = new Set(lastMessages.map(msg => msg.settings?.flare).filter(Boolean));
-                isFlareSwitch = isFlareSwitch || lastFlares.size > 1 || !lastFlares.has(newFlareName);
+            let isFlareSwitch: boolean;
+            if (options?.messageHistory && options.messageHistory.length > 0) {
+                // Consider only non-system (user/assistant) messages
+                const nonSystemMessages = options.messageHistory.filter(msg => msg.role !== 'system');
+                // If there are no non-system messages, then assume it's not a flare switch
+                if (nonSystemMessages.length === 0) {
+                    isFlareSwitch = false;
+                } else {
+                    // If every non-system message is from the current flare, there's no flare switch
+                    isFlareSwitch = !nonSystemMessages.every(msg => msg.settings?.flare === newFlareName);
+                }
             } else {
-                isFlareSwitch = true; // First message is always a flare switch
+                isFlareSwitch = true; // First message is considered a flare switch
             }
 
             // Start with complete message history
             let finalMessageHistory = [...(options?.messageHistory || [])];
+
+            // Apply handoff context if this is a flare switch
+            if (isFlareSwitch && flareConfig.handoffContext !== undefined && flareConfig.handoffContext !== -1) {
+                finalMessageHistory = this.applyHandoffContext(finalMessageHistory, flareConfig.handoffContext);
+            }
 
             // Handle system message
             if (flareConfig.systemPrompt) {
@@ -493,6 +503,14 @@ export default class FlarePlugin extends Plugin {
                     model: flareConfig.model
                 }
             });
+            // After appending new messages, trim the message history using the context window so that subsequent messages receive only a reduced history
+            if (!isFlareSwitch) {
+                if (flareConfig.contextWindow !== undefined) {
+                    finalMessageHistory = this.applyContextWindow(finalMessageHistory, flareConfig.contextWindow);
+                } else {
+                    throw new Error('Context window is undefined');
+                }
+            }
 
             this.lastUsedFlare = newFlareName;
             return response;
@@ -552,6 +570,7 @@ export default class FlarePlugin extends Plugin {
                 }
             }
 
+            // If no file exists, return default config
             if (!flareFile) {
                 return {
                     name: flareName,
@@ -559,57 +578,38 @@ export default class FlarePlugin extends Plugin {
                     model: model,
                     enabled: true,
                     description: '',
-                    temperature: 0.7,
-                    maxTokens: 2048,
-                    historyWindow: -1,
-                    handoffWindow: -1,
-                    systemPrompt: 'You are a helpful AI assistant.',
+                    contextWindow: -1,
+                    handoffContext: -1,
                     stream: false,
-                    isReasoningModel: false,
-                    reasoningHeader: '<think>'
+                    systemPrompt: "You are a helpful AI assistant.",
+                    isReasoningModel: false
                 };
             }
 
-            // Get frontmatter and content
-            const frontmatter = this.app.metadataCache.getFileCache(flareFile)?.frontmatter;
-            const content = await this.app.vault.cachedRead(flareFile);
-            const systemPrompt = content.replace(/^---[\s\S]*?---/, '').trim();
-
-            const provider = frontmatter?.provider || defaultProvider;
-            const providerSettings2 = this.settings.providers[provider];
-            
-            // Ensure we have a valid model from frontmatter or provider
-            let finalModel = frontmatter?.model;
-            if (!finalModel && providerSettings2) {
-                if (providerSettings2.defaultModel) {
-                    finalModel = providerSettings2.defaultModel;
-                } else {
-                    // Try to get first available model
-                    try {
-                        const models = await this.getModelsForProvider(providerSettings2.type);
-                        if (models.length > 0) {
-                            finalModel = models[0];
-                        }
-                    } catch (error) {
-                        console.error('Failed to get models for provider:', error);
-                    }
-                }
+            // Read and parse file content
+            const content = await this.app.vault.read(flareFile);
+            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+            if (!frontmatterMatch) {
+                throw new Error('Invalid flare file format');
             }
+
+            const [_, frontmatterContent, systemPrompt] = frontmatterMatch;
+            const frontmatter = this.parseFrontmatter(frontmatterContent);
 
             return {
                 name: flareName,
-                provider: provider,
-                model: finalModel || model || '',  // Fallback to initial model if needed
-                enabled: frontmatter?.enabled ?? true,
-                description: frontmatter?.description || '',
-                temperature: frontmatter?.temperature ?? 0.7,
-                maxTokens: frontmatter?.maxTokens ?? 2048,
-                historyWindow: frontmatter?.historyWindow ?? -1,
-                handoffWindow: frontmatter?.handoffWindow ?? -1,
-                systemPrompt: systemPrompt || 'You are a helpful AI assistant.',
-                stream: frontmatter?.stream ?? false,
-                isReasoningModel: frontmatter?.isReasoningModel ?? false,
-                reasoningHeader: frontmatter?.reasoningHeader || '<think>'
+                provider: frontmatter.provider || defaultProvider,
+                model: frontmatter.model || model,
+                enabled: frontmatter.enabled ?? true,
+                description: frontmatter.description || '',
+                temperature: frontmatter.temperature ?? 0.7,
+                maxTokens: frontmatter.maxTokens,
+                contextWindow: frontmatter.contextWindow ?? -1,
+                handoffContext: frontmatter.handoffContext ?? -1,
+                systemPrompt: systemPrompt.trim(),
+                stream: frontmatter.stream ?? false,
+                isReasoningModel: frontmatter.isReasoningModel ?? false,
+                reasoningHeader: frontmatter.reasoningHeader || '<think>'
             };
         } catch (error) {
             console.error('Failed to load flare config:', error);
@@ -788,7 +788,7 @@ export default class FlarePlugin extends Plugin {
                         temperature: view.currentTemp,
                         maxTokens: newFlare.maxTokens,
                         messageHistory: view.messageHistory,
-                        historyWindow: newFlare.historyWindow
+                        contextWindow: newFlare.contextWindow
                     });
                 }
             }
@@ -831,8 +831,10 @@ export default class FlarePlugin extends Plugin {
         // Get the last N complete pairs
         const result: Array<{role: string; content: string; settings?: any}> = [];
         
-        // Add system messages first
-        result.push(...systemMessages);
+        // Add only the last system message, if any, to the result
+        if (systemMessages.length) {
+            result.push(systemMessages[systemMessages.length - 1]);
+        }
         
         // Add the last N pairs
         const targetPairs = pairs.slice(-window);
@@ -1017,5 +1019,26 @@ export default class FlarePlugin extends Plugin {
 
     private formatTaskResult(values: any[]): string {
         return values.map((task: any) => `- [ ] ${task}`).join('\n');
+    }
+
+    private parseFrontmatter(content: string): any {
+        const frontmatter: any = {};
+        content.split('\n').forEach(line => {
+            const match = line.match(/^(\w+):\s*(.*)$/);
+            if (match) {
+                const [_, key, value] = match;
+                // Handle quoted strings
+                if (value.startsWith('"') && value.endsWith('"')) {
+                    frontmatter[key] = value.slice(1, -1);
+                } else if (value === 'true' || value === 'false') {
+                    frontmatter[key] = value === 'true';
+                } else if (!isNaN(Number(value))) {
+                    frontmatter[key] = Number(value);
+                } else {
+                    frontmatter[key] = value;
+                }
+            }
+        });
+        return frontmatter;
     }
 } 

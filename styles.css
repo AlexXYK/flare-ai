@@ -1083,6 +1083,13 @@
     padding-right: 4px;
 }
 
+/* Title Generation Settings */
+/* Style for the pairs input specifically */
+.setting-item input[type="text"][placeholder="2"] {
+    width: 60px;
+    text-align: center;
+}
+
 /* Mobile optimizations */
 /* Replace media query with platform-specific class */
 .is-mobile .models-list {
@@ -1099,6 +1106,22 @@
 
 .is-mobile .model-header {
     min-height: 32px; /* Ensure good touch target size */
+}
+
+/* Ensure proper touch targets on mobile - SCOPED TO PLUGIN */
+.is-mobile .flare-chat-container .setting-item-control {
+    min-height: 36px; /* Minimum touch target size */
+    display: flex;
+    align-items: center;
+}
+
+.is-mobile .flare-chat-container .setting-item-control button,
+.is-mobile .flare-chat-container .setting-item-control .checkbox-container {
+    min-width: 36px;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* Keep some responsive styles for small screens regardless of platform */
@@ -1126,22 +1149,6 @@
 .is-mobile .models-list-content::-webkit-scrollbar-thumb {
     background-color: var(--background-modifier-border);
     border-radius: 2px;
-}
-
-/* Ensure proper touch targets on mobile */
-.is-mobile .setting-item-control {
-    min-height: 36px; /* Minimum touch target size */
-    display: flex;
-    align-items: center;
-}
-
-.is-mobile .setting-item-control button,
-.is-mobile .setting-item-control .checkbox-container {
-    min-width: 36px;
-    min-height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
 }
 
 /* Empty state */
@@ -2262,3 +2269,5 @@
     min-height: 0;
     overflow: hidden;
 }
+
+

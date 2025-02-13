@@ -241,14 +241,15 @@ export class ProviderSettingsView {
                     }
                 }));
 
-        // Try to load models if none are loaded
+        // Try to load models if none are loaded, but only show errors if this isn't a new provider
         if (!this.settings.availableModels?.length) {
             try {
                 const models = await this.plugin.providerManager.getAvailableModels(this.settings);
                 this.settings.availableModels = models;
                 this.settings.visibleModels = this.settings.visibleModels || [];
             } catch (error) {
-                if (error instanceof Error) {
+                // Only show error if this isn't a new provider (i.e., has a type but no models)
+                if (this.settings.type && error instanceof Error) {
                     new Notice('Error loading models: ' + error.message);
                 }
             }

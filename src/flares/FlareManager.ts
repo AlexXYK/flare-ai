@@ -104,14 +104,14 @@ export class FlareManager {
                     if (providerSettings.defaultModel) {
                         model = providerSettings.defaultModel;
                     } else {
-                        // Try to get first available model
+                        // Try to get first available model - silently fail if we can't
                         try {
                             const models = await this.plugin.getModelsForProvider(providerSettings.type);
                             if (models.length > 0) {
                                 model = models[0];
                             }
                         } catch (error) {
-                            console.error('Failed to get models for provider:', error);
+                            console.debug('Failed to get models for provider:', error);
                         }
                     }
                 }
@@ -122,8 +122,8 @@ export class FlareManager {
                     model: model,
                     enabled: true,
                     description: '',
-                    historyWindow: -1,
-                    handoffWindow: -1,
+                    contextWindow: -1,
+                    handoffContext: -1,
                     stream: false,
                     systemPrompt: "You are a helpful AI assistant.",
                     isReasoningModel: false
@@ -184,8 +184,8 @@ export class FlareManager {
             const providerSettings = this.plugin.settings.providers[providerId];
             
             // Validate windows
-            const handoffWindow = frontmatter.handoffWindow ?? -1;
-            const historyWindow = frontmatter.historyWindow ?? -1;
+            const handoffContext = frontmatter.handoffContext ?? -1;
+            const contextWindow = frontmatter.contextWindow ?? -1;
 
             return {
                 name: flareName,
@@ -196,8 +196,8 @@ export class FlareManager {
                 systemPrompt: systemPrompt.trim(),
                 enabled: frontmatter.enabled ?? true,
                 description: frontmatter.description || '',
-                historyWindow: historyWindow,
-                handoffWindow: handoffWindow,
+                contextWindow: contextWindow,
+                handoffContext: handoffContext,
                 stream: frontmatter.stream ?? false,
                 isReasoningModel: frontmatter.isReasoningModel ?? false,
                 reasoningHeader: frontmatter.reasoningHeader || '<think>'
@@ -444,8 +444,11 @@ export class FlareManager {
                     if (dropdownComponent) {
                         dropdownComponent.addOption(newFlareName, newFlareName);
                         dropdownComponent.setValue(newFlareName);
+                        // Set current flare and show its settings
+                        this.currentFlare = newFlareName;
+                        await this.showFlareSettings(wrapper, newFlareName);
                     }
-                    new Notice('New flare created. Select it from the dropdown to configure.');
+                    new Notice('New flare created');
                 }
             });
 
@@ -672,8 +675,37 @@ export class FlareManager {
                                     this.markAsChanged();
                                 });
                         } catch (error) {
-                            console.error('Failed to load models:', error);
-                            new Notice('Failed to load models');
+                            console.debug('Failed to load models:', error);
+                            // Only show notice if this isn't a new provider (no models configured yet)
+                            if (Array.isArray(provider.availableModels) && provider.availableModels.length > 0) {
+                                new Notice('Failed to load models');
+                            }
+
+                            // Remove any existing error messages
+                            const existingError = containerEl.querySelector('.flare-error-message');
+                            if (existingError) existingError.remove();
+
+                            // Create error message container
+                            const errorDiv = document.createElement('div');
+                            errorDiv.className = 'flare-error-message';
+                            errorDiv.textContent = 'Failed to load models. Please try again.';
+                            
+                            // Create retry button
+                            const retryButton = document.createElement('button');
+                            retryButton.className = 'mod-warning';
+                            retryButton.textContent = 'Retry';
+                            retryButton.onclick = () => {
+                                errorDiv.remove();
+                                this.updateModelDropdown(containerEl, settings.provider);
+                            };
+                            
+                            // Add button to error message
+                            errorDiv.appendChild(retryButton);
+                            
+                            // Add error message to container
+                            if (containerEl instanceof HTMLElement) {
+                                containerEl.appendChild(errorDiv);
+                            }
                         }
                     });
             }
@@ -695,11 +727,11 @@ export class FlareManager {
             .setName('Context Window')
             .setDesc('Maximum number of conversation pairs to maintain during chat (-1 for all)')
             .addText(text => text
-                .setValue(String(settings.historyWindow))
+                .setValue(String(settings.contextWindow))
                 .onChange(value => {
                     const num = parseInt(value);
                     if (!isNaN(num) && (num > 0 || num === -1)) {
-                        settings.historyWindow = num;
+                        settings.contextWindow = num;
                         this.markAsChanged();
                     }
                 }));
@@ -709,11 +741,11 @@ export class FlareManager {
             .setName('Handoff Context')
             .setDesc('Number of conversation pairs to carry over when switching to this flare (-1 for all)')
             .addText(text => text
-                .setValue(String(settings.handoffWindow ?? -1))
+                .setValue(String(settings.handoffContext ?? -1))
                 .onChange(value => {
                     const num = parseInt(value);
                     if (!isNaN(num) && (num > 0 || num === -1)) {
-                        settings.handoffWindow = num;
+                        settings.handoffContext = num;
                         this.markAsChanged();
                     }
                 }));
@@ -1158,42 +1190,31 @@ export class FlareManager {
                     
                     // Filter models based on visibility settings
                     let visibleModels = allModels;
-                    if (provider.visibleModels && Array.isArray(provider.visibleModels)) {
+                    if (provider.visibleModels && provider.visibleModels.length > 0) {
                         visibleModels = allModels.filter(model => 
                             provider.visibleModels?.includes(model) ?? false
                         );
                     }
 
-                    // Add models to dropdown
                     visibleModels.forEach(model => {
                         dropdown.addOption(model, model);
                     });
 
-                    // Set current value or default
-                    const config = this.currentFlareConfig;
-                    if (config) {
-                        if (config.model && visibleModels.includes(config.model)) {
-                            dropdown.setValue(config.model);
-                        } else {
-                            const defaultModel = provider.defaultModel || visibleModels[0] || '';
-                            config.model = defaultModel;
-                            dropdown.setValue(defaultModel);
-                        }
+                    if (this.currentFlareConfig) {
+                        dropdown.setValue(this.currentFlareConfig.model || provider.defaultModel || '')
+                            .onChange(value => {
+                                if (this.currentFlareConfig) {
+                                    this.currentFlareConfig.model = value;
+                                    this.markAsChanged();
+                                }
+                            });
                     }
-
-                    // Handle model selection
-                    dropdown.onChange(value => {
-                        const config = this.currentFlareConfig;
-                        if (!config) return;
-                        config.model = value;
-                        const settingItem = modelSettingContainer.querySelector('.setting-item');
-                        if (settingItem instanceof HTMLElement) {
-                            this.markAsChanged(container, settingItem);
-                        }
-                    });
                 } catch (error) {
-                    console.error('Failed to load models:', error);
-                    new Notice('Failed to load models');
+                    console.debug('Failed to load models:', error);
+                    // Only show notice if this isn't a new provider (no models configured yet)
+                    if (Array.isArray(provider.availableModels) && provider.availableModels.length > 0) {
+                        new Notice('Failed to load models');
+                    }
 
                     // Remove any existing error messages
                     const existingError = container.querySelector('.flare-error-message');
@@ -1217,9 +1238,7 @@ export class FlareManager {
                     errorDiv.appendChild(retryButton);
                     
                     // Add error message to container
-                    if (container instanceof HTMLElement) {
-                        container.appendChild(errorDiv);
-                    }
+                    container.appendChild(errorDiv);
                 }
             });
     }
@@ -1295,12 +1314,12 @@ export class FlareManager {
                     .setDesc('Maximum number of conversation pairs to maintain during chat (-1 for all)')
                     .addText(text => {
                         if (!this.currentFlareConfig) return text;
-                        text.setValue(String(this.currentFlareConfig.historyWindow))
+                        text.setValue(String(this.currentFlareConfig.contextWindow))
                             .onChange(value => {
                                 if (!this.currentFlareConfig) return;
                                 const num = parseInt(value);
                                 if (!isNaN(num) && (num > 0 || num === -1)) {
-                                    this.currentFlareConfig.historyWindow = num;
+                                    this.currentFlareConfig.contextWindow = num;
                                     const settingItem = (text as any).settingEl || text.inputEl.closest('.setting-item');
                                     if (settingItem) {
                                         this.markAsChanged(form, settingItem);
@@ -1316,12 +1335,12 @@ export class FlareManager {
                     .setDesc('Number of conversation pairs to carry over when switching to this flare (-1 for all)')
                     .addText(text => {
                         if (!this.currentFlareConfig) return text;
-                        text.setValue(String(this.currentFlareConfig.handoffWindow ?? -1))
+                        text.setValue(String(this.currentFlareConfig.handoffContext ?? -1))
                             .onChange(value => {
                                 if (!this.currentFlareConfig) return;
                                 const num = parseInt(value);
                                 if (!isNaN(num) && (num > 0 || num === -1)) {
-                                    this.currentFlareConfig.handoffWindow = num;
+                                    this.currentFlareConfig.handoffContext = num;
                                     const settingItem = (text as any).settingEl || text.inputEl.closest('.setting-item');
                                     if (settingItem) {
                                         this.markAsChanged(form, settingItem);
@@ -1415,9 +1434,9 @@ export class FlareManager {
                 `temperature: ${this.currentFlareConfig.temperature}`,
                 `maxTokens: ${this.currentFlareConfig.maxTokens}`,
                 '# Context Window: number of pairs to maintain during chat',
-                `historyWindow: ${this.currentFlareConfig.historyWindow}`,
+                `contextWindow: ${this.currentFlareConfig.contextWindow}`,
                 '# Handoff Context: number of pairs to carry over when switching flares',
-                `handoffWindow: ${this.currentFlareConfig.handoffWindow}`,
+                `handoffContext: ${this.currentFlareConfig.handoffContext}`,
                 `stream: ${this.currentFlareConfig.stream}`,
                 `isReasoningModel: ${this.currentFlareConfig.isReasoningModel}`,
                 `reasoningHeader: "${this.currentFlareConfig.reasoningHeader}"`,
@@ -1450,6 +1469,41 @@ export class FlareManager {
         }
     }
 
+    private async getNextAvailableFlareNumber(baseName: string): Promise<string> {
+        try {
+            const flareFolder = this.plugin.settings.flaresFolder;
+            if (!flareFolder) return baseName;
+
+            const files = await this.plugin.app.vault.adapter.list(flareFolder);
+            const flareFiles = files.files.filter(file => file.endsWith('.md'));
+            
+            // If no file with baseName exists, return baseName
+            const baseNameExists = flareFiles.some(file => 
+                file === `${flareFolder}/${baseName}.md`
+            );
+            if (!baseNameExists) return baseName;
+
+            // Find the highest number
+            let maxNumber = 1;
+            const regex = new RegExp(`${baseName}(\\d+)\\.md$`);
+            
+            flareFiles.forEach(file => {
+                const match = file.match(regex);
+                if (match) {
+                    const num = parseInt(match[1]);
+                    if (!isNaN(num) && num >= maxNumber) {
+                        maxNumber = num + 1;
+                    }
+                }
+            });
+
+            return `${baseName}${maxNumber}`;
+        } catch (error) {
+            console.error('Error finding next available flare number:', error);
+            return `${baseName}1`; // Fallback
+        }
+    }
+
     private async createNewFlare(): Promise<string> {
         try {
             const flareFolder = this.plugin.settings.flaresFolder;
@@ -1461,7 +1515,8 @@ export class FlareManager {
             // Ensure the flares folder exists
             await this.plugin.ensureFlaresFolderExists();
 
-            const name = `flare-${Date.now()}`;
+            // Get a unique name starting with "NewFlare"
+            const name = await this.getNextAvailableFlareNumber('NewFlare');
             const flare: FlareConfig = {
                 name,
                 provider: Object.keys(this.plugin.settings.providers)[0] || '',
@@ -1471,8 +1526,8 @@ export class FlareManager {
                 temperature: 0.7,
                 maxTokens: 2048,
                 systemPrompt: "You are a helpful AI assistant.",
-                historyWindow: -1, // Default to all history
-                handoffWindow: -1, // Default to no handoff context
+                contextWindow: -1, // Default to all context
+                handoffContext: -1, // Default to no handoff context
                 stream: false, // Default to no streaming
                 isReasoningModel: false,
                 reasoningHeader: '<think>'
@@ -1488,9 +1543,9 @@ export class FlareManager {
                 `temperature: ${flare.temperature}`,
                 `maxTokens: ${flare.maxTokens}`,
                 '# Context Window: number of pairs to maintain during chat',
-                `historyWindow: ${flare.historyWindow}`,
+                `contextWindow: ${flare.contextWindow}`,
                 '# Handoff Context: number of pairs to carry over when switching flares',
-                `handoffWindow: ${flare.handoffWindow}`,
+                `handoffContext: ${flare.handoffContext}`,
                 `stream: ${flare.stream}`,
                 `isReasoningModel: ${flare.isReasoningModel}`,
                 `reasoningHeader: "${flare.reasoningHeader}"`,
@@ -1637,8 +1692,8 @@ export class FlareManager {
                 description: frontmatter.description || '',
                 temperature: frontmatter.temperature ?? 0.7,
                 maxTokens: frontmatter.maxTokens ?? 2048,
-                historyWindow: frontmatter.historyWindow ?? -1,
-                handoffWindow: frontmatter.handoffWindow ?? -1,
+                contextWindow: frontmatter.contextWindow ?? -1,
+                handoffContext: frontmatter.handoffContext ?? -1,
                 systemPrompt: systemPrompt,
                 stream: frontmatter.stream ?? false,
                 isReasoningModel: frontmatter.isReasoningModel ?? false,

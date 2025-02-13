@@ -149,7 +149,7 @@ export class GeneralSettingTab extends PluginSettingTab {
         // Enable auto-save
         new Setting(containerEl)
             .setName('Enable auto-save')
-            .setDesc('Automatically save chat history at regular intervals')
+            .setDesc('Save chat history to disk automatically. When disabled, chats exist only in memory and are lost when Obsidian is closed.')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.autoSaveEnabled ?? true)
                 .onChange(value => {
@@ -157,20 +157,30 @@ export class GeneralSettingTab extends PluginSettingTab {
                     this.markSectionAsChanged('history');
                 }));
 
-        // Auto-save interval
+        // Date format setting
         new Setting(containerEl)
-            .setName('Auto-save interval')
-            .setDesc('How often to save chat history (in seconds)')
-            .addText(text => text
-                .setPlaceholder('30')
-                .setValue(String(this.plugin.settings.autoSaveInterval || 30))
-                .onChange(value => {
-                    const interval = parseInt(value);
-                    if (!isNaN(interval) && interval > 0) {
-                        this.plugin.settings.autoSaveInterval = interval;
+            .setName('Date format')
+            .setDesc('Format for dates in chat history filenames')
+            .addDropdown(dropdown => {
+                const formats = {
+                    'MM-DD-YYYY': 'MM-DD-YYYY (e.g., 12-31-2023)',
+                    'DD-MM-YYYY': 'DD-MM-YYYY (e.g., 31-12-2023)',
+                    'YYYY-MM-DD': 'YYYY-MM-DD (e.g., 2023-12-31)',
+                    'MM-DD-YY': 'MM-DD-YY (e.g., 12-31-23)',
+                    'DD-MM-YY': 'DD-MM-YY (e.g., 31-12-23)',
+                    'YY-MM-DD': 'YY-MM-DD (e.g., 23-12-31)'
+                };
+                
+                Object.entries(formats).forEach(([value, label]) => {
+                    dropdown.addOption(value, label);
+                });
+                
+                dropdown.setValue(this.plugin.settings.dateFormat || 'MM-DD-YYYY')
+                    .onChange(value => {
+                        this.plugin.settings.dateFormat = value;
                         this.markSectionAsChanged('history');
-                    }
-                }));
+                    });
+            });
 
         // Max history files
         new Setting(containerEl)
@@ -226,9 +236,6 @@ export class GeneralSettingTab extends PluginSettingTab {
             
             if (section === 'general') {
                 await this.plugin.ensureFlaresFolderExists();
-            } else if (section === 'history') {
-                // Update autosave when history settings change
-                this.plugin.chatHistoryManager.updateAutoSave();
             }
             
             const actionButtons = this.sectionActionButtons.get(section);
@@ -286,20 +293,27 @@ export class GeneralSettingTab extends PluginSettingTab {
                 toggle.setValue(this.plugin.settings.titleSettings.autoGenerate ?? false)
                     .onChange(async value => {
                         this.plugin.settings.titleSettings.autoGenerate = value;
-                        // Show/hide the message pairs setting based on toggle
-                        const pairsContainer = titleSection.querySelector('.auto-title-pairs-setting');
-                        if (pairsContainer instanceof HTMLElement) {
-                            pairsContainer.classList.toggle('is-visible', value);
-                        }
                         this.markSectionAsChanged('title');
+                        await this.plugin.saveData(this.plugin.settings);
                     });
             });
 
         // Add message pairs setting
-        const pairsContainer = titleSection.createDiv({ cls: 'auto-title-pairs-setting' });
-        if (this.plugin.settings.titleSettings.autoGenerate) {
-            pairsContainer.classList.add('is-visible');
-        }
+        new Setting(titleSection)
+            .setName('Auto-generate after pairs')
+            .setDesc('Number of message pairs after which to automatically generate a title')
+            .addText(text => {
+                text.setValue(String(this.plugin.settings.titleSettings.autoGenerateAfterPairs || 2))
+                    .setPlaceholder('2')
+                    .onChange(async value => {
+                        const pairs = parseInt(value);
+                        if (!isNaN(pairs) && pairs > 0) {
+                            this.plugin.settings.titleSettings.autoGenerateAfterPairs = pairs;
+                            this.markSectionAsChanged('title');
+                            await this.plugin.saveData(this.plugin.settings);
+                        }
+                    });
+            });
 
         new Setting(titleSection)
             .setName('Provider')
