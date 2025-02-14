@@ -35,6 +35,12 @@
     --assistant-border: var(--background-modifier-border-hover);
 }
 
+/* Core layout: Ensure proper container sizing within Obsidian */
+.workspace-tabs .workspace-leaf .view-content[data-type="flare-chat"] {
+    height: 100%;
+    padding-bottom: 0 !important;
+}
+
 /* 2. Core Layout Components
    ------------------------ */
 .flare-chat-container {
@@ -51,12 +57,9 @@
 }
 
 /* Core layout: Ensure proper container sizing within Obsidian */
-.flare-chat-container.workspace-leaf-content[data-type="flare-chat"] .view-content {
-    padding-bottom: 0 !important;
-}
 
-.flare-chat-container.workspace-leaf-content[data-type="flare-chat"] .view-content,
-.flare-chat-container.workspace-leaf-content[data-type="flare-chat"] .mod-root {
+.workspace-leaf-content[data-type="flare-chat"] .view-content,
+.workspace-leaf-content[data-type="flare-chat"] .mod-root {
     height: 100%;
     min-height: 0;
     overflow: hidden;
@@ -321,6 +324,11 @@
 .flare-footer-right {
     justify-content: flex-end;
 }
+
+.workspace-leaf-content[data-type="ai-chat-view"] .view-content{
+    padding: 0px !important;
+}
+
 
 /* Temperature Control and Model Control */
 .flare-temp-control,
@@ -1208,6 +1216,13 @@
     cursor: not-allowed;
 }
 
+/* Adjust container padding for mobile */
+@media (max-width: 768px) {
+    .workspace-leaf-content[data-type="ai-chat-view"] .view-content{
+        padding: 0px !important;
+    }
+}
+
 /* 5. History Components
    --------------------- */
 /* (History Components - No Changes in this Revision, Keeping Original) */
@@ -1519,23 +1534,11 @@
 }
 
 /* Mobile optimization for flare-footer */
-.is-mobile .flare-footer {
-    flex-shrink: 0;
-    position: sticky;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    padding: 1px 1px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-top: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
-    min-height: 28px;
-}
 
-media (max-width: 768px) {
-    .workspace-leaf-content[data-type="flare-chat"] .view-content {
+
+/* Remove conflicting styles */
+@media (max-width: 768px) {
+    body .view-content[data-type="flare-chat"] .flare-footer {
         padding: 2px !important;
     }
 }

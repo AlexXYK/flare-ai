@@ -627,6 +627,43 @@ export class AIChatView extends ItemView {
 
                 const content = this.inputEl.value.trim();
                 if (content) {
+                    // Check for temperature command
+                    if (content.startsWith('/t ')) {
+                        try {
+                            const tempStr = content.substring(3).trim();
+                            const newTemp = parseFloat(tempStr);
+                            
+                            // Clear input field immediately
+                            if (this.inputEl instanceof HTMLTextAreaElement) {
+                                this.inputEl.value = '';
+                                this.inputEl.classList.remove('has-content', 'has-custom-height');
+                                this.inputEl.removeAttribute('data-content-height');
+                                this.inputEl.style.height = 'auto';
+                                const wrapper = this.inputEl.closest('.flare-input-wrapper');
+                                if (wrapper instanceof HTMLElement) {
+                                    wrapper.style.height = '40px';
+                                }
+                            }
+
+                            // Validate temperature value
+                            if (isNaN(newTemp)) {
+                                throw new Error('Please provide a valid number');
+                            }
+                            
+                            if (newTemp < 0 || newTemp > 2) {
+                                throw new Error('Temperature must be between 0 and 2');
+                            }
+
+                            // Update temperature and UI
+                            this.currentTemp = newTemp;
+                            this.updateTempDisplay();
+                            new Notice(`Temperature set to ${newTemp.toFixed(2)}`);
+                        } catch (error) {
+                            new Notice(`Invalid temperature: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                        }
+                        return;
+                    }
+                    
                     // Check for title command
                     if (content === '/title') {
                         // Clear input field immediately
