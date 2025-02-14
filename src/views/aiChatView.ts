@@ -236,9 +236,8 @@ interface ViewState {
     isProcessing: boolean;
     hasError: boolean;
     errorMessage: string;
-    currentFlare?: string;
-    currentTemp: number;
     expandedMessages: Set<string>;
+    currentTemp?: number;
     lastSavedTimestamp?: number;
 }
 
@@ -265,7 +264,7 @@ export class AIChatView extends ItemView {
     /** Current flare configuration */
     public currentFlare: FlareConfig | undefined;
     /** Current temperature setting */
-    public currentTemp: number = CONSTANTS.DEFAULT_TEMPERATURE;
+    public currentTemp: number | undefined;
     /** Array of message history */
     public messageHistory: Array<{role: string; content: string; timestamp?: number; settings?: any}> = [];
     /** Reference to the Obsidian app */
@@ -307,7 +306,6 @@ export class AIChatView extends ItemView {
         isProcessing: false,
         hasError: false,
         errorMessage: '',
-        currentTemp: CONSTANTS.DEFAULT_TEMPERATURE,
         expandedMessages: new Set()
     };
 
@@ -551,6 +549,7 @@ export class AIChatView extends ItemView {
         
         // Add model display
         this.modelDisplayEl = modelControl.createSpan('flare-model-value');
+        this.modelDisplayEl.setText('--');
         
         // Add click handler for model selection
         modelControl.onclick = async () => {
@@ -562,7 +561,7 @@ export class AIChatView extends ItemView {
         const tempControl = footerRight.createDiv('flare-temp-control');
         tempControl.addClass('is-disabled'); // Start disabled
         tempControl.onclick = () => {
-            if (!this.currentFlare) return; // Don't allow temp changes without a flare
+            if (!this.currentFlare || this.currentTemp === undefined) return; // Don't allow temp changes without a flare and temp
             new TempDialog(
                 this.plugin,
                 this.currentTemp,
@@ -577,7 +576,7 @@ export class AIChatView extends ItemView {
         setIcon(tempIcon, 'thermometer');
         
         this.tempDisplayEl = tempControl.createSpan('flare-temp-value');
-        this.updateTempDisplay();
+        this.tempDisplayEl.setText('--');  // Initialize with -- instead of the default temperature
         
         // Initialize history sidebar
         this.historySidebar = new HistorySidebar(this.plugin, async (file: TFile) => {
@@ -1123,10 +1122,10 @@ export class AIChatView extends ItemView {
                 }
             }
 
-            // Reset temperature to default and update display
-            this.currentTemp = CONSTANTS.DEFAULT_TEMPERATURE;
+            // Reset temperature to undefined
+            this.currentTemp = undefined;
             if (this.tempDisplayEl) {
-                this.tempDisplayEl.textContent = this.currentTemp.toFixed(2);
+                this.tempDisplayEl.setText('--');
                 const tempControl = this.tempDisplayEl.closest('.flare-temp-control');
                 if (tempControl instanceof HTMLElement) {
                     tempControl.classList.add('is-disabled');
@@ -1142,9 +1141,7 @@ export class AIChatView extends ItemView {
                 isStreaming: false,
                 isProcessing: false,
                 hasError: false,
-                errorMessage: '',
-                currentTemp: CONSTANTS.DEFAULT_TEMPERATURE,
-                currentFlare: undefined
+                errorMessage: ''
             });
         } catch (error) {
             console.error('Error starting new chat:', error);
@@ -1200,8 +1197,8 @@ export class AIChatView extends ItemView {
     private updateTempDisplay() {
         if (!this.tempDisplayEl) return;
 
-        // Format temperature with 2 decimal places
-        const tempText = this.currentTemp.toFixed(2);
+        // Show -- if no flare is selected or no temperature set
+        const tempText = !this.currentFlare || this.currentTemp === undefined ? '--' : this.currentTemp.toFixed(2);
         this.tempDisplayEl.textContent = tempText;
 
         // Update temperature control state
@@ -1651,7 +1648,7 @@ export class AIChatView extends ItemView {
                 flare: this.currentFlare?.name || 'default',
                 provider: this.currentFlare?.provider || 'default',
                 model: this.currentFlare?.model || 'default',
-                temperature: this.currentTemp,
+                temperature: this.currentTemp ?? 0.7, // Use 0.7 as fallback only when needed for API
                 maxTokens: this.currentFlare?.maxTokens,
                 contextWindow: this.currentFlare?.contextWindow,
                 handoffContext: this.currentFlare?.handoffContext
@@ -1671,7 +1668,7 @@ export class AIChatView extends ItemView {
                 flare: this.currentFlare?.name || 'default',
                 provider: this.currentFlare?.provider || 'default',
                 model: this.currentFlare?.model || 'default',
-                temperature: this.currentTemp,
+                temperature: this.currentTemp ?? 0.7, // Use 0.7 as fallback only when needed for API
                 maxTokens: this.currentFlare?.maxTokens,
                 contextWindow: this.currentFlare?.contextWindow,
                 handoffContext: this.currentFlare?.handoffContext
@@ -1810,7 +1807,7 @@ export class AIChatView extends ItemView {
                             flare: this.currentFlare?.name || 'default',
                             provider: this.currentFlare?.provider || 'default',
                             model: this.currentFlare?.model || 'default',
-                            temperature: this.currentTemp,
+                            temperature: this.currentTemp ?? 0.7, // Use 0.7 as fallback only when needed for API
                             maxTokens: this.currentFlare?.maxTokens,
                             contextWindow: this.currentFlare?.contextWindow,
                             handoffContext: this.currentFlare?.handoffContext,
@@ -1834,7 +1831,7 @@ export class AIChatView extends ItemView {
                                 flare: this.currentFlare?.name || 'default',
                                 provider: providerName,  // Use common name instead of ID
                                 model: this.currentFlare?.model || 'default',
-                                temperature: this.currentTemp,
+                                temperature: this.currentTemp ?? 0.7, // Use 0.7 as fallback only when needed for API
                                 maxTokens: this.currentFlare?.maxTokens,
                                 contextWindow: this.currentFlare?.contextWindow,
                                 handoffContext: this.currentFlare?.handoffContext,
@@ -1983,9 +1980,9 @@ export class AIChatView extends ItemView {
                 this.inputEl.setAttribute('placeholder', flare ? `@${flare.name}` : '');
             }
 
-            // Always update temperature to flare's default
-            this.currentTemp = flare.temperature ?? 0.7;
-            if (this.tempDisplayEl) {
+            // Always update temperature to flare's default if available
+            this.currentTemp = flare.temperature;
+            if (this.tempDisplayEl && this.currentTemp !== undefined) {
                 this.tempDisplayEl.textContent = this.currentTemp.toFixed(2);
             }
 
@@ -2784,7 +2781,8 @@ export class AIChatView extends ItemView {
 
         // Update temperature display
         if (this.tempDisplayEl) {
-            this.tempDisplayEl.textContent = this.viewState.currentTemp.toFixed(2);
+            const temp = this.viewState.currentTemp;
+            this.tempDisplayEl.textContent = temp !== undefined ? temp.toFixed(2) : '--';
         }
     }
 
@@ -3059,8 +3057,7 @@ export class AIChatView extends ItemView {
             reasoningContainer.setAttribute('role', 'region');
             reasoningContainer.setAttribute('aria-label', 'AI reasoning process');
             reasoningContainer.setAttribute('aria-expanded', 'false');
-            const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
-            await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
+            // Remove immediate rendering - this will happen on expand
         }
 
         const responseContainer = markdownContainer.createDiv('flare-response-content');

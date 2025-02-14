@@ -161,6 +161,74 @@
     color: var(--text-normal);
 }
 
+/* SVG icon rendering optimizations */
+.flare-chooser svg,
+.flare-send-button svg,
+.flare-model-icon svg,
+.flare-action-button svg,
+.flare-toolbar-button svg {
+    /* Basic sizing and positioning */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    
+    /* Ensure crisp edges on iOS */
+    shape-rendering: crispEdges;
+    
+    /* Prevent scaling issues */
+    flex-shrink: 0;
+    flex-grow: 0;
+    
+    /* Ensure proper positioning */
+    vertical-align: middle;
+    position: relative;
+}
+
+/* iOS-specific adjustments */
+@supports (-webkit-touch-callout: none) {
+    .flare-chooser svg,
+    .flare-send-button svg,
+    .flare-model-icon svg,
+    .flare-action-button svg,
+    .flare-toolbar-button svg {
+        /* Use transform-style to ensure proper stacking */
+        transform-style: preserve-3d;
+        /* Force pixel alignment */
+        transform: translateZ(0);
+        /* Ensure proper paint order */
+        z-index: 1;
+        /* Remove filters that might cause issues */
+        filter: none;
+    }
+    
+    /* Ensure proper button sizing on iOS */
+    .flare-chooser,
+    .flare-send-button,
+    .flare-model-icon,
+    .flare-action-button,
+    .flare-toolbar-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 24px;
+        min-height: 24px;
+        /* Ensure proper touch target size on iOS */
+        padding: 6px;
+        margin: -6px;
+    }
+}
+
+/* Ensure proper color adaptation */
+.theme-dark svg {
+    color-scheme: dark;
+}
+
+.theme-light svg {
+    color-scheme: light;
+}
+
 .flare-bottom-container {
     display: flex;
     flex-direction: column;
@@ -326,7 +394,7 @@
 }
 
 .workspace-leaf-content[data-type="ai-chat-view"] .view-content{
-    padding: 0px !important;
+    padding: 6px !important;
 }
 
 
@@ -373,6 +441,7 @@
 }
 
 /* Temperature Control Disabled State */
+.flare-model-control.is-disabled
 .flare-temp-control.is-disabled {
     opacity: 0.5;
     cursor: not-allowed;

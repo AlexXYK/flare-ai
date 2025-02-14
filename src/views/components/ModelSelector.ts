@@ -131,7 +131,9 @@ export class ModelSelector {
         setIcon(modelIcon, 'cpu');
 
         this.modelNameEl = this.modelButton.createSpan('flare-model-name');
-        this.modelNameEl.setText(this.truncateModelName(this.currentSettings.model));
+        this.modelNameEl.setText(this.currentSettings.model ? 
+            this.truncateModelName(this.currentSettings.model) : 
+            '--');
 
         // -- Temperature control on the right --
         const tempControl = this.footerRightEl.createDiv('flare-temp-control');
@@ -147,7 +149,9 @@ export class ModelSelector {
         setIcon(tempIcon, 'thermometer');
 
         const tempValue = tempControl.createSpan('flare-temp-value');
-        tempValue.setText(String(this.currentSettings.temperature));
+        tempValue.setText(this.currentSettings.model && this.currentSettings.temperature !== undefined ? 
+            this.currentSettings.temperature.toFixed(2) : 
+            '--');
 
         // Keep track, e.g. for future checks
         this.settingsBarEl = this.footerLeftEl;
