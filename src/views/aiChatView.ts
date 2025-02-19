@@ -1736,7 +1736,6 @@ export class AIChatView extends ItemView {
                         handoffContext: this.currentFlare?.handoffContext,
                         isReasoningModel: this.currentFlare?.isReasoningModel,
                         reasoningHeader: this.currentFlare?.reasoningHeader,
-                        reasoningBlocks: accumulatedReasoningBlocks,
                         timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
                     },
                     timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
@@ -2232,19 +2231,13 @@ export class AIChatView extends ItemView {
         markdownContainer.setAttribute('role', 'presentation');
         
         if (role === 'assistant' && settings?.isReasoningModel) {
-            // Determine reasoning blocks and response part. If reasoning blocks were saved in settings (from sendMessage), use them; otherwise, extract from content
-            let reasoningBlocks: string[] = [];
-            let responsePart: string = content;
-            if ((settings as any).reasoningBlocks && (settings as any).reasoningBlocks.length > 0) {
-                reasoningBlocks = (settings as any).reasoningBlocks;
-            } else {
-                const extraction = this.extractReasoningContent(
-                    content,
-                    settings.reasoningHeader || '<think>'
-                );
-                reasoningBlocks = extraction.reasoningBlocks;
-                responsePart = extraction.responsePart;
-            }
+            // Always extract reasoning blocks from content
+            const extraction = this.extractReasoningContent(
+                content,
+                settings.reasoningHeader || '<think>'
+            );
+            const reasoningBlocks = extraction.reasoningBlocks;
+            const responsePart = extraction.responsePart;
 
             // Create reasoning container if we have reasoning blocks
             if (reasoningBlocks.length > 0) {

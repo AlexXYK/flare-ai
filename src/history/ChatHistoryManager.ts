@@ -18,7 +18,6 @@ interface ChatMessage {
         maxTokens?: number;
         contextWindow?: number;
         handoffContext?: number;
-        reasoningBlocks?: string[];
     };
 }
 
@@ -278,7 +277,6 @@ export class ChatHistoryManager {
                     maxTokens: msg.settings?.maxTokens,
                     contextWindow: msg.settings?.contextWindow,
                     handoffContext: msg.settings?.handoffContext,
-                    reasoningBlocks: msg.settings?.reasoningBlocks
                 };
                 
                 return `${header}\n${msg.content}\n<!-- settings: ${JSON.stringify(settings)} -->\n`;
@@ -358,7 +356,6 @@ export class ChatHistoryManager {
                     maxTokens: settings.maxTokens,
                     contextWindow: settings.contextWindow,
                     handoffContext: settings.handoffContext,
-                    reasoningBlocks: settings.reasoningBlocks
                 };
 
                 messages.push({
