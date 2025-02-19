@@ -13,6 +13,12 @@ interface ChatMessage {
         temperature: number;
         flare?: string;
         timestamp?: number;
+        isReasoningModel?: boolean;
+        reasoningHeader?: string;
+        maxTokens?: number;
+        contextWindow?: number;
+        handoffContext?: number;
+        reasoningBlocks?: string[];
     };
 }
 
@@ -219,8 +225,11 @@ export class ChatHistoryManager {
                 // Deduplicate messages before saving
                 const uniqueMessages = new Map<string, ChatMessage>();
                 for (const msg of this.currentHistory.messages) {
-                    const key = `${msg.role}-${msg.timestamp}`;
-                    uniqueMessages.set(key, msg);
+                    // Use role, timestamp, and content hash as key to ensure truly unique messages
+                    const key = `${msg.role}-${msg.timestamp}-${msg.content.length}`;
+                    if (!uniqueMessages.has(key) || force) {
+                        uniqueMessages.set(key, msg);
+                    }
                 }
 
                 this.currentHistory.messages = Array.from(uniqueMessages.values());
@@ -239,7 +248,6 @@ export class ChatHistoryManager {
     private formatHistoryForSave(history: ChatHistory): string {
         const formatDate = (timestamp: number) => {
             const date = new Date(timestamp);
-            // Format as YYYY-MM-DD HH:mm:ss
             return date.toISOString().replace('T', ' ').split('.')[0];
         };
 
@@ -257,15 +265,23 @@ export class ChatHistoryManager {
             .filter(msg => msg && msg.role && ['system', 'user', 'assistant'].includes(msg.role))
             .map(msg => {
                 const header = `## ${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}`;
-                const content = msg.content || '';
-                const settings = msg.settings ? 
-                    `\n<!-- settings: ${JSON.stringify({
-                        ...msg.settings,
-                        timestamp: msg.timestamp,
-                        temperature: Number(msg.settings.temperature) // Ensure temperature is a number
-                    })} -->` : '';
                 
-                return `${header}\n${content}${settings}\n`;
+                // Add settings JSON comment with all necessary fields
+                const settings = {
+                    provider: msg.settings?.provider || 'default',
+                    model: msg.settings?.model || 'default',
+                    temperature: Number(msg.settings?.temperature || 0),
+                    timestamp: msg.timestamp,
+                    flare: msg.settings?.flare,
+                    isReasoningModel: msg.settings?.isReasoningModel,
+                    reasoningHeader: msg.settings?.reasoningHeader,
+                    maxTokens: msg.settings?.maxTokens,
+                    contextWindow: msg.settings?.contextWindow,
+                    handoffContext: msg.settings?.handoffContext,
+                    reasoningBlocks: msg.settings?.reasoningBlocks
+                };
+                
+                return `${header}\n${msg.content}\n<!-- settings: ${JSON.stringify(settings)} -->\n`;
             }).join('\n');
 
         return `${frontmatter}\n${messages}`;
@@ -319,18 +335,31 @@ export class ChatHistoryManager {
                 const role = roleStr as 'system' | 'user' | 'assistant';
                 
                 // Extract settings if present
-                const settingsMatch = block.match(/<!-- settings: (.*?) -->/);
-                const settings = settingsMatch ? JSON.parse(settingsMatch[1]) : undefined;
+                const settingsMatch = block.match(/<!-- settings: (.*?) -->/s);
+                let settings = settingsMatch ? JSON.parse(settingsMatch[1]) : {};
                 
                 // Get timestamp from settings or default to now
                 const timestamp = settings?.timestamp || Date.now();
                 delete settings?.timestamp; // Remove timestamp from settings after extraction
                 
                 // Get content (everything between role and settings/end)
-                const contentStart = lines.slice(1).join('\n');
-                const content = settingsMatch ? 
-                    contentStart.replace(/<!-- settings: .*? -->/, '').trim() :
-                    contentStart.trim();
+                const content = lines.slice(1).join('\n')
+                    .replace(/<!-- settings: .*? -->/s, '')
+                    .trim();
+
+                // Ensure settings has all required fields
+                settings = {
+                    provider: settings.provider || 'default',
+                    model: settings.model || 'default',
+                    temperature: Number(settings.temperature || 0),
+                    flare: settings.flare,
+                    isReasoningModel: settings.isReasoningModel,
+                    reasoningHeader: settings.reasoningHeader,
+                    maxTokens: settings.maxTokens,
+                    contextWindow: settings.contextWindow,
+                    handoffContext: settings.handoffContext,
+                    reasoningBlocks: settings.reasoningBlocks
+                };
 
                 messages.push({
                     role,

@@ -9,6 +9,7 @@ export class ProviderSettingsUI {
     private originalSettings: any;
     private actionButtons: HTMLElement | null = null;
     private providerSettingsView: ProviderSettingsView | null = null;
+    private hasUnsavedChanges: boolean = false;
 
     constructor(
         private plugin: FlarePlugin,
@@ -55,6 +56,16 @@ export class ProviderSettingsUI {
                             // Update original settings after successful save
                             this.originalSettings = JSON.parse(JSON.stringify(this.plugin.settings));
                             this.hideActionButtons();
+                            // After successful save, refresh all dropdowns
+                            this.refreshDropdown();
+                            // Refresh provider dropdowns in flare settings
+                            if (this.plugin.flareManager) {
+                                this.plugin.flareManager.refreshProviderDropdowns();
+                            }
+                            // Refresh provider dropdowns in title settings
+                            if (this.plugin.settingTab) {
+                                this.plugin.settingTab.refreshTitleProviderDropdowns();
+                            }
                             new Notice('Provider settings saved');
                         } catch (error) {
                             console.error('Failed to save provider settings:', error);
@@ -117,9 +128,72 @@ export class ProviderSettingsUI {
 
             d.setValue(this.currentProvider || '');
             d.onChange(value => {
+                const oldProvider = this.currentProvider;
                 this.currentProvider = value || null;
-                this.onProviderChange(this.currentProvider);
-                this.display(); // Refresh the entire UI
+                
+                // Only refresh UI if actually changing provider
+                if (oldProvider !== this.currentProvider) {
+                    // If there are unsaved changes, ask for confirmation
+                    if (this.hasUnsavedChanges) {
+                        const modal = new Modal(this.plugin.app);
+                        modal.titleEl.setText('Unsaved Changes');
+                        modal.contentEl.createEl('p', {
+                            text: 'You have unsaved changes. Do you want to save them before switching providers?'
+                        });
+                        
+                        const buttonContainer = modal.contentEl.createEl('div', { cls: 'modal-button-container' });
+                        
+                        // Save button
+                        buttonContainer.createEl('button', {
+                            text: 'Save',
+                            cls: 'mod-cta'
+                        }).addEventListener('click', async () => {
+                            try {
+                                if (this.providerSettingsView) {
+                                    await this.providerSettingsView.validateSettings();
+                                }
+                                await this.plugin.saveData(this.plugin.settings);
+                                this.hasUnsavedChanges = false;
+                                this.hideActionButtons();
+                                this.switchProvider(value);
+                                new Notice('Provider settings saved');
+                            } catch (error) {
+                                console.error('Failed to save provider settings:', error);
+                                new Notice('Error saving settings: ' + (error instanceof Error ? error.message : 'Unknown error'));
+                                // Revert dropdown selection
+                                d.setValue(oldProvider || '');
+                                this.currentProvider = oldProvider;
+                            }
+                            modal.close();
+                        });
+                        
+                        // Discard button
+                        buttonContainer.createEl('button', {
+                            text: 'Discard',
+                            cls: 'mod-warning'
+                        }).addEventListener('click', () => {
+                            this.hasUnsavedChanges = false;
+                            this.hideActionButtons();
+                            this.switchProvider(value);
+                            modal.close();
+                        });
+                        
+                        // Cancel button
+                        buttonContainer.createEl('button', {
+                            text: 'Cancel',
+                            cls: 'mod-secondary'
+                        }).addEventListener('click', () => {
+                            // Revert dropdown selection
+                            d.setValue(oldProvider || '');
+                            this.currentProvider = oldProvider;
+                            modal.close();
+                        });
+                        
+                        modal.open();
+                    } else {
+                        this.switchProvider(value);
+                    }
+                }
             });
 
             return d;
@@ -276,8 +350,36 @@ export class ProviderSettingsUI {
     }
 
     private handleSettingsChange = (): void => {
-        this.showActionButtons();
+        // Compare current settings with original to determine if there are actual changes
+        const currentProviderSettings = this.currentProvider ? 
+            this.plugin.settings.providers[this.currentProvider] : null;
+        const originalProviderSettings = this.currentProvider && this.originalSettings.providers ? 
+            this.originalSettings.providers[this.currentProvider] : null;
+
+        if (currentProviderSettings && originalProviderSettings) {
+            const hasChanges = JSON.stringify(currentProviderSettings) !== JSON.stringify(originalProviderSettings);
+            
+            if (hasChanges !== this.hasUnsavedChanges) {
+                this.hasUnsavedChanges = hasChanges;
+                if (hasChanges) {
+                    this.showActionButtons();
+                } else {
+                    this.hideActionButtons();
+                }
+            }
+        }
     };
+
+    private switchProvider(value: string | null): void {
+        this.onProviderChange(this.currentProvider);
+        // Store current settings before display refresh
+        if (this.currentProvider) {
+            this.originalSettings = JSON.parse(JSON.stringify(this.plugin.settings));
+            this.hasUnsavedChanges = false; // Reset unsaved changes flag
+            this.hideActionButtons(); // Hide action buttons when switching
+        }
+        this.display(); // Refresh the entire UI
+    }
 
     refreshDropdown(): void {
         const dropdown = this.providerDropdown;

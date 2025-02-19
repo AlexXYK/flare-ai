@@ -5,6 +5,7 @@ import type { ProviderSettings } from '../../types/AIProvider';
 export class ProviderSettingsView {
     private originalSettings: ProviderSettings;
     private actionButtons: HTMLElement | null = null;
+    private hasSettingsChanged: boolean = false;
 
     constructor(
         private plugin: FlarePlugin,
@@ -15,6 +16,24 @@ export class ProviderSettingsView {
     ) {
         // Store original settings for revert
         this.originalSettings = JSON.parse(JSON.stringify(settings));
+    }
+
+    private settingChanged(newValue: any, path: string) {
+        // Get the old value using the path
+        const pathParts = path.split('.');
+        let oldValue = this.originalSettings;
+        for (const part of pathParts) {
+            oldValue = oldValue[part];
+        }
+
+        // Compare values
+        const hasChanged = JSON.stringify(newValue) !== JSON.stringify(oldValue);
+        
+        // Only trigger if the value actually changed
+        if (hasChanged !== this.hasSettingsChanged) {
+            this.hasSettingsChanged = hasChanged;
+            this.onSettingsChange();
+        }
     }
 
     display(): void {
@@ -59,7 +78,7 @@ export class ProviderSettingsView {
                 .setValue(this.settings.name || '')
                 .onChange(value => {
                     this.settings.name = value;
-                    this.onSettingsChange();
+                    this.settingChanged(value, 'name');
                 }));
 
         // Add enabled toggle
@@ -70,7 +89,7 @@ export class ProviderSettingsView {
                 .setValue(this.settings.enabled || false)
                 .onChange(value => {
                     this.settings.enabled = value;
-                    this.onSettingsChange();
+                    this.settingChanged(value, 'enabled');
                 }));
     }
 
@@ -89,8 +108,11 @@ export class ProviderSettingsView {
                 openrouter: 'https://openrouter.ai/api/v1'
             };
 
-            if (this.settings.type && this.settings.type in defaultUrls) {
-                this.settings.baseUrl = this.settings.baseUrl || defaultUrls[this.settings.type];
+            // Only set default URL if it's not already set
+            if (this.settings.type && this.settings.type in defaultUrls && !this.settings.baseUrl) {
+                this.settings.baseUrl = defaultUrls[this.settings.type];
+                // Only trigger change if we actually set a new default
+                this.settingChanged(this.settings.baseUrl, 'baseUrl');
             }
 
             switch (this.settings.type) {
@@ -113,11 +135,6 @@ export class ProviderSettingsView {
                 default:
                     console.warn(`Unknown provider type: ${this.settings.type}`);
             }
-
-            // Trigger settings change to ensure the new default is saved
-            if (this.settings.type) {
-                this.onSettingsChange();
-            }
         } catch (error) {
             console.error('Error in createAuthSettings:', error);
             const errorEl = container.createEl('div', {
@@ -137,7 +154,7 @@ export class ProviderSettingsView {
                     .setValue(this.settings.apiKey || '')
                     .onChange(value => {
                         this.settings.apiKey = value;
-                        this.onSettingsChange();
+                        this.settingChanged(value, 'apiKey');
                     });
                 input.inputEl.type = 'password';
                 this.addPasswordToggle(input.inputEl);
@@ -155,7 +172,7 @@ export class ProviderSettingsView {
                     .setValue(this.settings.apiKey || '')
                     .onChange(value => {
                         this.settings.apiKey = value;
-                        this.onSettingsChange();
+                        this.settingChanged(value, 'apiKey');
                     });
                 input.inputEl.type = 'password';
                 this.addPasswordToggle(input.inputEl);
@@ -170,7 +187,7 @@ export class ProviderSettingsView {
                 .setValue(this.settings.baseUrl || '')
                 .onChange(value => {
                     this.settings.baseUrl = value;
-                    this.onSettingsChange();
+                    this.settingChanged(value, 'baseUrl');
                 }));
     }
 
@@ -185,7 +202,7 @@ export class ProviderSettingsView {
                     .setValue(this.settings.apiKey || '')
                     .onChange(value => {
                         this.settings.apiKey = value;
-                        this.onSettingsChange();
+                        this.settingChanged(value, 'apiKey');
                     });
                 input.inputEl.type = 'password';
                 this.addPasswordToggle(input.inputEl);
@@ -200,7 +217,7 @@ export class ProviderSettingsView {
                 .setValue(this.settings.baseUrl || '')
                 .onChange(value => {
                     this.settings.baseUrl = value;
-                    this.onSettingsChange();
+                    this.settingChanged(value, 'baseUrl');
                 }));
     }
 
@@ -214,7 +231,7 @@ export class ProviderSettingsView {
                 .setValue(this.settings.baseUrl || 'http://localhost:11434')
                 .onChange(async value => {
                     this.settings.baseUrl = value;
-                    this.onSettingsChange();
+                    this.settingChanged(value, 'baseUrl');
                 }));
     }
 
@@ -231,7 +248,7 @@ export class ProviderSettingsView {
                     .setValue(this.settings.apiKey || '')
                     .onChange(value => {
                         this.settings.apiKey = value.trim();
-                        this.onSettingsChange();
+                        this.settingChanged(value, 'apiKey');
                     });
                 input.inputEl.type = 'password';
                 this.addPasswordToggle(input.inputEl);
@@ -247,7 +264,7 @@ export class ProviderSettingsView {
                     .setValue(this.settings.baseUrl || '')
                     .onChange(value => {
                         this.settings.baseUrl = value.trim();
-                        this.onSettingsChange();
+                        this.settingChanged(value, 'baseUrl');
                     });
             });
 
@@ -379,7 +396,7 @@ export class ProviderSettingsView {
                                 } else {
                                     this.settings.visibleModels = this.settings.visibleModels.filter(m => m !== model);
                                 }
-                                this.onSettingsChange();
+                                this.settingChanged(this.settings.visibleModels, 'visibleModels');
 
                                 // Re-render if sorting by visibility
                                 if (currentSort.field === 'visibility') {
@@ -445,26 +462,66 @@ export class ProviderSettingsView {
     }
 
     async validateSettings(): Promise<void> {
-        // Name is always required
+        const errors: string[] = [];
+
+        // Name validation
         if (!this.settings.name?.trim()) {
-            throw new Error('Provider name is required');
+            errors.push('Provider name is required');
+        } else if (this.settings.name.length > 50) {
+            errors.push('Provider name must be less than 50 characters');
         }
 
-        // Type is always required
+        // Type validation
         if (!this.settings.type?.trim()) {
-            throw new Error('Provider type is required');
+            errors.push('Provider type is required');
+        } else if (!['openai', 'anthropic', 'azure', 'ollama', 'openrouter'].includes(this.settings.type)) {
+            errors.push(`Invalid provider type: ${this.settings.type}`);
         }
 
-        // API key is only required for certain providers
-        if (['openai', 'openrouter', 'anthropic'].includes(this.settings.type)) {
+        // API key validation for providers that require it
+        if (['openai', 'openrouter', 'anthropic', 'azure'].includes(this.settings.type)) {
             if (!this.settings.apiKey?.trim()) {
-                throw new Error(`API key is required for ${this.settings.type} provider`);
+                errors.push(`API key is required for ${this.settings.type} provider`);
+            } else if (this.settings.apiKey.length < 20) {
+                errors.push(`API key for ${this.settings.type} appears to be invalid (too short)`);
             }
         }
 
-        // Set default Ollama URL if not provided
-        if (this.settings.type === 'ollama' && !this.settings.baseUrl?.trim()) {
-            this.settings.baseUrl = 'http://localhost:11434';
+        // Base URL validation
+        if (this.settings.baseUrl) {
+            try {
+                const url = new URL(this.settings.baseUrl);
+                if (!['http:', 'https:'].includes(url.protocol)) {
+                    errors.push('Base URL must use HTTP or HTTPS protocol');
+                }
+            } catch (e) {
+                errors.push('Base URL is invalid. Please enter a valid URL');
+            }
+        }
+
+        // Provider-specific validation
+        switch (this.settings.type) {
+            case 'azure':
+                if (!this.settings.baseUrl?.trim()) {
+                    errors.push('Base URL is required for Azure provider');
+                }
+                break;
+            case 'ollama':
+                // Set default Ollama URL if not provided
+                if (!this.settings.baseUrl?.trim()) {
+                    this.settings.baseUrl = 'http://localhost:11434';
+                }
+                break;
+        }
+
+        // Model validation
+        if (this.settings.defaultModel && (!this.settings.visibleModels?.includes(this.settings.defaultModel))) {
+            errors.push('Default model must be one of the visible models');
+        }
+
+        // Throw combined errors if any
+        if (errors.length > 0) {
+            throw new Error(errors.join('\n'));
         }
     }
 } 

@@ -1706,4 +1706,32 @@ export class FlareManager {
             return null;
         }
     }
+
+    // Add method to refresh all provider dropdowns
+    public refreshProviderDropdowns() {
+        // Find all provider dropdowns in flare settings
+        const dropdowns = document.querySelectorAll('.flare-settings .setting-item select, .flare-section-content .setting-item select') as NodeListOf<HTMLSelectElement>;
+        dropdowns.forEach(select => {
+            const dropdown = select as any;
+            if (dropdown.getValue) {
+                const currentValue = dropdown.getValue();
+                this.populateProviderDropdown(dropdown);
+                dropdown.setValue(currentValue);
+            }
+        });
+    }
+
+    private populateProviderDropdown(dropdown: DropdownComponent) {
+        // Clear existing options
+        dropdown.selectEl.empty();
+        
+        // Add default option
+        dropdown.addOption('', 'Select a provider...');
+        
+        Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
+            if (provider.type && this.plugin.providers.has(provider.type)) {
+                dropdown.addOption(id, provider.name || id);
+            }
+        });
+    }
 } 

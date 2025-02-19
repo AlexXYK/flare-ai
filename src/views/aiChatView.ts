@@ -1122,14 +1122,12 @@ export class AIChatView extends ItemView {
                 }
             }
 
-            // Reset temperature to undefined
+            // Reset temperature to undefined and update display
             this.currentTemp = undefined;
-            if (this.tempDisplayEl) {
-                this.tempDisplayEl.setText('--');
-                const tempControl = this.tempDisplayEl.closest('.flare-temp-control');
-                if (tempControl instanceof HTMLElement) {
-                    tempControl.classList.add('is-disabled');
-                }
+            this.updateTempDisplay();
+            const tempControl = this.containerEl.querySelector('.flare-temp-control');
+            if (tempControl instanceof HTMLElement) {
+                tempControl.classList.add('is-disabled');
             }
 
             // Reset plugin state
@@ -1328,8 +1326,9 @@ export class AIChatView extends ItemView {
             for (const message of history.messages) {
                 const messageSettings = {
                     ...message.settings,
-                    isReasoningModel: this.currentFlare?.isReasoningModel,
-                    reasoningHeader: this.currentFlare?.reasoningHeader
+                    flare: message.settings?.flare || history.flare, // Use message's flare name or history's flare name
+                    isReasoningModel: message.settings && message.settings.hasOwnProperty('isReasoningModel') ? message.settings.isReasoningModel : this.currentFlare?.isReasoningModel,
+                    reasoningHeader: message.settings && message.settings.reasoningHeader ? message.settings.reasoningHeader : this.currentFlare?.reasoningHeader
                 };
 
                 // Create message element
@@ -1347,6 +1346,7 @@ export class AIChatView extends ItemView {
                     'data-content': message.content,
                     'data-role': message.role
                 });
+                messageEl.setAttribute('data-timestamp', message.timestamp.toString());
 
                 // Create message content with proper structure
                 const contentEl = messageEl.createDiv('flare-message-content');
@@ -1370,102 +1370,7 @@ export class AIChatView extends ItemView {
                 if (message.role === 'system') {
                     this.renderSystemMessage(messageEl, contentEl, message.content);
                 } else {
-                    // Create content wrapper for actual message content
-                    const contentWrapper = contentEl.createDiv('flare-content-wrapper');
-                    contentWrapper.setAttribute('role', 'presentation');
-
-                    // If the message is from assistant, add flare nametag and metadata at the top
-                    if (message.role === 'assistant') {
-                        const mainText = contentWrapper.createDiv('flare-system-main');
-                        mainText.setAttribute('role', 'presentation');
-                        const flareName = mainText.createSpan('flare-name');
-                        flareName.setAttribute('role', 'button');
-                        flareName.setAttribute('aria-label', `Using flare ${messageSettings.flare || 'default'}`);
-                        flareName.setAttribute('tabindex', '0');
-                        const flameIcon = flareName.createSpan();
-                        setIcon(flameIcon, 'flame');
-                        flareName.createSpan().textContent = `@${messageSettings.flare || 'default'}`;
-
-                        // Create metadata container
-                        const metadataEl = flareName.createDiv('flare-metadata');
-                        metadataEl.setAttribute('role', 'tooltip');
-                        metadataEl.setAttribute('aria-hidden', 'true');
-                        const metadata = this.getFlareMetadata(messageSettings);
-                        Object.entries(metadata).forEach(([key, value]) => {
-                            const item = metadataEl.createDiv('flare-metadata-item');
-                            item.createSpan('metadata-key').textContent = key + ':';
-                            item.createSpan('metadata-value').textContent = ' ' + value;
-                        });
-                    }
-
-                    // Create markdown container AFTER nametag is added
-                    const markdownContainer = contentWrapper.createDiv('flare-markdown-content');
-                    markdownContainer.setAttribute('role', 'presentation');
-
-                    if (message.role === 'assistant' && (messageSettings.isReasoningModel || message.content.includes(messageSettings.reasoningHeader || '<think>'))) {
-                        const reasoningHeader = messageSettings.reasoningHeader || '<think>';
-                        const { reasoningBlocks, responsePart } = this.extractReasoningContent(message.content, reasoningHeader);
-
-                        if (reasoningBlocks.length > 0) {
-                            messageEl.setAttribute('data-timestamp', message.timestamp.toString());
-
-                            // Create reasoning container
-                            const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
-                            reasoningContainer.setAttribute('role', 'region');
-                            reasoningContainer.setAttribute('aria-label', 'AI reasoning process');
-                            reasoningContainer.setAttribute('aria-expanded', 'false');
-
-                            // Create response container
-                            const responseContainer = markdownContainer.createDiv('flare-response-content');
-                            responseContainer.setAttribute('role', 'region');
-                            responseContainer.setAttribute('aria-label', 'AI response');
-
-                            // Add reasoning toggle button
-                            const actionsEl = messageEl.querySelector('.flare-message-actions');
-                            if (actionsEl instanceof HTMLElement) {
-                                const expandBtn = this.createActionButton(actionsEl, 'Toggle reasoning', 'plus-circle');
-                                this.registerDomEvent(expandBtn, 'click', async () => {
-                                    const timestamp = messageEl.getAttribute('data-timestamp');
-                                    if (!timestamp) return;  // Skip if no timestamp found
-                                    
-                                    const isExpanded = this.expandedReasoningMessages.has(timestamp);
-                                    if (isExpanded) {
-                                        this.expandedReasoningMessages.delete(timestamp);
-                                        reasoningContainer.classList.remove('is-expanded');
-                                        expandBtn.classList.remove('is-active');
-                                        setIcon(expandBtn, 'plus-circle');
-                                    } else {
-                                        // Render reasoning blocks if not already done
-                                        if (!reasoningContainer.querySelector('.markdown-rendered')) {
-                                            const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
-                                            await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContainer, '', this.plugin);
-                                        }
-                                        this.expandedReasoningMessages.add(timestamp);
-                                        reasoningContainer.classList.add('is-expanded');
-                                        expandBtn.classList.add('is-active');
-                                        setIcon(expandBtn, 'minus-circle');
-                                    }
-                                });
-                            }
-
-                            // Render response part separately so that reasoning is hidden until expanded
-                            if (responsePart.trim()) {
-                                const rendered = responseContainer.createDiv('markdown-rendered');
-                                rendered.setAttribute('role', 'presentation');
-                                await MarkdownRenderer.renderMarkdown(responsePart.trim(), rendered, '', this.plugin);
-                            }
-                        } else {
-                            // If no reasoning blocks found, render as normal message
-                            const rendered = markdownContainer.createDiv('markdown-rendered');
-                            rendered.setAttribute('role', 'presentation');
-                            await MarkdownRenderer.renderMarkdown(message.content, rendered, '', this.plugin);
-                        }
-                    } else {
-                        // For non-assistant or non-reasoning messages, render normally
-                        const rendered = markdownContainer.createDiv('markdown-rendered');
-                        rendered.setAttribute('role', 'presentation');
-                        await MarkdownRenderer.renderMarkdown(message.content, rendered, '', this.plugin);
-                    }
+                    await this.renderUserOrAssistantMessage(message.role, contentEl, message.content, messageSettings);
                 }
 
                 // Add to message history
@@ -1648,7 +1553,7 @@ export class AIChatView extends ItemView {
                 flare: this.currentFlare?.name || 'default',
                 provider: this.currentFlare?.provider || 'default',
                 model: this.currentFlare?.model || 'default',
-                temperature: this.currentTemp ?? 0.7, // Use 0.7 as fallback only when needed for API
+                temperature: this.currentTemp ?? 0.7,
                 maxTokens: this.currentFlare?.maxTokens,
                 contextWindow: this.currentFlare?.contextWindow,
                 handoffContext: this.currentFlare?.handoffContext
@@ -1657,7 +1562,6 @@ export class AIChatView extends ItemView {
             if (userMessage) {
                 userMessage.setAttribute('role', 'article');
                 userMessage.setAttribute('aria-label', 'User message');
-                // Fix linter error by ensuring userMessage exists
                 if (!userMessage.getAttribute('data-timestamp')) {
                     userMessage.setAttribute('data-timestamp', Date.now().toString());
                 }
@@ -1668,7 +1572,7 @@ export class AIChatView extends ItemView {
                 flare: this.currentFlare?.name || 'default',
                 provider: this.currentFlare?.provider || 'default',
                 model: this.currentFlare?.model || 'default',
-                temperature: this.currentTemp ?? 0.7, // Use 0.7 as fallback only when needed for API
+                temperature: this.currentTemp ?? 0.7,
                 maxTokens: this.currentFlare?.maxTokens,
                 contextWindow: this.currentFlare?.contextWindow,
                 handoffContext: this.currentFlare?.handoffContext
@@ -1785,7 +1689,9 @@ export class AIChatView extends ItemView {
 
                 // If we were aborted, use the accumulated response instead
                 const finalResponse = this.isAborted ? accumulatedResponse : response;
-
+                // Set fullContent to finalResponse by default so it's available later
+                let fullContent = finalResponse;
+                
                 // Update loading message with final response
                 if (loadingMsg) {
                     loadingMsg.classList.remove('is-loading');
@@ -1793,116 +1699,59 @@ export class AIChatView extends ItemView {
                     if (contentEl) {
                         contentEl.textContent = '';
                         
-                        // Construct the full content including reasoning blocks
-                        let fullContent = finalResponse;
-                        if (accumulatedReasoningBlocks.length > 0) {
-                            const reasoningHeader = this.currentFlare?.reasoningHeader || '<think>';
-                            const reasoningEndTag = reasoningHeader.replace('<', '</');
-                            fullContent = accumulatedReasoningBlocks.map(block => 
-                                `${reasoningHeader}${block}${reasoningEndTag}`
-                            ).join('\n') + '\n' + finalResponse;
-                        }
-
+                        // Instead of concatenating reasoning blocks into full content, we only use the final response here
+                        fullContent = finalResponse;
                         await this.renderUserOrAssistantMessage('assistant', contentEl, fullContent, {
                             flare: this.currentFlare?.name || 'default',
                             provider: this.currentFlare?.provider || 'default',
                             model: this.currentFlare?.model || 'default',
-                            temperature: this.currentTemp ?? 0.7, // Use 0.7 as fallback only when needed for API
+                            temperature: this.currentTemp ?? 0.7,
                             maxTokens: this.currentFlare?.maxTokens,
                             contextWindow: this.currentFlare?.contextWindow,
                             handoffContext: this.currentFlare?.handoffContext,
                             isReasoningModel: this.currentFlare?.isReasoningModel,
                             reasoningHeader: this.currentFlare?.reasoningHeader
                         });
-
-                        // Set content and role attributes for the message
+                        
                         loadingMsg.setAttribute('data-content', fullContent.trim());
                         loadingMsg.setAttribute('data-role', 'assistant');
+                    }
+                }
 
-                        // Add the assistant message to history manager
-                        const providerId = this.currentFlare?.provider || 'default';
-                        const providerSettings = this.plugin.settings.providers[providerId];
-                        const providerName = providerSettings?.name || providerId;
+                // Add the assistant message to history manager
+                const providerId = this.currentFlare?.provider || 'default';
+                const providerSettings = this.plugin.settings.providers[providerId];
+                const providerName = providerSettings?.name || providerId;
 
-                        const messageData = {
-                            role: 'assistant',
-                            content: fullContent,
-                            settings: {
-                                flare: this.currentFlare?.name || 'default',
-                                provider: providerName,  // Use common name instead of ID
-                                model: this.currentFlare?.model || 'default',
-                                temperature: this.currentTemp ?? 0.7, // Use 0.7 as fallback only when needed for API
-                                maxTokens: this.currentFlare?.maxTokens,
-                                contextWindow: this.currentFlare?.contextWindow,
-                                handoffContext: this.currentFlare?.handoffContext,
-                                timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
-                            },
-                            timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
-                        };
-                        this.messageHistory.push(messageData);
-                        await this.plugin.chatHistoryManager.addMessage(messageData);
-                        // Set a unique timestamp attribute to identify the message later
-                        loadingMsg.setAttribute('data-timestamp', messageData.timestamp.toString());
+                const messageData = {
+                    role: 'assistant',
+                    content: fullContent,
+                    settings: {
+                        flare: this.currentFlare?.name || 'default',
+                        provider: providerName,
+                        model: this.currentFlare?.model || 'default',
+                        temperature: this.currentTemp ?? 0.7,
+                        maxTokens: this.currentFlare?.maxTokens,
+                        contextWindow: this.currentFlare?.contextWindow,
+                        handoffContext: this.currentFlare?.handoffContext,
+                        isReasoningModel: this.currentFlare?.isReasoningModel,
+                        reasoningHeader: this.currentFlare?.reasoningHeader,
+                        reasoningBlocks: accumulatedReasoningBlocks,
+                        timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
+                    },
+                    timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
+                };
 
-                        // Immediately check for title generation after message is finalized
-                        if (this.plugin.settings.titleSettings.autoGenerate && !this.hasAutoGeneratedTitle) {
-                            try {
-                                // Count complete user-assistant pairs
-                                const messagePairs = this.countMessagePairs();
-                                const requiredPairs = this.plugin.settings.titleSettings.autoGenerateAfterPairs;
-
-                                // If we have at least as many pairs as required and either autosave is enabled or we have a file, try generating
-                                if (messagePairs >= requiredPairs && 
-                                    (this.plugin.settings.autoSaveEnabled || this.plugin.chatHistoryManager.getCurrentFile())) {
-                                    // Schedule title generation to run after message sending is complete
-                                    setTimeout(async () => {
-                                        try {
-                                            await this.handleTitleGeneration();
-                                            this.hasAutoGeneratedTitle = true;  // Set the flag after successful generation
-                                        } catch (error) {
-                                            console.error("Auto title generation error:", error);
-                                            new Notice("Auto title generation error: " + (error instanceof Error ? error.message : String(error)));
-                                        }
-                                    }, 0);
-                                }
-                            } catch (error) {
-                                console.error("Auto title generation error:", error);
-                                new Notice("Auto title generation error: " + (error instanceof Error ? error.message : String(error)));
-                            }
-                        }
-
-                        // Add reasoning toggle if we have reasoning blocks
-                        if (accumulatedReasoningBlocks.length > 0) {
-                            const actions = loadingMsg.querySelector('.flare-message-actions') as HTMLElement | null;
-                            if (actions) {
-                                const messageId = loadingMsg.getAttribute('data-message-id') || `message-${Date.now()}`;
-                                loadingMsg.setAttribute('data-message-id', messageId);
-
-                                const expandBtn = this.createActionButton(actions, 'Toggle reasoning', 'plus-circle');
-                                this.registerDomEvent(expandBtn, 'click', async () => {
-                                    const reasoningContent = contentEl.querySelector('.flare-reasoning-content') as HTMLElement | null;
-                                    if (!reasoningContent) return;
-
-                                    const isExpanded = this.expandedReasoningMessages.has(messageId);
-                                    if (isExpanded) {
-                                        this.expandedReasoningMessages.delete(messageId);
-                                        reasoningContent.classList.remove('is-expanded');
-                                        expandBtn.classList.remove('is-active');
-                                        setIcon(expandBtn, 'plus-circle');
-                                    } else {
-                                        // Render reasoning blocks if not already done
-                                        if (!reasoningContent.querySelector('.markdown-rendered')) {
-                                            const joinedReasoning = accumulatedReasoningBlocks.join('\n\n---\n\n');
-                                            await MarkdownRenderer.renderMarkdown(joinedReasoning, reasoningContent, '', this.plugin);
-                                        }
-                                        this.expandedReasoningMessages.add(messageId);
-                                        reasoningContent.classList.add('is-expanded');
-                                        expandBtn.classList.add('is-active');
-                                        setIcon(expandBtn, 'minus-circle');
-                                    }
-                                });
-                            }
-                        }
+                // Add to message history and save
+                this.messageHistory.push(messageData);
+                await this.plugin.chatHistoryManager.addMessage(messageData);
+                loadingMsg.setAttribute('data-timestamp', messageData.timestamp.toString());
+                // Update toolbar title based on current file's name
+                const currentFile = this.plugin.chatHistoryManager.getCurrentFile();
+                if (currentFile) {
+                    const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
+                    if (titleEl) {
+                        titleEl.textContent = currentFile.basename;
                     }
                 }
             } finally {
@@ -2058,7 +1907,6 @@ export class AIChatView extends ItemView {
 
         // Generate a single timestamp to use consistently
         const timestamp = Date.now();
-        console.debug('Adding message:', { role, timestamp, addToHistoryManager });
 
         // Add accessibility attributes
         messageEl.setAttribute('role', 'article');
@@ -2085,90 +1933,28 @@ export class AIChatView extends ItemView {
 
             // Add action buttons container
             const actions = metaEl.createDiv('flare-message-actions');
-            
-            // Add copy button
-            const copyBtn = this.createActionButton(actions, 'Copy message', 'copy');
-            this.registerDomEvent(copyBtn, 'click', async () => {
-                try {
-                    // Get the message container
-                    const container = messageEl.querySelector('.flare-message-content') as HTMLElement | null;
-                    if (!container) {
-                        throw new Error('Message content container not found');
-                    }
-
-                    // Initialize text to copy
-                    let textToCopy = '';
-
-                    // Check if this is an assistant message with reasoning
-                    const reasoningContainer = container.querySelector('.flare-reasoning-content') as HTMLElement | null;
-                    const responseContainer = container.querySelector('.flare-response-content') as HTMLElement | null;
-                    
-                    // If we have reasoning content and it's expanded, include it
-                    if (reasoningContainer && reasoningContainer.classList.contains('is-expanded')) {
-                        textToCopy += reasoningContainer.innerText.trim() + '\n\n';
-                    }
-
-                    // Add response content if it exists
-                    if (responseContainer) {
-                        textToCopy += responseContainer.innerText.trim();
-                    } else {
-                        // For regular messages without reasoning/response split
-                        const markdownContainer = container.querySelector('.flare-markdown-content') as HTMLElement | null;
-                        if (markdownContainer) {
-                            textToCopy = markdownContainer.innerText.trim();
-                        }
-                    }
-
-                    // If we still don't have text, fall back to the entire container
-                    if (!textToCopy) {
-                        textToCopy = container.innerText.trim();
-                    }
-
-                    // Check if we have a secure context (https or localhost)
-                    if (navigator.clipboard && window.isSecureContext) {
-                        await navigator.clipboard.writeText(textToCopy);
-                        new Notice('Message copied to clipboard');
-                    } else {
-                        // Fallback for non-secure contexts
-                        const textarea = document.createElement('textarea');
-                        textarea.value = textToCopy;
-                        textarea.style.position = 'absolute';
-                        textarea.style.left = '-9999px';
-                        textarea.style.top = '0';
-                        textarea.style.whiteSpace = 'pre';
-                        textarea.setAttribute('readonly', '');
-                        document.body.appendChild(textarea);
-                        try {
-                            textarea.select();
-                            textarea.setSelectionRange(0, textarea.value.length);
-                            const success = document.execCommand('copy');
-                            if (success) {
-                                new Notice('Message copied to clipboard');
-                            } else {
-                                throw new Error('Copy command failed');
-                            }
-                        } finally {
-                            document.body.removeChild(textarea);
-                        }
-                    }
-                } catch (error) {
-                    console.error('Failed to copy message:', error);
-                    new Notice('Failed to copy message to clipboard');
-                }
-            });
-
-            // Add delete button
-            const deleteBtn = this.createActionButton(actions, 'Delete message', 'trash-2', 'delete');
-            this.registerDomEvent(deleteBtn, 'click', async () => {
-                await this.deleteMessage(messageEl);
-            });
+            this.addMessageActions(actions, messageEl, content);
         }
 
         // Handle system messages differently
         if (role === 'system') {
             this.renderSystemMessage(messageEl, contentEl, content);
         } else {
-            await this.renderUserOrAssistantMessage(role, contentEl, content, settings);
+            // For user and assistant messages, ensure all settings are passed
+            const fullSettings = {
+                ...settings,
+                flare: settings?.flare || this.currentFlare?.name || 'default',
+                provider: settings?.provider || this.currentFlare?.provider || 'default',
+                model: settings?.model || this.currentFlare?.model || 'default',
+                temperature: settings?.temperature ?? this.currentTemp ?? 0.7,
+                maxTokens: settings?.maxTokens || this.currentFlare?.maxTokens,
+                stream: settings?.stream ?? this.currentFlare?.stream ?? true,
+                contextWindow: settings?.contextWindow ?? this.currentFlare?.contextWindow ?? -1,
+                handoffContext: settings?.handoffContext ?? this.currentFlare?.handoffContext ?? -1,
+                isReasoningModel: settings?.isReasoningModel ?? this.currentFlare?.isReasoningModel ?? false,
+                reasoningHeader: settings?.reasoningHeader ?? this.currentFlare?.reasoningHeader
+            };
+            await this.renderUserOrAssistantMessage(role, contentEl, content, fullSettings);
         }
 
         // Add to history manager if needed
@@ -2188,7 +1974,6 @@ export class AIChatView extends ItemView {
                 },
                 timestamp     // Use same timestamp as main timestamp
             };
-            console.debug('Adding to history:', messageData);
             this.messageHistory.push(messageData);
             await this.plugin.chatHistoryManager.addMessage(messageData);
         }
@@ -2404,17 +2189,11 @@ export class AIChatView extends ItemView {
                 setIcon(flameIcon, 'flame');
                 flareName.createSpan().textContent = switchContent.main;
                 
-                // Create metadata container with complete metadata
-                const metadataEl = flareName.createDiv('flare-metadata');
-                
                 // Get metadata directly from the content
                 const metadata = this.getFlareMetadata(switchContent.metadata);
                 
-                Object.entries(metadata).forEach(([key, value]) => {
-                    const item = metadataEl.createDiv('flare-metadata-item');
-                    item.createSpan('metadata-key').textContent = key + ':';
-                    item.createSpan('metadata-value').textContent = ' ' + value;
-                });
+                // Setup click handler for metadata display
+                this.setupTooltipHandlers(flareName, metadata);
             }
         } catch (error) {
             console.error('Error parsing system message:', error);
@@ -2431,8 +2210,8 @@ export class AIChatView extends ItemView {
         const contentWrapper = contentEl.createDiv('flare-content-wrapper');
         contentWrapper.setAttribute('role', 'presentation');
 
+        // Add flare info for assistant messages
         if (role === 'assistant') {
-            // For assistant messages, add flare info
             const mainText = contentWrapper.createDiv('flare-system-main');
             mainText.setAttribute('role', 'presentation');
             const flareName = mainText.createSpan('flare-name');
@@ -2443,16 +2222,9 @@ export class AIChatView extends ItemView {
             setIcon(flameIcon, 'flame');
             flareName.createSpan().textContent = `@${settings?.flare || 'default'}`;
             
-            // Create metadata container
-            const metadataEl = flareName.createDiv('flare-metadata');
-            metadataEl.setAttribute('role', 'tooltip');
-            metadataEl.setAttribute('aria-hidden', 'true');
+            // Get metadata and setup click handler
             const metadata = this.getFlareMetadata(settings);
-            Object.entries(metadata).forEach(([key, value]) => {
-                const item = metadataEl.createDiv('flare-metadata-item');
-                item.createSpan('metadata-key').textContent = key + ':';
-                item.createSpan('metadata-value').textContent = ' ' + value;
-            });
+            this.setupTooltipHandlers(flareName, metadata);
         }
 
         // Create markdown container for the actual message content
@@ -2460,11 +2232,78 @@ export class AIChatView extends ItemView {
         markdownContainer.setAttribute('role', 'presentation');
         
         if (role === 'assistant' && settings?.isReasoningModel) {
-            await this.renderReasoningContent(markdownContainer, content, settings);
+            // Determine reasoning blocks and response part. If reasoning blocks were saved in settings (from sendMessage), use them; otherwise, extract from content
+            let reasoningBlocks: string[] = [];
+            let responsePart: string = content;
+            if ((settings as any).reasoningBlocks && (settings as any).reasoningBlocks.length > 0) {
+                reasoningBlocks = (settings as any).reasoningBlocks;
+            } else {
+                const extraction = this.extractReasoningContent(
+                    content,
+                    settings.reasoningHeader || '<think>'
+                );
+                reasoningBlocks = extraction.reasoningBlocks;
+                responsePart = extraction.responsePart;
+            }
+
+            // Create reasoning container if we have reasoning blocks
+            if (reasoningBlocks.length > 0) {
+                const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
+                reasoningContainer.setAttribute('role', 'region');
+                reasoningContainer.setAttribute('aria-label', 'AI reasoning process');
+                reasoningContainer.setAttribute('aria-expanded', 'false');
+
+                // Create container for rendered content but don't render yet
+                reasoningContainer.createDiv('markdown-rendered');
+
+                // Add reasoning toggle button
+                const actions = contentEl.closest('.flare-message')?.querySelector('.flare-message-actions');
+                if (actions instanceof HTMLElement) {
+                    const messageId = contentEl.closest('.flare-message')?.getAttribute('data-message-id') || `message-${Date.now()}`;
+                    contentEl.closest('.flare-message')?.setAttribute('data-message-id', messageId);
+
+                    const expandBtn = this.createActionButton(actions, 'Toggle reasoning', 'plus-circle');
+                    this.registerDomEvent(expandBtn, 'click', async () => {
+                        const timestamp = contentEl.closest('.flare-message')?.getAttribute('data-timestamp');
+                        if (!timestamp) return;
+
+                        const isExpanded = this.expandedReasoningMessages.has(timestamp);
+                        if (isExpanded) {
+                            this.expandedReasoningMessages.delete(timestamp);
+                            reasoningContainer.classList.remove('is-expanded');
+                            expandBtn.classList.remove('is-active');
+                            setIcon(expandBtn, 'plus-circle');
+                            // Clear content when collapsing
+                            const rendered = reasoningContainer.querySelector('.markdown-rendered');
+                            if (rendered) rendered.empty();
+                        } else {
+                            // Render content when expanding
+                            const rendered = reasoningContainer.querySelector('.markdown-rendered');
+                            if (rendered instanceof HTMLElement) {
+                                const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
+                                await MarkdownRenderer.renderMarkdown(joinedReasoning, rendered, '', this.plugin);
+                            }
+                            this.expandedReasoningMessages.add(timestamp);
+                            reasoningContainer.classList.add('is-expanded');
+                            expandBtn.classList.add('is-active');
+                            setIcon(expandBtn, 'minus-circle');
+                        }
+                    });
+                }
+            }
+
+            // Create and render response container
+            const responseContainer = markdownContainer.createDiv('flare-response-content');
+            responseContainer.setAttribute('role', 'region');
+            responseContainer.setAttribute('aria-label', 'AI response');
+            if (responsePart.trim()) {
+                await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
+            }
         } else {
+            // For non-reasoning messages, render normally
             const rendered = markdownContainer.createDiv('markdown-rendered');
             rendered.setAttribute('role', 'presentation');
-            if (content) {  // Only render if we have content
+            if (content) {
                 if (this.needsMarkdownRendering(content)) {
                     await MarkdownRenderer.renderMarkdown(content, rendered, '', this.plugin);
                     this.cleanupParagraphWrapping(rendered);
@@ -2494,10 +2333,21 @@ export class AIChatView extends ItemView {
                 reasoningBlocks.push(match[1].trim());
             }
             // Remove this reasoning block from response
-            responsePart = responsePart.replace(match[0], '');
+            responsePart = responsePart.replace(match[0], '').trim();
         }
 
-        return { reasoningBlocks, responsePart: responsePart.trim() };
+        // If no reasoning blocks found but content contains ---\n\n, try legacy format
+        if (reasoningBlocks.length === 0 && content.includes('---\n\n')) {
+            const blocks = content.split(/\n\n---\n\n/);
+            // Last block is response, all others are reasoning
+            responsePart = blocks.pop() || '';
+            reasoningBlocks.push(...blocks.map(block => block.trim()));
+        }
+
+        // Clean up any extra newlines in response
+        responsePart = responsePart.replace(/^\n+|\n+$/g, '');
+
+        return { reasoningBlocks, responsePart };
     }
 
     private isNearBottom(): boolean {
@@ -2554,6 +2404,19 @@ export class AIChatView extends ItemView {
         // Add handoff context with tooltip
         if (typeof settings.handoffContext === 'number') {
             metadata['Handoff Context'] = `${settings.handoffContext.toString()} pairs${settings.handoffContext === -1 ? ' (all)' : ''}`;
+        }
+
+        // Add stream setting if present
+        if (typeof settings.stream === 'boolean') {
+            metadata['Streaming'] = settings.stream ? 'Yes' : 'No';
+        }
+
+        // Add reasoning info if present
+        if (settings.isReasoningModel) {
+            metadata['Reasoning'] = 'Enabled';
+            if (settings.reasoningHeader) {
+                metadata['Reasoning Tag'] = settings.reasoningHeader;
+            }
         }
 
         return metadata;
@@ -2945,6 +2808,12 @@ export class AIChatView extends ItemView {
                         const newFlareConfig = await this.plugin.flareManager.debouncedLoadFlare(matchedFlare.name);
                         if (newFlareConfig) {
                             await this.handleFlareSwitch(newFlareConfig);
+                            // If there's no additional message content, we're done.
+                            if (!parsed.content.trim()) {
+                                return true;
+                            }
+                            // Otherwise, update content with the remainder of the user's input.
+                            content = parsed.content;
                         } else {
                             new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
                             return false;
@@ -2953,12 +2822,6 @@ export class AIChatView extends ItemView {
                         new Notice(`Flare "${parsed.flare}" does not exist. Please create it first.`);
                         return false;
                     }
-                    // If there's no additional message content, we're done.
-                    if (!parsed.content.trim()) {
-                        return true;
-                    }
-                    // Otherwise, update content with the remainder of the user's input.
-                    content = parsed.content;
                 }
             }
 
@@ -2984,7 +2847,7 @@ export class AIChatView extends ItemView {
 
                 const success = await this.sendMessage(content, {
                     stream: this.currentFlare?.stream ?? false,
-                    isFlareSwitch: false
+                    isFlareSwitch: this.plugin.isFlareSwitchActive
                 });
 
                 // Reset input field height and classes after sending
@@ -2999,6 +2862,9 @@ export class AIChatView extends ItemView {
                         wrapper.style.height = '40px';
                     }
                 }
+
+                // Reset flare switch flag after message is sent
+                this.plugin.isFlareSwitchActive = false;
 
                 return success;
             } catch (error: unknown) {
@@ -3066,5 +2932,43 @@ export class AIChatView extends ItemView {
         if (responsePart.trim()) {
             await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
         }
+    }
+
+    private setupTooltipHandlers(flareName: HTMLElement, metadata: Record<string, string>) {
+        // Add click handler for metadata menu
+        this.registerDomEvent(flareName, 'click', (e: MouseEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const menu = new Menu();
+            
+            // Add metadata items to menu without disabled state
+            Object.entries(metadata).forEach(([key, value]) => {
+                menu.addItem((item) => {
+                    item.setTitle(`${key}: ${value}`);
+                });
+            });
+            
+            // Calculate position to ensure menu stays in view
+            const rect = flareName.getBoundingClientRect();
+            const viewportHeight = window.innerHeight;
+            const viewportWidth = window.innerWidth;
+            
+            // Calculate optimal position
+            let x = rect.left;
+            let y = rect.bottom;
+            
+            // Adjust for viewport edges
+            if (x + 200 > viewportWidth) { // 200px is an estimated menu width
+                x = viewportWidth - 200;
+            }
+            
+            // Show menu above if not enough space below
+            if (rect.bottom + 200 > viewportHeight) { // 200px is an estimated menu height
+                y = rect.top;
+            }
+            
+            menu.showAtPosition({ x, y });
+        });
     }
 } 

@@ -538,12 +538,39 @@ export class GeneralSettingTab extends PluginSettingTab {
     }
 
     private populateProviderDropdown(dropdown: DropdownComponent) {
+        // Clear existing options
+        dropdown.selectEl.empty();
+        
         // Add default option
         dropdown.addOption('', 'Select a provider...');
         
         Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
             if (provider.type && this.plugin.providers.has(provider.type)) {
                 dropdown.addOption(id, provider.name || id);
+            }
+        });
+    }
+
+    // Add method to refresh all provider dropdowns in title settings
+    public refreshTitleProviderDropdowns() {
+        // Find all provider dropdowns in title settings
+        const dropdowns = document.querySelectorAll('.title-generation select, .title-settings select, [class*="title"] .setting-item select') as NodeListOf<HTMLSelectElement>;
+        dropdowns.forEach(select => {
+            const dropdown = select as any;
+            if (dropdown.getValue) {
+                const currentValue = dropdown.getValue();
+                // Clear existing options
+                dropdown.selectEl.empty();
+                // Add default option
+                dropdown.addOption('', 'Select a provider...');
+                // Add provider options
+                Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
+                    if (provider.type && this.plugin.providers.has(provider.type)) {
+                        dropdown.addOption(id, provider.name || id);
+                    }
+                });
+                // Restore current value if it still exists
+                dropdown.setValue(currentValue);
             }
         });
     }

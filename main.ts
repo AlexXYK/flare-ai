@@ -74,6 +74,7 @@ export default class FlarePlugin extends Plugin {
     flares: Array<{ name: string; path: string }> = [];
     isFlareSwitchActive: boolean = false;
     lastUsedFlare: string | null = null;
+    settingTab: GeneralSettingTab | null = null;
 
     async onload() {
         console.log(`Loading ${PLUGIN_NAME} v${PLUGIN_VERSION}`);
@@ -122,7 +123,9 @@ export default class FlarePlugin extends Plugin {
             );
 
             // Add settings tab
-            this.addSettingTab(new GeneralSettingTab(this.app, this));
+            const settingTab = new GeneralSettingTab(this.app, this);
+            this.addSettingTab(settingTab);
+            this.settingTab = settingTab;
         } catch (error) {
             console.error('FLARE.ai: Plugin initialization failed:', error);
             throw new Error(
@@ -395,27 +398,39 @@ export default class FlarePlugin extends Plugin {
             }
 
             // Handle context windows for flare switches differently
-            let isFlareSwitch: boolean;
-            if (options?.messageHistory && options.messageHistory.length > 0) {
-                // Consider only non-system (user/assistant) messages
-                const nonSystemMessages = options.messageHistory.filter(msg => msg.role !== 'system');
-                // If there are no non-system messages, then assume it's not a flare switch
-                if (nonSystemMessages.length === 0) {
-                    isFlareSwitch = false;
+            let isFlareSwitch = options?.isFlareSwitch;
+            if (isFlareSwitch === undefined) {
+                // If not explicitly set, determine based on history and flare name
+                if (options?.messageHistory && options.messageHistory.length > 0) {
+                    // Consider only non-system (user/assistant) messages
+                    const nonSystemMessages = options.messageHistory.filter(msg => msg.role !== 'system');
+                    if (nonSystemMessages.length === 0) {
+                        isFlareSwitch = true; // No previous messages, treat as switch
+                    } else {
+                        // Check if we're switching from a different flare
+                        const lastMessage = nonSystemMessages[nonSystemMessages.length - 1];
+                        isFlareSwitch = lastMessage.settings?.flare !== newFlareName;
+                    }
                 } else {
-                    // If every non-system message is from the current flare, there's no flare switch
-                    isFlareSwitch = !nonSystemMessages.every(msg => msg.settings?.flare === newFlareName);
+                    isFlareSwitch = true; // First message is considered a flare switch
                 }
-            } else {
-                isFlareSwitch = true; // First message is considered a flare switch
             }
 
             // Start with complete message history
             let finalMessageHistory = [...(options?.messageHistory || [])];
 
             // Apply handoff context if this is a flare switch
-            if (isFlareSwitch && flareConfig.handoffContext !== undefined && flareConfig.handoffContext !== -1) {
-                finalMessageHistory = this.applyHandoffContext(finalMessageHistory, flareConfig.handoffContext);
+            if (isFlareSwitch && flareConfig.handoffContext !== undefined) {
+                if (flareConfig.handoffContext === -1) {
+                    // For -1, keep all messages (no need to modify finalMessageHistory)
+                } else {
+                    // For specific window size, apply the handoff context
+                    finalMessageHistory = this.applyHandoffContext(finalMessageHistory, flareConfig.handoffContext);
+                }
+            }
+            // Apply context window only for non-flare switch messages
+            else if (!isFlareSwitch && flareConfig.contextWindow !== undefined) {
+                finalMessageHistory = this.applyContextWindow(finalMessageHistory, flareConfig.contextWindow);
             }
 
             // Handle system message
@@ -500,18 +515,13 @@ export default class FlarePlugin extends Plugin {
                 settings: {
                     flare: newFlareName,
                     provider: flareConfig.provider,
-                    model: flareConfig.model
+                    model: flareConfig.model,
+                    isReasoningModel: flareConfig.isReasoningModel,
+                    reasoningHeader: flareConfig.reasoningHeader
                 }
             });
-            // After appending new messages, trim the message history using the context window so that subsequent messages receive only a reduced history
-            if (!isFlareSwitch) {
-                if (flareConfig.contextWindow !== undefined) {
-                    finalMessageHistory = this.applyContextWindow(finalMessageHistory, flareConfig.contextWindow);
-                } else {
-                    throw new Error('Context window is undefined');
-                }
-            }
 
+            // Remove the second context window application and just keep track of the last used flare
             this.lastUsedFlare = newFlareName;
             return response;
         } catch (error) {
