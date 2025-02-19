@@ -1689,8 +1689,16 @@ export class AIChatView extends ItemView {
 
                 // If we were aborted, use the accumulated response instead
                 const finalResponse = this.isAborted ? accumulatedResponse : response;
-                // Set fullContent to finalResponse by default so it's available later
+                
+                // For reasoning models, reconstruct the full content with reasoning blocks
                 let fullContent = finalResponse;
+                if (this.currentFlare?.isReasoningModel) {
+                    // Reconstruct content with reasoning blocks
+                    const reasoningParts = accumulatedReasoningBlocks.map(block => 
+                        `${reasoningHeader}${block}${reasoningEndTag}`
+                    );
+                    fullContent = [...reasoningParts, accumulatedResponse].join('\n\n');
+                }
                 
                 // Update loading message with final response
                 if (loadingMsg) {
@@ -1699,8 +1707,6 @@ export class AIChatView extends ItemView {
                     if (contentEl) {
                         contentEl.textContent = '';
                         
-                        // Instead of concatenating reasoning blocks into full content, we only use the final response here
-                        fullContent = finalResponse;
                         await this.renderUserOrAssistantMessage('assistant', contentEl, fullContent, {
                             flare: this.currentFlare?.name || 'default',
                             provider: this.currentFlare?.provider || 'default',
