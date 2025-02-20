@@ -23,17 +23,30 @@ export class ProviderSettingsView {
         const pathParts = path.split('.');
         let oldValue = this.originalSettings;
         for (const part of pathParts) {
+            if (oldValue === undefined) break;
             oldValue = oldValue[part];
         }
 
-        // Compare values
-        const hasChanged = JSON.stringify(newValue) !== JSON.stringify(oldValue);
+        // Handle arrays and objects properly
+        let hasChanged: boolean;
+        if (Array.isArray(newValue) || typeof newValue === 'object') {
+            hasChanged = JSON.stringify(newValue) !== JSON.stringify(oldValue);
+        } else {
+            // For primitive values, use direct comparison
+            hasChanged = newValue !== oldValue;
+        }
         
         // Only trigger if the value actually changed
         if (hasChanged !== this.hasSettingsChanged) {
             this.hasSettingsChanged = hasChanged;
             this.onSettingsChange();
         }
+    }
+
+    updateOriginalSettings(): void {
+        // Update original settings with a deep copy of current settings
+        this.originalSettings = JSON.parse(JSON.stringify(this.settings));
+        this.hasSettingsChanged = false;
     }
 
     display(): void {

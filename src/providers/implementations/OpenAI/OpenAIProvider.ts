@@ -54,19 +54,35 @@ export class OpenAIProvider extends BaseProvider {
     async getAvailableModels(): Promise<string[]> {
         try {
             const response = await requestUrl({
-                url: 'https://api.openai.com/v1/models',
+                url: `${this.url}/models`,
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json'
                 }
             });
 
             if (response.status !== 200) {
+                if (response.status === 401) {
+                    throw new Error('Invalid API key or unauthorized access');
+                } else if (response.status === 429) {
+                    throw new Error('Rate limit exceeded. Please try again later');
+                }
                 throw new Error(`OpenAI API error: ${response.status}`);
             }
 
             const data = response.json as OpenAIModelsResponse;
-            return data.data.map(model => model.id);
+            if (!data?.data || !Array.isArray(data.data)) {
+                throw new Error('Invalid response format from OpenAI API');
+            }
+
+            return data.data
+                .filter(model => model.id && typeof model.id === 'string')
+                .map(model => model.id)
+                .sort((a, b) => a.localeCompare(b));
         } catch (error) {
+            if (error instanceof Error) {
+                throw new Error(`Failed to fetch OpenAI models: ${error.message}`);
+            }
             throw error;
         }
     }

@@ -53,22 +53,42 @@ export class OpenRouterProvider extends BaseProvider {
     }
 
     async getAvailableModels(): Promise<string[]> {
+        this.abortController = new AbortController();
+
         try {
-            const response = await fetch(`${this.url}/models`, {
+            // Create timeout promise
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => {
+                    this.abortController?.abort();
+                    reject(new Error('Request timed out while fetching models. Please try again.'));
+                }, 10000);
+            });
+
+            // Create fetch promise
+            const fetchPromise = fetch(`${this.url}/models`, {
                 headers: {
                     'Authorization': `Bearer ${this.apiKey}`,
                     'HTTP-Referer': window.location.href,
                     'X-Title': 'FLARE.ai Obsidian Plugin',
                     'Content-Type': 'application/json',
-                }
+                },
+                signal: this.abortController.signal
             });
 
+            // Race between fetch and timeout
+            const response = await Promise.race([fetchPromise, timeoutPromise]);
+
             if (!response.ok) {
+                if (response.status === 401) {
+                    throw new Error('Invalid API key or unauthorized access');
+                } else if (response.status === 429) {
+                    throw new Error('Rate limit exceeded. Please try again later');
+                }
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const data = await response.json() as OpenRouterResponse;
-            if (!data.data || !Array.isArray(data.data)) {
+            if (!data?.data || !Array.isArray(data.data)) {
                 throw new Error('Invalid response format from OpenRouter API');
             }
 
@@ -81,9 +101,18 @@ export class OpenRouterProvider extends BaseProvider {
                     return cleanA.localeCompare(cleanB);
                 });
 
+            if (this.models.length === 0) {
+                throw new Error('No models available from OpenRouter');
+            }
+
             return this.models;
         } catch (error) {
+            if (error instanceof Error) {
+                throw new Error(`Failed to fetch OpenRouter models: ${error.message}`);
+            }
             throw error;
+        } finally {
+            this.abortController = undefined;
         }
     }
 

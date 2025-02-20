@@ -55,6 +55,7 @@ export class ProviderSettingsUI {
                             await this.plugin.saveData(this.plugin.settings);
                             // Update original settings after successful save
                             this.originalSettings = JSON.parse(JSON.stringify(this.plugin.settings));
+                            this.hasUnsavedChanges = false; // Reset unsaved changes flag
                             this.hideActionButtons();
                             // After successful save, refresh all dropdowns
                             this.refreshDropdown();
@@ -65,6 +66,10 @@ export class ProviderSettingsUI {
                             // Refresh provider dropdowns in title settings
                             if (this.plugin.settingTab) {
                                 this.plugin.settingTab.refreshTitleProviderDropdowns();
+                            }
+                            // Update provider settings view's original settings
+                            if (this.providerSettingsView) {
+                                this.providerSettingsView.updateOriginalSettings();
                             }
                             new Notice('Provider settings saved');
                         } catch (error) {
@@ -263,6 +268,19 @@ export class ProviderSettingsUI {
                     // Store old type to check if this is a new provider
                     const oldType = this.plugin.settings.providers[this.currentProvider].type;
                     const isNewProvider = !oldType;
+                    
+                    // Set default base URLs based on provider type
+                    switch (value) {
+                        case 'ollama':
+                            this.plugin.settings.providers[this.currentProvider].baseUrl = 'http://localhost:11434';
+                            break;
+                        case 'openai':
+                            this.plugin.settings.providers[this.currentProvider].baseUrl = 'https://api.openai.com/v1';
+                            break;
+                        case 'openrouter':
+                            this.plugin.settings.providers[this.currentProvider].baseUrl = 'https://openrouter.ai/api/v1';
+                            break;
+                    }
                     
                     this.plugin.settings.providers[this.currentProvider].type = value;
                     
