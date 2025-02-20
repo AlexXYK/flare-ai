@@ -38,6 +38,10 @@ interface MessageSettings {
     reasoningHeader?: string;
     /** Whether this is a reasoning-capable model */
     isReasoningModel?: boolean;
+    /** Original message content with wikilinks */
+    originalContent?: string;
+    /** Processed message content with expanded wikilinks */
+    processedContent?: string;
 }
 
 /**
@@ -1629,10 +1633,6 @@ export class AIChatView extends ItemView {
                 content: this.sanitizeMessageForAPI(msg.content, reasoningHeader)
             }));
 
-            // Create abort controller for this request
-            const abortController = new AbortController();
-            this.activeRequests.push(abortController);
-
             try {
                 const response = await this.plugin.handleMessage(content, {
                     ...options,
@@ -1643,13 +1643,16 @@ export class AIChatView extends ItemView {
                     temperature: this.currentTemp,
                     maxTokens: this.currentFlare?.maxTokens,
                     stream: options?.stream ?? true,
-                    onToken: (token: string) => {
+                    onToken: async (token: string) => {
                         if (this.currentFlare?.isReasoningModel) {
                             // Handle reasoning blocks during streaming
                             if (token.includes(reasoningHeader)) {
+                                // If we were in a reasoning block, save it before starting new one
+                                if (isInReasoningBlock && currentReasoningBlock.trim()) {
+                                    accumulatedReasoningBlocks.push(currentReasoningBlock.trim());
+                                }
                                 isInReasoningBlock = true;
                                 currentReasoningBlock = '';
-                                // Don't add the header to visible content
                                 token = token.replace(reasoningHeader, '');
                             }
                             if (token.includes(reasoningEndTag)) {
@@ -1657,7 +1660,7 @@ export class AIChatView extends ItemView {
                                 if (currentReasoningBlock.trim()) {
                                     accumulatedReasoningBlocks.push(currentReasoningBlock.trim());
                                 }
-                                // Don't add the end tag to visible content
+                                currentReasoningBlock = '';
                                 token = token.replace(reasoningEndTag, '');
                             }
 
@@ -1667,6 +1670,7 @@ export class AIChatView extends ItemView {
                                 accumulatedResponse += token;
                                 const responseContainer = contentWrapper.querySelector('.flare-response-content');
                                 if (responseContainer instanceof HTMLElement) {
+                                    // Just update text content during streaming
                                     responseContainer.textContent = accumulatedResponse;
                                 }
                             }
@@ -1677,6 +1681,7 @@ export class AIChatView extends ItemView {
                             if (markdownContainer instanceof HTMLElement) {
                                 const rendered = markdownContainer.querySelector('.markdown-rendered');
                                 if (rendered instanceof HTMLElement) {
+                                    // Just update text content during streaming
                                     rendered.textContent = accumulatedResponse;
                                 }
                             }
@@ -1687,19 +1692,24 @@ export class AIChatView extends ItemView {
                     }
                 });
 
-                // If we were aborted, use the accumulated response instead
-                const finalResponse = this.isAborted ? accumulatedResponse : response;
+                // Always use accumulated content when streaming was involved
+                const finalResponse = options?.stream ? accumulatedResponse : response;
                 
                 // For reasoning models, reconstruct the full content with reasoning blocks
                 let fullContent = finalResponse;
                 if (this.currentFlare?.isReasoningModel) {
+                    // Save any in-progress reasoning block if stream was aborted
+                    if (this.isAborted && isInReasoningBlock && currentReasoningBlock.trim()) {
+                        accumulatedReasoningBlocks.push(currentReasoningBlock.trim());
+                    }
+                    
                     // Reconstruct content with reasoning blocks
                     const reasoningParts = accumulatedReasoningBlocks.map(block => 
                         `${reasoningHeader}${block}${reasoningEndTag}`
                     );
                     fullContent = [...reasoningParts, accumulatedResponse].join('\n\n');
                 }
-                
+
                 // Update loading message with final response
                 if (loadingMsg) {
                     loadingMsg.classList.remove('is-loading');
@@ -1752,39 +1762,100 @@ export class AIChatView extends ItemView {
                 await this.plugin.chatHistoryManager.addMessage(messageData);
                 loadingMsg.setAttribute('data-timestamp', messageData.timestamp.toString());
 
-                // Check for auto-title generation after successful message
-                if (!this.hasAutoGeneratedTitle) {
-                    const settings = this.plugin.settings.titleSettings;
-                    if (settings.autoGenerate) {
-                        const pairs = this.countMessagePairs();
-                        if (pairs >= settings.autoGenerateAfterPairs) {
-                            this.hasAutoGeneratedTitle = true;  // Set flag before generating to prevent multiple attempts
-                            await this.handleTitleGeneration().catch(error => {
-                                console.error('Failed to auto-generate title:', error);
-                            });
-                        }
-                    }
-                }
-
-                // Update toolbar title based on current file's name
-                const currentFile = this.plugin.chatHistoryManager.getCurrentFile();
-                if (currentFile) {
-                    const titleEl = this.containerEl.querySelector('.flare-toolbar-center h2');
-                    if (titleEl) {
-                        titleEl.textContent = currentFile.basename;
-                    }
-                }
-
                 this.messageState.isProcessing = false;
                 return true;
-            } finally {
-                // Clean up abort controller
-                const index = this.activeRequests.indexOf(abortController);
-                if (index > -1) {
-                    this.activeRequests.splice(index, 1);
+            } catch (error: unknown) {
+                // Handle AbortError as a successful completion with partial content
+                if (error instanceof Error && error.name === 'AbortError') {
+                    // Save any in-progress reasoning block
+                    if (this.currentFlare?.isReasoningModel && isInReasoningBlock && currentReasoningBlock.trim()) {
+                        accumulatedReasoningBlocks.push(currentReasoningBlock.trim());
+                    }
+
+                    // Reconstruct content with any accumulated content
+                    let fullContent = accumulatedResponse;
+                    if (this.currentFlare?.isReasoningModel && (accumulatedReasoningBlocks.length > 0 || accumulatedResponse)) {
+                        const reasoningParts = accumulatedReasoningBlocks.map(block => 
+                            `${reasoningHeader}${block}${reasoningEndTag}`
+                        );
+                        fullContent = [...reasoningParts, accumulatedResponse].join('\n\n');
+                    }
+
+                    // Only proceed if we have some content
+                    if (fullContent.trim()) {
+                        if (loadingMsg) {
+                            loadingMsg.classList.remove('is-loading');
+                            const contentEl = loadingMsg.querySelector('.flare-message-content') as HTMLElement | null;
+                            if (contentEl) {
+                                contentEl.textContent = '';
+                                await this.renderUserOrAssistantMessage('assistant', contentEl, fullContent, {
+                                    flare: this.currentFlare?.name || 'default',
+                                    provider: this.currentFlare?.provider || 'default',
+                                    model: this.currentFlare?.model || 'default',
+                                    temperature: this.currentTemp ?? 0.7,
+                                    maxTokens: this.currentFlare?.maxTokens,
+                                    contextWindow: this.currentFlare?.contextWindow,
+                                    handoffContext: this.currentFlare?.handoffContext,
+                                    isReasoningModel: this.currentFlare?.isReasoningModel,
+                                    reasoningHeader: this.currentFlare?.reasoningHeader
+                                });
+                                
+                                loadingMsg.setAttribute('data-content', fullContent.trim());
+                                loadingMsg.setAttribute('data-role', 'assistant');
+                            }
+                        }
+
+                        // Add to history even if aborted
+                        const providerId = this.currentFlare?.provider || 'default';
+                        const providerSettings = this.plugin.settings.providers[providerId];
+                        const providerName = providerSettings?.name || providerId;
+
+                        const messageData = {
+                            role: 'assistant',
+                            content: fullContent,
+                            settings: {
+                                flare: this.currentFlare?.name || 'default',
+                                provider: providerName,
+                                model: this.currentFlare?.model || 'default',
+                                temperature: this.currentTemp ?? 0.7,
+                                maxTokens: this.currentFlare?.maxTokens,
+                                contextWindow: this.currentFlare?.contextWindow,
+                                handoffContext: this.currentFlare?.handoffContext,
+                                isReasoningModel: this.currentFlare?.isReasoningModel,
+                                reasoningHeader: this.currentFlare?.reasoningHeader,
+                                timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
+                            },
+                            timestamp: parseInt(loadingMsg.getAttribute('data-timestamp') || Date.now().toString())
+                        };
+
+                        this.messageHistory.push(messageData);
+                        await this.plugin.chatHistoryManager.addMessage(messageData);
+                        loadingMsg.setAttribute('data-timestamp', messageData.timestamp.toString());
+                    }
+
+                    this.messageState.isProcessing = false;
+                    return true;
                 }
+
+                // Handle other errors normally
+                this.messageState = {
+                    isStreaming: false,
+                    isProcessing: false,
+                    hasError: true,
+                    errorMessage: error instanceof Error ? error.message : String(error)
+                };
+
+                if (error instanceof Error) {
+                    throw new MessageError(error.message);
+                }
+                throw new MessageError('Unknown error occurred while sending message');
             }
         } catch (error: unknown) {
+            // Don't show error notice for AbortError
+            if (error instanceof Error && error.name === 'AbortError') {
+                return true;
+            }
+            
             this.messageState = {
                 isStreaming: false,
                 isProcessing: false,
@@ -1792,10 +1863,12 @@ export class AIChatView extends ItemView {
                 errorMessage: error instanceof Error ? error.message : String(error)
             };
 
-            if (error instanceof Error) {
-                throw new MessageError(error.message);
-            }
-            throw new MessageError('Unknown error occurred while sending message');
+            console.error('Error in sendMessage:', error);
+            new Notice('Error: ' + getErrorMessage(error));
+            return false;
+        } finally {
+            // Reset abort state
+            this.isAborted = false;
         }
     }
 
@@ -2234,10 +2307,13 @@ export class AIChatView extends ItemView {
         if (role === 'assistant') {
             const mainText = contentWrapper.createDiv('flare-system-main');
             mainText.setAttribute('role', 'presentation');
-            const flareName = mainText.createSpan('flare-name');
-            flareName.setAttribute('role', 'button');
-            flareName.setAttribute('aria-label', `Using flare ${settings?.flare || 'default'}`);
-            flareName.setAttribute('tabindex', '0');
+            const flareName = mainText.createEl('button', {
+                cls: 'flare-name',
+                attr: {
+                    'aria-label': `Using flare ${settings?.flare || 'default'}`,
+                    'tabindex': '0'
+                }
+            });
             const flameIcon = flareName.createSpan();
             setIcon(flameIcon, 'flame');
             flareName.createSpan().textContent = `@${settings?.flare || 'default'}`;
@@ -2295,7 +2371,14 @@ export class AIChatView extends ItemView {
                             const rendered = reasoningContainer.querySelector('.markdown-rendered');
                             if (rendered instanceof HTMLElement) {
                                 const joinedReasoning = reasoningBlocks.join('\n\n---\n\n');
-                                await MarkdownRenderer.renderMarkdown(joinedReasoning, rendered, '', this.plugin);
+                                const currentFile = this.plugin.chatHistoryManager.getCurrentFile();
+                                await MarkdownRenderer.render(
+                                    this.app,
+                                    joinedReasoning,
+                                    rendered,
+                                    currentFile?.path || '',
+                                    this
+                                );
                             }
                             this.expandedReasoningMessages.add(timestamp);
                             reasoningContainer.classList.add('is-expanded');
@@ -2311,18 +2394,56 @@ export class AIChatView extends ItemView {
             responseContainer.setAttribute('role', 'region');
             responseContainer.setAttribute('aria-label', 'AI response');
             if (responsePart.trim()) {
-                await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
+                const currentFile = this.plugin.chatHistoryManager.getCurrentFile();
+                await MarkdownRenderer.render(
+                    this.app,
+                    responsePart.trim(),
+                    responseContainer,
+                    currentFile?.path || '',
+                    this
+                );
             }
         } else {
             // For non-reasoning messages, render normally
             const rendered = markdownContainer.createDiv('markdown-rendered');
             rendered.setAttribute('role', 'presentation');
             if (content) {
-                if (this.needsMarkdownRendering(content)) {
-                    await MarkdownRenderer.renderMarkdown(content, rendered, '', this.plugin);
-                    this.cleanupParagraphWrapping(rendered);
-                } else {
-                    rendered.textContent = content;
+                // Use original content for display if available
+                const displayContent = settings?.originalContent || content;
+                
+                // Get current file for source path
+                const currentFile = this.plugin.chatHistoryManager.getCurrentFile();
+                const sourcePath = currentFile?.path || '';
+
+                try {
+                    // Render directly using MarkdownRenderer.render
+                    await MarkdownRenderer.render(
+                        this.app,
+                        displayContent,
+                        rendered,
+                        sourcePath,
+                        this
+                    );
+
+                    // Add click handlers to any internal links
+                    const wikilinks = rendered.querySelectorAll('.internal-link');
+                    wikilinks.forEach(link => {
+                        if (link instanceof HTMLElement) {
+                            this.registerDomEvent(link, 'click', async (e) => {
+                                e.preventDefault();
+                                const linkText = link.getAttr('data-href');
+                                if (linkText) {
+                                    await this.app.workspace.openLinkText(
+                                        linkText,
+                                        sourcePath,  // Pass the source path
+                                        true  // Open in new leaf
+                                    );
+                                }
+                            });
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error rendering markdown:', error);
                 }
             }
         }

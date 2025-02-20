@@ -440,7 +440,7 @@ export default class FlarePlugin extends Plugin {
                 const systemWikilinks = await this.expandWikiLinks(flareConfig.systemPrompt);
                 for (const [fileName, content] of Object.entries(systemWikilinks)) {
                     if (typeof content === 'string') {
-                        const wikiLinkPattern = new RegExp(`\\[\\[${fileName}\\]\\]`, 'g');
+                        const wikiLinkPattern = new RegExp(`\\[\\[${this.escapeRegexSpecials(fileName)}(?:\\|[^\\]]*)?\\]\\]`, 'g');
                         processedSystemPrompt = processedSystemPrompt.replace(wikiLinkPattern, content);
                     }
                 }
@@ -468,10 +468,15 @@ export default class FlarePlugin extends Plugin {
 
             // Process current message
             let processedMessage = message;
+            let displayMessage = message;  // Keep original message for display
             const messageWikilinks = await this.expandWikiLinks(message);
+            
+            // Create a map of wikilink patterns to their expanded content
+            const wikilinksMap = new Map<string, string>();
             for (const [fileName, content] of Object.entries(messageWikilinks)) {
                 if (typeof content === 'string') {
-                    const wikiLinkPattern = new RegExp(`\\[\\[${fileName}\\]\\]`, 'g');
+                    const wikiLinkPattern = new RegExp(`\\[\\[${this.escapeRegexSpecials(fileName)}(?:\\|[^\\]]*)?\\]\\]`, 'g');
+                    wikilinksMap.set(wikiLinkPattern.source, content);
                     processedMessage = processedMessage.replace(wikiLinkPattern, content);
                 }
             }
@@ -479,13 +484,16 @@ export default class FlarePlugin extends Plugin {
             // Create message object for current message
             const currentMessage = {
                 role: 'user',
-                content: processedMessage,
+                content: displayMessage,  // Use original message with wikilinks for display
                 settings: {
                     flare: newFlareName,
                     provider: flareConfig.provider,
                     model: flareConfig.model,
                     temperature: options?.temperature ?? flareConfig.temperature ?? 0.7,
-                    maxTokens: options?.maxTokens ?? flareConfig.maxTokens
+                    maxTokens: options?.maxTokens ?? flareConfig.maxTokens,
+                    originalContent: displayMessage,  // Store original content with wikilinks
+                    processedContent: processedMessage,  // Store processed content for AI
+                    wikilinks: Object.fromEntries(wikilinksMap)  // Store wikilinks map for reference
                 }
             };
 
@@ -495,10 +503,13 @@ export default class FlarePlugin extends Plugin {
                 throw new Error('No active provider available');
             }
 
-            // Send message to provider
+            // Send message to provider using processed content
             const response = await provider.sendMessage(processedMessage, {
                 ...options,
-                messageHistory: finalMessageHistory,
+                messageHistory: finalMessageHistory.map(msg => ({
+                    ...msg,
+                    content: msg.settings?.processedContent || msg.content  // Use processed content for AI
+                })),
                 flare: newFlareName,
                 model: flareConfig.model,
                 temperature: options?.temperature ?? flareConfig.temperature ?? 0.7,
@@ -913,13 +924,20 @@ export default class FlarePlugin extends Plugin {
         return result;
     }
 
-    private async expandWikiLinks(text: string): Promise<Record<string, string>> {
+    private async expandWikiLinks(text: string, processedLinks: Set<string> = new Set()): Promise<Record<string, string>> {
         const wikilinks = this.extractWikiLinks(text);
         const result: Record<string, string> = {};
         
         await Promise.all(wikilinks.map(async (link) => {
             try {
                 const [fileName, alias] = link.split('|').map(s => s.trim());
+                
+                // Prevent infinite recursion
+                if (processedLinks.has(fileName)) {
+                    return;
+                }
+                processedLinks.add(fileName);
+
                 const file = this.app.metadataCache.getFirstLinkpathDest(fileName, '');
                 
                 if (!file) {
@@ -927,16 +945,26 @@ export default class FlarePlugin extends Plugin {
                     return;
                 }
 
-                const content = await this.app.vault.cachedRead(file);
+                // Use read instead of cachedRead to ensure we get the latest content
+                const content = await this.app.vault.read(file);
                 let processedContent = content;
 
                 const app = this.app as ObsidianApp;
                 const dataviewPlugin = app.plugins.plugins.dataview;
 
-                if (dataviewPlugin?.api) {
-                    processedContent = await this.processDataviewContent(content, file, dataviewPlugin.api);
+                // Process any nested wikilinks first
+                const nestedWikilinks = await this.expandWikiLinks(content, processedLinks);
+                for (const [nestedFileName, nestedContent] of Object.entries(nestedWikilinks)) {
+                    const nestedWikiLinkPattern = new RegExp(`\\[\\[${this.escapeRegexSpecials(nestedFileName)}(?:\\|[^\\]]*)?\\]\\]`, 'g');
+                    processedContent = processedContent.replace(nestedWikiLinkPattern, nestedContent);
                 }
 
+                // Process dataview content after handling nested wikilinks
+                if (dataviewPlugin?.api) {
+                    processedContent = await this.processDataviewContent(processedContent, file, dataviewPlugin.api);
+                }
+
+                // Store with original filename for proper replacement later
                 result[fileName] = processedContent;
             } catch (error) {
                 console.error(`Error processing wikilink ${link}:`, error);
@@ -949,7 +977,7 @@ export default class FlarePlugin extends Plugin {
 
     private extractWikiLinks(text: string): string[] {
         // Improved regex to handle aliases and more complex wikilinks
-        const regex = /\[\[([^\]]+)\]\]/g;
+        const regex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
         const links: string[] = [];
         let match;
         

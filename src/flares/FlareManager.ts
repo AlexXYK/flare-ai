@@ -1,4 +1,4 @@
-import { Setting, setIcon, Notice, Modal, App, DropdownComponent, TextComponent, TextAreaComponent, TFile, TAbstractFile } from 'obsidian';
+import { Setting, setIcon, Notice, Modal, App, DropdownComponent, TextComponent, TextAreaComponent, TFile, TAbstractFile, debounce, Debouncer } from 'obsidian';
 import type FlarePlugin from '../../main';
 import { FlareConfig } from './FlareConfig';
 import { getErrorMessage } from '../utils/errors';
@@ -57,9 +57,43 @@ export class FlareManager {
     private operationQueue: Array<() => Promise<void>> = [];
     private isProcessingQueue = false;
     private actionButtons: HTMLElement | null = null;
+    private loadFlareDebouncer: Debouncer<[string, (value: FlareConfig | null) => void, (error: Error) => void], void>;
 
     constructor(private plugin: FlarePlugin) {
         this.plugin.flares = [];
+        // Initialize the debouncer with proper typing and abort handling
+        this.loadFlareDebouncer = debounce(
+            async (
+                flareName: string,
+                resolve: (value: FlareConfig | null) => void,
+                reject: (error: Error) => void
+            ): Promise<void> => {
+                try {
+                    // Check cache first
+                    const cached = this.flareCache.get(flareName);
+                    if (cached) {
+                        resolve(cached);
+                        return;
+                    }
+
+                    const config = await this.loadFlareConfig(flareName);
+                    if (config) {
+                        this.flareCache.set(flareName, config);
+                    }
+                    resolve(config);
+                } catch (error) {
+                    // Don't log or reject AbortError as it's an expected case
+                    if (error instanceof Error && error.name === 'AbortError') {
+                        resolve(null);
+                        return;
+                    }
+                    console.error('Error in loadFlareDebouncer:', error);
+                    reject(error instanceof Error ? error : new Error(String(error)));
+                }
+            },
+            100,
+            true
+        );
     }
 
     private async processQueue() {
@@ -308,39 +342,55 @@ export class FlareManager {
 
     // Add cleanup method
     async cleanup() {
-        this.cancelAllOperations();
-        if (this.hasUnsavedChanges && this.currentFlare) {
-            await this.saveFlareConfig(this.currentFlare);
+        try {
+            this.cancelAllOperations();
+            if (this.hasUnsavedChanges && this.currentFlare) {
+                await this.saveFlareConfig(this.currentFlare);
+            }
+            this.flareCache.clear();
+            // Properly cancel debouncer and handle any pending promises
+            if (this.loadFlareDebouncer) {
+                this.loadFlareDebouncer.cancel();
+                this.loadFlareDebouncer.run(); // Run any pending operations to resolve them
+            }
+        } catch (error) {
+            // Don't throw AbortError during cleanup
+            if (error instanceof Error && error.name === 'AbortError') {
+                console.debug('Stream aborted during cleanup');
+                return;
+            }
+            console.error('Error during cleanup:', error);
+            throw error;
         }
-        this.flareCache.clear();
     }
 
-    // Add debouncing for flare loading
-    private loadDebounceTimeout: NodeJS.Timeout | null = null;
+    // Improved debounced load flare with better error handling
     async debouncedLoadFlare(flareName: string): Promise<FlareConfig | null> {
-        return new Promise((resolve, reject) => {
-            if (this.loadDebounceTimeout) {
-                clearTimeout(this.loadDebounceTimeout);
-            }
-            
-            this.loadDebounceTimeout = setTimeout(async () => {
-                try {
-                    // Check cache first
-                    const cached = this.flareCache.get(flareName);
-                    if (cached) {
-                        resolve(cached);
+        if (!flareName) {
+            throw new Error('Flare name is required');
+        }
+
+        return new Promise<FlareConfig | null>((resolve, reject) => {
+            try {
+                this.loadFlareDebouncer(flareName, resolve, (error: Error) => {
+                    // Don't reject AbortError, resolve with null instead
+                    if (error.name === 'AbortError') {
+                        console.debug('Stream aborted, resolving with null');
+                        resolve(null);
                         return;
                     }
-
-                    const config = await this.loadFlareConfig(flareName);
-                    if (config) {
-                        this.flareCache.set(flareName, config);
-                    }
-                    resolve(config);
-                } catch (error) {
                     reject(error);
+                });
+            } catch (error) {
+                // Handle synchronous AbortError
+                if (error instanceof Error && error.name === 'AbortError') {
+                    console.debug('Stream aborted synchronously');
+                    resolve(null);
+                    return;
                 }
-            }, 100); // 100ms debounce
+                console.error('Error in debouncedLoadFlare:', error);
+                reject(error instanceof Error ? error : new Error(String(error)));
+            }
         });
     }
 
@@ -624,12 +674,19 @@ export class FlareManager {
                                     .setClass('reasoning-header-setting')
                                     .setName('Reasoning Header')
                                     .setDesc('The tag that marks the start of reasoning (e.g. <think>)')
-                                    .addText(text => text
-                                        .setValue(settings.reasoningHeader || '<think>')
-                                        .onChange(headerValue => {
-                                            settings.reasoningHeader = headerValue;
-                                            this.markAsChanged();
-                                        }));
+                                    .addText(text => {
+                                        if (!this.currentFlareConfig) return text;
+                                        return text
+                                            .setValue(this.currentFlareConfig.reasoningHeader || '<think>')
+                                            .onChange(headerValue => {
+                                                if (!this.currentFlareConfig) return;
+                                                this.currentFlareConfig.reasoningHeader = headerValue;
+                                                const headerSettingItem = (text as any).settingEl || text.inputEl.closest('.setting-item');
+                                                if (headerSettingItem) {
+                                                    this.markAsChanged(containerEl, headerSettingItem);
+                                                }
+                                            });
+                                    });
                             }
                         } else {
                             // Remove header setting if it exists
@@ -643,12 +700,19 @@ export class FlareManager {
                     .setClass('reasoning-header-setting')
                     .setName('Reasoning Header')
                     .setDesc('The tag that marks the start of reasoning (e.g. <think>)')
-                    .addText(text => text
-                        .setValue(settings.reasoningHeader || '<think>')
-                        .onChange(value => {
-                            settings.reasoningHeader = value;
-                            this.markAsChanged();
-                        }));
+                    .addText(text => {
+                        if (!this.currentFlareConfig) return text;
+                        return text
+                            .setValue(this.currentFlareConfig.reasoningHeader || '<think>')
+                            .onChange(value => {
+                                if (!this.currentFlareConfig) return;
+                                this.currentFlareConfig.reasoningHeader = value;
+                                const settingItem = (text as any).settingEl || text.inputEl.closest('.setting-item');
+                                if (settingItem) {
+                                    this.markAsChanged(containerEl, settingItem);
+                                }
+                            });
+                    });
             }
         }
 
@@ -1116,6 +1180,7 @@ export class FlareManager {
                             // Instead of recreating the entire section, just update the header setting
                             const headerSetting = providerSectionElement.querySelector('.reasoning-header-setting');
                             if (value) {
+                                // Add header setting if it doesn't exist
                                 if (!headerSetting) {
                                     new Setting(providerSectionElement)
                                         .setClass('reasoning-header-setting')
@@ -1136,6 +1201,7 @@ export class FlareManager {
                                         });
                                 }
                             } else {
+                                // Remove header setting if it exists
                                 headerSetting?.remove();
                             }
                         }));
