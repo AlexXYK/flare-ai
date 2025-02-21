@@ -88,13 +88,15 @@ export class ChatHistoryManager {
                 // Use the filename (without extension) as the title
                 this.currentHistory.title = fileName.slice(0, -3); // Remove .md extension
 
-                // Create file with initial content
-                const content = this.formatHistoryForSave(this.currentHistory);
-                this.currentFile = await this.plugin.app.vault.create(filePath, content);
+                // Create file with empty frontmatter first
+                this.currentFile = await this.plugin.app.vault.create(filePath, '---\n---\n');
                 
                 if (!this.currentFile) {
                     throw new Error('Failed to create history file');
                 }
+
+                // Initialize frontmatter and content
+                await this.saveCurrentHistory(true, false);
             }
 
             this.unsavedChanges = false;
@@ -138,16 +140,22 @@ export class ChatHistoryManager {
             this.currentHistory = null;
             this.currentFile = null;
 
+            // Get file metadata from cache
+            const fileCache = this.plugin.app.metadataCache.getFileCache(file);
+            if (!fileCache || !fileCache.frontmatter) {
+                throw new Error('Invalid history file format: missing frontmatter');
+            }
+
             // Read file content using cached read for better performance
             const content = await this.plugin.app.vault.cachedRead(file);
-            const { frontmatter, messages } = this.parseHistoryFile(content);
+            const messages = this.parseMessages(content.split(/^---\n[\s\S]*?\n---\n/)[1] || '');
 
             // Create new history object with default values
             this.currentHistory = {
-                date: frontmatter.date || Date.now(),
-                lastModified: frontmatter.lastModified || Date.now(),
-                title: frontmatter.title || file.basename.split('-').slice(1).join('-'), // Remove timestamp prefix
-                flare: frontmatter.flare,
+                date: fileCache.frontmatter.date || Date.now(),
+                lastModified: fileCache.frontmatter['last-modified'] || Date.now(),
+                title: fileCache.frontmatter.title || file.basename.split('-').slice(1).join('-'), // Remove timestamp prefix
+                flare: fileCache.frontmatter.flare,
                 provider: this.plugin.settings.defaultProvider || 'default',
                 model: (this.plugin.settings.providers[this.plugin.settings.defaultProvider || 'default'] || {}).defaultModel || 'default',
                 temperature: 0.7,
@@ -215,8 +223,9 @@ export class ChatHistoryManager {
                 } while (await this.plugin.app.vault.adapter.exists(filePath));
 
                 this.currentHistory.title = fileName.slice(0, -3);
-                const content = this.formatHistoryForSave(this.currentHistory);
-                this.currentFile = await this.plugin.app.vault.create(filePath, content);
+                
+                // Create file with empty frontmatter first
+                this.currentFile = await this.plugin.app.vault.create(filePath, '---\n---\n');
             }
 
             // Only save to disk if we have a file and either auto-save is enabled or we're forced
@@ -234,85 +243,57 @@ export class ChatHistoryManager {
                 this.currentHistory.messages = Array.from(uniqueMessages.values());
                 this.currentHistory.lastModified = Date.now();
 
-                const content = this.formatHistoryForSave(this.currentHistory);
-                await this.plugin.app.vault.modify(this.currentFile, content);
+                // Update frontmatter
+                await this.plugin.app.fileManager.processFrontMatter(this.currentFile, (frontmatter) => {
+                    const formatDate = (timestamp: number) => {
+                        const date = new Date(timestamp);
+                        return date.toISOString().replace('T', ' ').split('.')[0];
+                    };
+                    frontmatter.date = formatDate(this.currentHistory?.date || Date.now());
+                    frontmatter['last-modified'] = formatDate(this.currentHistory?.lastModified || Date.now());
+                    frontmatter.title = this.currentHistory?.title;
+                    if (this.currentHistory?.flare) {
+                        frontmatter.flare = this.currentHistory.flare;
+                    }
+                });
+
+                // Format messages
+                const messages = this.currentHistory.messages
+                    .filter(msg => msg && msg.role && ['system', 'user', 'assistant'].includes(msg.role))
+                    .map(msg => {
+                        const header = `## ${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}`;
+                        
+                        // Add settings JSON comment with all necessary fields
+                        const settings = {
+                            provider: msg.settings?.provider || 'default',
+                            model: msg.settings?.model || 'default',
+                            temperature: Number(msg.settings?.temperature || 0),
+                            timestamp: msg.timestamp,
+                            flare: msg.settings?.flare,
+                            isReasoningModel: msg.settings?.isReasoningModel,
+                            reasoningHeader: msg.settings?.reasoningHeader,
+                            maxTokens: msg.settings?.maxTokens,
+                            contextWindow: msg.settings?.contextWindow,
+                            handoffContext: msg.settings?.handoffContext,
+                        };
+                        
+                        return `${header}\n${msg.content}\n<!-- settings: ${JSON.stringify(settings)} -->\n`;
+                    }).join('\n');
+
+                // Read current content to preserve frontmatter
+                const content = await this.plugin.app.vault.read(this.currentFile);
+                const frontmatterMatch = content.match(/^---\n[\s\S]*?\n---\n/);
+                if (frontmatterMatch) {
+                    // Replace everything after frontmatter with new messages
+                    const newContent = content.replace(/^---\n[\s\S]*?\n---\n[\s\S]*$/, `${frontmatterMatch[0]}\n${messages}`);
+                    await this.plugin.app.vault.modify(this.currentFile, newContent);
+                }
             }
 
             this.unsavedChanges = false;
         } catch (error) {
             throw error;
         }
-    }
-
-    private formatHistoryForSave(history: ChatHistory): string {
-        const formatDate = (timestamp: number) => {
-            const date = new Date(timestamp);
-            return date.toISOString().replace('T', ' ').split('.')[0];
-        };
-
-        const frontmatter = [
-            '---',
-            `date: ${formatDate(history.date)}`,
-            `last-modified: ${formatDate(history.lastModified)}`,
-            `title: "${history.title}"`,
-            history.flare ? `flare: ${history.flare}` : null,
-            '---\n'
-        ].filter(Boolean).join('\n');
-
-        // Format messages, ensuring valid roles and content
-        const messages = history.messages
-            .filter(msg => msg && msg.role && ['system', 'user', 'assistant'].includes(msg.role))
-            .map(msg => {
-                const header = `## ${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}`;
-                
-                // Add settings JSON comment with all necessary fields
-                const settings = {
-                    provider: msg.settings?.provider || 'default',
-                    model: msg.settings?.model || 'default',
-                    temperature: Number(msg.settings?.temperature || 0),
-                    timestamp: msg.timestamp,
-                    flare: msg.settings?.flare,
-                    isReasoningModel: msg.settings?.isReasoningModel,
-                    reasoningHeader: msg.settings?.reasoningHeader,
-                    maxTokens: msg.settings?.maxTokens,
-                    contextWindow: msg.settings?.contextWindow,
-                    handoffContext: msg.settings?.handoffContext,
-                };
-                
-                return `${header}\n${msg.content}\n<!-- settings: ${JSON.stringify(settings)} -->\n`;
-            }).join('\n');
-
-        return `${frontmatter}\n${messages}`;
-    }
-
-    private parseHistoryFile(content: string): { frontmatter: FrontMatter, messages: ChatMessage[] } {
-        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-        if (!frontmatterMatch) {
-            throw new Error('Invalid history file format');
-        }
-
-        const [, frontmatterContent, messagesContent] = frontmatterMatch;
-        const frontmatter = this.parseFrontmatter(frontmatterContent);
-        const messages = this.parseMessages(messagesContent);
-
-        return { frontmatter, messages };
-    }
-
-    private parseFrontmatter(content: string): FrontMatter {
-        const frontmatter: FrontMatter = {};
-        const lines = content.split('\n');
-        
-        lines.forEach(line => {
-            const match = line.match(/^(\w+):\s*(.+)$/);
-            if (match) {
-                const [, key, value] = match;
-                // Try to convert to number if possible
-                const numValue = Number(value.replace(/^"(.*)"$/, '$1'));
-                frontmatter[key] = isNaN(numValue) ? value.replace(/^"(.*)"$/, '$1') : numValue;
-            }
-        });
-
-        return frontmatter;
     }
 
     private parseMessages(content: string): ChatMessage[] {

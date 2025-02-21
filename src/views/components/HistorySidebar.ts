@@ -1,4 +1,4 @@
-import { TFile, setIcon, App } from 'obsidian';
+import { TFile, setIcon, App, Menu, setTooltip } from 'obsidian';
 import type FlarePlugin from '../../../main';
 
 interface HistoryTreeItem {
@@ -90,6 +90,7 @@ export class HistorySidebar {
             attr: { 'aria-label': tooltip, title: tooltip }
         });
         setIcon(button, icon);
+        setTooltip(button, tooltip);
         return button;
     }
 
@@ -488,69 +489,57 @@ export class HistorySidebar {
     }
 
     private showContextMenu(item: HTMLElement, x: number, y: number) {
-        // Remove any existing context menu
-        this.hideContextMenu();
-        
-        // Create context menu
-        this.contextMenu = document.createElement('div');
-        this.contextMenu.className = 'flare-history-context-menu';
-        document.body.appendChild(this.contextMenu);
-        
-        // Position menu
-        const menuRect = this.contextMenu.getBoundingClientRect();
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-        
-        // Adjust position to keep menu in viewport
-        const menuX = Math.min(x, viewportWidth - menuRect.width);
-        const menuY = Math.min(y, viewportHeight - menuRect.height);
-        
-        // Use CSS custom properties for positioning
-        this.contextMenu.style.setProperty('--menu-x', `${menuX}px`);
-        this.contextMenu.style.setProperty('--menu-y', `${menuY}px`);
-        this.contextMenu.classList.add('is-visible');
-        
-        // Add menu items based on item type
+        const menu = new Menu();
         const path = item.getAttribute('data-path') || '';
         const isFolder = item.classList.contains('folder');
         
         if (isFolder) {
-            this.addContextMenuItem('New Chat', 'plus', () => this.createNewChat(path));
-            this.addContextMenuItem('Rename', 'pencil', () => this.renameItem(item, path));
-            this.addContextMenuItem('Delete', 'trash', () => this.deleteFolder(path), true);
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('plus')
+                    .setTitle('New Chat')
+                    .onClick(() => this.createNewChat(path));
+            });
+            
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('pencil')
+                    .setTitle('Rename')
+                    .onClick(() => this.renameItem(item, path));
+            });
+            
+            menu.addSeparator();
+            
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('trash')
+                    .setTitle('Delete')
+                    .onClick(() => this.deleteFolder(path));
+            });
         } else {
-            this.addContextMenuItem('Rename', 'pencil', () => this.renameItem(item, path));
-            this.addContextMenuItem('Delete', 'trash', () => this.deleteHistory(path), true);
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('pencil')
+                    .setTitle('Rename')
+                    .onClick(() => this.renameItem(item, path));
+            });
+            
+            menu.addSeparator();
+            
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('trash')
+                    .setTitle('Delete')
+                    .onClick(() => this.deleteHistory(path));
+            });
         }
-        
-        // Add click outside listener
-        document.addEventListener('click', this.hideContextMenu);
-    }
 
-    private addContextMenuItem(text: string, icon: string, onClick: () => void, isDanger = false) {
-        if (!this.contextMenu) return;
-
-        const item = this.contextMenu.createDiv({
-            cls: `flare-context-menu-item${isDanger ? ' is-danger' : ''}`
-        });
-        
-        const iconSpan = item.createSpan('flare-context-menu-icon');
-        setIcon(iconSpan, icon);
-        
-        item.createSpan('flare-context-menu-text').setText(text);
-        
-        item.onclick = (e) => {
-            e.stopPropagation();
-            onClick();
-            this.hideContextMenu();
-        };
+        // Show menu at position
+        menu.showAtPosition({ x, y });
     }
 
     private hideContextMenu() {
-        if (this.contextMenu) {
-            this.contextMenu.remove();
-            this.contextMenu = null;
-        }
+        // No longer needed - Menu class handles its own cleanup
     }
 
     // Clean up method to prevent memory leaks
@@ -565,7 +554,6 @@ export class HistorySidebar {
         document.removeEventListener('click', this.handleOutsideClick);
         document.removeEventListener('keydown', this.handleKeyDown);
         document.removeEventListener('touchstart', this.handleOutsideClick);
-        this.hideContextMenu();
         this.sidebarEl.detach();
     }
 

@@ -1,4 +1,4 @@
-import { Setting, Notice, Platform } from 'obsidian';
+import { Setting, Notice, Platform, setIcon, setTooltip } from 'obsidian';
 import type FlarePlugin from '../../../main';
 import type { ProviderSettings } from '../../types/AIProvider';
 
@@ -10,15 +10,22 @@ export class ProviderSettingsView {
     constructor(
         private plugin: FlarePlugin,
         private container: HTMLElement,
-        private settings: ProviderSettings,
+        private settings: ProviderSettings | null,
         private onSave: () => Promise<void>,
         private onSettingsChange: () => void
     ) {
         // Store original settings for revert
-        this.originalSettings = JSON.parse(JSON.stringify(settings));
+        this.originalSettings = JSON.parse(JSON.stringify(settings || {
+            name: '',
+            type: '',
+            enabled: false,
+            visibleModels: []
+        }));
     }
 
     private settingChanged(newValue: any, path: string) {
+        if (!this.settings) return;
+
         // Get the old value using the path
         const pathParts = path.split('.');
         let oldValue = this.originalSettings;
@@ -45,265 +52,97 @@ export class ProviderSettingsView {
 
     updateOriginalSettings(): void {
         // Update original settings with a deep copy of current settings
-        this.originalSettings = JSON.parse(JSON.stringify(this.settings));
+        this.originalSettings = JSON.parse(JSON.stringify(this.settings || {
+            name: '',
+            type: '',
+            enabled: false,
+            visibleModels: []
+        }));
         this.hasSettingsChanged = false;
     }
 
     display(): void {
-        const settingsContainer = this.container.createEl('div', { cls: 'provider-settings' });
-        
-        // Create General Settings Section
-        const generalSection = this.createSection(settingsContainer, 'General');
-        this.createGeneralSettings(generalSection);
+        const isDisabled = !this.settings;
 
-        // Create Authentication Section
-        const authSection = this.createSection(settingsContainer, 'Authentication');
-        this.createAuthSettings(authSection);
-
-        // Create Models Section
-        const modelsSection = this.createSection(settingsContainer, 'Available models');
-        this.createModelsSection(modelsSection);
-    }
-
-    private createSection(container: HTMLElement, title: string): HTMLElement {
-        const section = container.createDiv({ cls: 'flare-section' });
-        const header = section.createDiv({ cls: 'flare-section-header' });
-        const content = section.createDiv({ cls: 'flare-section-content' });
-
-        header.createSpan({ cls: 'flare-section-chevron' });
-        header.createSpan({ text: title });
-
-        header.addEventListener('click', () => {
-            header.classList.toggle('is-collapsed');
-            content.classList.toggle('is-hidden');
-        });
-
-        return content;
-    }
-
-    private createGeneralSettings(container: HTMLElement): void {
-        // Add name setting
-        new Setting(container)
+        // Name setting
+        new Setting(this.container)
             .setName('Name')
             .setDesc('A unique name for this provider')
+            .setDisabled(isDisabled)
             .addText(text => text
                 .setPlaceholder('Enter provider name')
-                .setValue(this.settings.name || '')
+                .setValue(this.settings?.name || '')
                 .onChange(value => {
+                    if (!this.settings) return;
                     this.settings.name = value;
                     this.settingChanged(value, 'name');
                 }));
 
-        // Add enabled toggle
-        new Setting(container)
+        // Enable toggle
+        new Setting(this.container)
             .setName('Enable provider')
             .setDesc('Enable or disable this provider')
+            .setDisabled(isDisabled)
             .addToggle(toggle => toggle
-                .setValue(this.settings.enabled || false)
+                .setValue(this.settings?.enabled || false)
                 .onChange(value => {
+                    if (!this.settings) return;
                     this.settings.enabled = value;
                     this.settingChanged(value, 'enabled');
                 }));
-    }
 
-    private createAuthSettings(container: HTMLElement): void {
-        if (!container) {
-            console.error('Container element is null in createAuthSettings');
-            return;
+        // API Key (for providers that need it)
+        if (!isDisabled && ['openai', 'openrouter', 'anthropic', 'azure'].includes(this.settings?.type || '')) {
+            new Setting(this.container)
+                .setName('API Key')
+                .setDesc(`Your ${this.settings?.type?.toUpperCase() || ''} API key`)
+                .addText(text => {
+                    const input = text
+                        .setPlaceholder('Enter API key')
+                        .setValue(this.settings?.apiKey || '')
+                        .onChange(value => {
+                            if (!this.settings) return;
+                            this.settings.apiKey = value.trim();
+                            this.settingChanged(value, 'apiKey');
+                        });
+                    input.inputEl.type = 'password';
+                    this.addPasswordToggle(input.inputEl);
+                });
         }
 
-        // Set default base URLs based on provider type
-        try {
+        // Base URL (for providers that support it)
+        if (!isDisabled && ['openai', 'azure', 'ollama', 'openrouter'].includes(this.settings?.type || '')) {
             const defaultUrls: Record<string, string> = {
-                anthropic: 'https://api.anthropic.com',
                 openai: 'https://api.openai.com/v1',
+                azure: 'https://<resource>.openai.azure.com',
                 ollama: 'http://localhost:11434',
                 openrouter: 'https://openrouter.ai/api/v1'
             };
 
-            // Only set default URL if it's not already set
-            if (this.settings.type && this.settings.type in defaultUrls && !this.settings.baseUrl) {
-                this.settings.baseUrl = defaultUrls[this.settings.type];
-                // Only trigger change if we actually set a new default
-                this.settingChanged(this.settings.baseUrl, 'baseUrl');
-            }
-
-            switch (this.settings.type) {
-                case 'anthropic':
-                    this.createAnthropicSettings(container);
-                    break;
-                case 'openai':
-                    this.createOpenAISettings(container);
-                    break;
-                case 'azure':
-                    // Azure doesn't have a default URL as it's customer-specific
-                    this.createAzureSettings(container);
-                    break;
-                case 'ollama':
-                    this.createOllamaSettings(container);
-                    break;
-                case 'openrouter':
-                    this.createOpenRouterSettings(container);
-                    break;
-                default:
-                    console.warn(`Unknown provider type: ${this.settings.type}`);
-            }
-        } catch (error) {
-            console.error('Error in createAuthSettings:', error);
-            const errorEl = container.createEl('div', {
-                cls: 'flare-settings-error',
-                text: 'Error creating authentication settings. Please check console for details.'
-            });
-        }
-    }
-
-    private createAnthropicSettings(container: HTMLElement): void {
-        new Setting(container)
-            .setName('API Key')
-            .setDesc('Your Anthropic API key')
-            .addText(text => {
-                const input = text
-                    .setPlaceholder('Enter API key')
-                    .setValue(this.settings.apiKey || '')
+            new Setting(this.container)
+                .setName('Base URL')
+                .setDesc(this.settings?.type === 'azure' ? 'Your Azure OpenAI endpoint URL' : 'API endpoint URL')
+                .addText(text => text
+                    .setPlaceholder(defaultUrls[this.settings?.type || ''] || '')
+                    .setValue(this.settings?.baseUrl || '')
                     .onChange(value => {
-                        this.settings.apiKey = value;
-                        this.settingChanged(value, 'apiKey');
-                    });
-                input.inputEl.type = 'password';
-                this.addPasswordToggle(input.inputEl);
-            });
-    }
-
-    private createOpenAISettings(container: HTMLElement): void {
-        // API Key
-        new Setting(container)
-            .setName('API Key')
-            .setDesc('Your OpenAI API key')
-            .addText(text => {
-                const input = text
-                    .setPlaceholder('Enter API key')
-                    .setValue(this.settings.apiKey || '')
-                    .onChange(value => {
-                        this.settings.apiKey = value;
-                        this.settingChanged(value, 'apiKey');
-                    });
-                input.inputEl.type = 'password';
-                this.addPasswordToggle(input.inputEl);
-            });
-
-        // Base URL
-        new Setting(container)
-            .setName('Base URL')
-            .setDesc('Optional: Custom base URL for API requests')
-            .addText(text => text
-                .setPlaceholder('https://api.openai.com/v1')
-                .setValue(this.settings.baseUrl || '')
-                .onChange(value => {
-                    this.settings.baseUrl = value;
-                    this.settingChanged(value, 'baseUrl');
-                }));
-    }
-
-    private createAzureSettings(container: HTMLElement): void {
-        // API Key
-        new Setting(container)
-            .setName('API Key')
-            .setDesc('Your Azure OpenAI API key')
-            .addText(text => {
-                const input = text
-                    .setPlaceholder('Enter API key')
-                    .setValue(this.settings.apiKey || '')
-                    .onChange(value => {
-                        this.settings.apiKey = value;
-                        this.settingChanged(value, 'apiKey');
-                    });
-                input.inputEl.type = 'password';
-                this.addPasswordToggle(input.inputEl);
-            });
-
-        // Base URL
-        new Setting(container)
-            .setName('Base URL')
-            .setDesc('Your Azure OpenAI endpoint URL')
-            .addText(text => text
-                .setPlaceholder('https://<resource>.openai.azure.com')
-                .setValue(this.settings.baseUrl || '')
-                .onChange(value => {
-                    this.settings.baseUrl = value;
-                    this.settingChanged(value, 'baseUrl');
-                }));
-    }
-
-    private createOllamaSettings(container: HTMLElement): void {
-        // Base URL setting
-        new Setting(container)
-            .setName('Endpoint URL')
-            .setDesc('Ollama API endpoint URL')
-            .addText(text => text
-                .setPlaceholder('http://localhost:11434')
-                .setValue(this.settings.baseUrl || 'http://localhost:11434')
-                .onChange(async value => {
-                    this.settings.baseUrl = value;
-                    this.settingChanged(value, 'baseUrl');
-                }));
-    }
-
-    private createOpenRouterSettings(container: HTMLElement): void {
-        if (!container) return;
-
-        // API Key Setting
-        const apiKeySetting = new Setting(container)
-            .setName('API Key')
-            .setDesc('Your OpenRouter API key')
-            .addText(text => {
-                const input = text
-                    .setPlaceholder('Enter API key')
-                    .setValue(this.settings.apiKey || '')
-                    .onChange(value => {
-                        this.settings.apiKey = value.trim();
-                        this.settingChanged(value, 'apiKey');
-                    });
-                input.inputEl.type = 'password';
-                this.addPasswordToggle(input.inputEl);
-            });
-
-        // Base URL Setting
-        const baseUrlSetting = new Setting(container)
-            .setName('Base URL')
-            .setDesc('Optional: Custom base URL for API requests')
-            .addText(text => {
-                const input = text
-                    .setPlaceholder('https://openrouter.ai/api/v1')
-                    .setValue(this.settings.baseUrl || '')
-                    .onChange(value => {
+                        if (!this.settings) return;
                         this.settings.baseUrl = value.trim();
                         this.settingChanged(value, 'baseUrl');
-                    });
-            });
-
-        // Add appropriate classes for styling
-        apiKeySetting.settingEl.addClass('flare-setting-api-key');
-        baseUrlSetting.settingEl.addClass('flare-setting-base-url');
-    }
-
-    private async createModelsSection(container: HTMLElement): Promise<void> {
-        // Clear the container first
-        container.empty();
-
-        // Add mobile class if on mobile platform
-        if (Platform.isMobile) {
-            container.addClass('is-mobile');
+                    }));
         }
 
-        // Add refresh models button
-        new Setting(container)
-            .setName('Available models')
+        // Models section
+        const modelsHeading = new Setting(this.container)
+            .setName('Available Models')
             .setDesc('Select which models to show in the model selector')
+            .setDisabled(isDisabled)
             .addButton(button => button
-                .setButtonText('Refresh models')
+                .setButtonText('Refresh Models')
+                .setDisabled(isDisabled)
                 .onClick(async () => {
+                    if (!this.settings) return;
                     try {
-                        // Show loading state
                         button.setButtonText('Refreshing...');
                         button.setDisabled(true);
 
@@ -312,169 +151,97 @@ export class ProviderSettingsView {
                         this.settings.visibleModels = this.settings.visibleModels || [];
                         
                         this.onSettingsChange();
-                        await this.createModelsSection(container);
+                        this.display();
                         new Notice('Models refreshed');
                     } catch (error) {
                         if (error instanceof Error) {
                             new Notice('Error refreshing models: ' + error.message);
                         }
                     } finally {
-                        // Reset button state
-                        button.setButtonText('Refresh models');
-                        button.setDisabled(false);
+                        button.setButtonText('Refresh Models');
+                        button.setDisabled(isDisabled);
                     }
                 }));
 
-        // Try to load models if none are loaded, but only show errors if this isn't a new provider
-        if (!this.settings.availableModels?.length) {
-            try {
-                const models = await this.plugin.providerManager.getAvailableModels(this.settings);
-                this.settings.availableModels = models;
-                this.settings.visibleModels = this.settings.visibleModels || [];
-            } catch (error) {
-                // Only show error if this isn't a new provider (i.e., has a type but no models)
-                if (this.settings.type && error instanceof Error) {
-                    new Notice('Error loading models: ' + error.message);
+        // Create models list container with scrollable area
+        const modelsContainer = this.container.createEl('div', { cls: 'models-list' });
+
+        // Add header
+        const header = modelsContainer.createEl('div', { cls: 'models-list-header' });
+        header.createEl('div', { 
+            cls: 'model-header model-name-header',
+            text: 'Model'
+        });
+        header.createEl('div', { 
+            cls: 'model-header visibility-header',
+            text: 'Show'
+        });
+
+        // Create models list content
+        const modelsContent = modelsContainer.createEl('div', { cls: 'models-list-content' });
+
+        // Create models list if we have models
+        if (!isDisabled && this.settings?.availableModels?.length) {
+            // Sort models by visibility first, then alphabetically
+            const sortedModels = [...this.settings.availableModels].sort((a, b) => {
+                const aVisible = this.settings?.visibleModels?.includes(a) || false;
+                const bVisible = this.settings?.visibleModels?.includes(b) || false;
+                if (aVisible !== bVisible) {
+                    return bVisible ? 1 : -1;
                 }
-            }
-        }
-
-        // Add model toggles
-        if (this.settings.availableModels?.length) {
-            const modelsList = container.createEl('div', { cls: 'models-list' });
-            
-            // Add header
-            const header = modelsList.createEl('div', { cls: 'models-list-header' });
-            
-            // Create sort state
-            let currentSort = {
-                field: 'name' as 'name' | 'visibility',
-                direction: 'asc' as 'asc' | 'desc'
-            };
-
-            // Create headers with sort functionality
-            const nameHeader = header.createEl('div', { 
-                cls: 'model-header model-name-header is-sorted',
-                text: 'Model'
+                return a.localeCompare(b);
             });
 
-            const visibilityHeader = header.createEl('div', { 
-                cls: 'model-header visibility-header',
-                text: 'Show'
+            sortedModels.forEach(model => {
+                new Setting(modelsContent)
+                    .setName(model)
+                    .addToggle(toggle => toggle
+                        .setValue(this.settings?.visibleModels?.includes(model) || false)
+                        .onChange(value => {
+                            if (!this.settings) return;
+                            if (!this.settings.visibleModels) {
+                                this.settings.visibleModels = [];
+                            }
+                            
+                            if (value) {
+                                if (!this.settings.visibleModels.includes(model)) {
+                                    this.settings.visibleModels.push(model);
+                                }
+                            } else {
+                                this.settings.visibleModels = this.settings.visibleModels.filter(m => m !== model);
+                            }
+                            this.settingChanged(this.settings.visibleModels, 'visibleModels');
+                            
+                            // Re-render the models list to update sorting
+                            this.display();
+                        }));
             });
-
-            // Create content container for scrolling
-            const content = modelsList.createEl('div', { cls: 'models-list-content' });
-
-            // Sort function
-            const sortModels = (models: string[], field: 'name' | 'visibility', direction: 'asc' | 'desc') => {
-                return [...models].sort((a, b) => {
-                    if (field === 'name') {
-                        return direction === 'asc' ? 
-                            a.localeCompare(b) : 
-                            b.localeCompare(a);
-                    } else {
-                        const aVisible = this.settings.visibleModels?.includes(a) || false;
-                        const bVisible = this.settings.visibleModels?.includes(b) || false;
-                        return direction === 'asc' ? 
-                            Number(aVisible) - Number(bVisible) : 
-                            Number(bVisible) - Number(aVisible);
-                    }
-                });
-            };
-
-            // Render models function
-            const renderModels = () => {
-                content.empty();
-                const sortedModels = sortModels(
-                    this.settings.availableModels || [],
-                    currentSort.field,
-                    currentSort.direction
-                );
-
-                sortedModels.forEach((model: string) => {
-                    new Setting(content)
-                        .setName(model)
-                        .addToggle(toggle => toggle
-                            .setValue(this.settings.visibleModels?.includes(model) || false)
-                            .onChange(value => {
-                                if (!this.settings.visibleModels) {
-                                    this.settings.visibleModels = [];
-                                }
-                                
-                                if (value) {
-                                    if (!this.settings.visibleModels.includes(model)) {
-                                        this.settings.visibleModels.push(model);
-                                    }
-                                } else {
-                                    this.settings.visibleModels = this.settings.visibleModels.filter(m => m !== model);
-                                }
-                                this.settingChanged(this.settings.visibleModels, 'visibleModels');
-
-                                // Re-render if sorting by visibility
-                                if (currentSort.field === 'visibility') {
-                                    renderModels();
-                                }
-                            }));
-                });
-            };
-
-            // Header click handlers
-            const updateSort = (field: 'name' | 'visibility') => {
-                // Remove sort classes from both headers
-                nameHeader.removeClass('is-sorted', 'sort-desc');
-                visibilityHeader.removeClass('is-sorted', 'sort-desc');
-
-                if (currentSort.field === field) {
-                    // Toggle direction if clicking same field
-                    currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
-                } else {
-                    // New field, reset to ascending
-                    currentSort.field = field;
-                    currentSort.direction = 'asc';
-                }
-
-                // Add appropriate classes
-                const header = field === 'name' ? nameHeader : visibilityHeader;
-                header.addClass('is-sorted');
-                if (currentSort.direction === 'desc') {
-                    header.addClass('sort-desc');
-                }
-
-                renderModels();
-            };
-
-            nameHeader.addEventListener('click', () => updateSort('name'));
-            visibilityHeader.addEventListener('click', () => updateSort('visibility'));
-
-            // Initial render
-            renderModels();
         } else {
-            // Show empty state
-            const emptyState = container.createDiv('models-empty-state');
-            emptyState.setText('No models available. Click "Refresh models" to load the available models.');
+            // Show empty state as a disabled setting
+            new Setting(modelsContent)
+                .setName('No models available')
+                .setDesc(isDisabled ? 'Select a provider to view available models' : 'Click "Refresh Models" to load available models')
+                .setDisabled(true);
         }
     }
 
     private addPasswordToggle(inputEl: HTMLInputElement): void {
         if (!inputEl || !inputEl.parentElement) return;
 
-        const toggleBtn = inputEl.parentElement.createEl('button', {
-            cls: 'password-visibility-toggle',
-            attr: {
-                'type': 'button',
-                'aria-label': 'Toggle password visibility'
-            }
+        const toggleButton = inputEl.parentElement.createEl('button', {
+            cls: 'password-visibility-toggle'
         });
-        toggleBtn.createEl('span', { text: '👁️' });
+        setIcon(toggleButton, 'eye-off');
+        setTooltip(toggleButton, 'Toggle password visibility');
         
-        toggleBtn.addEventListener('click', (e: MouseEvent) => {
+        toggleButton.addEventListener('click', (e: MouseEvent) => {
             e.preventDefault();
             inputEl.type = inputEl.type === 'password' ? 'text' : 'password';
         });
     }
 
     async validateSettings(): Promise<void> {
+        if (!this.settings) return;
         const errors: string[] = [];
 
         // Name validation

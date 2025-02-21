@@ -118,27 +118,28 @@ export class OpenAIProvider extends BaseProvider {
         this.abortController = new AbortController();
 
         try {
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.apiKey}`
-                },
-                body: JSON.stringify({
-                    model,
-                    messages,
-                    temperature,
-                    max_tokens: maxTokens,
-                    stream
-                }),
-                signal: this.abortController.signal
-            });
-
-            if (!response.ok) {
-                throw new Error(`OpenAI API error: ${response.status}`);
-            }
-
             if (stream && onToken) {
+                // Use fetch for streaming since requestUrl doesn't support it
+                const response = await fetch(`${this.url}/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages,
+                        temperature,
+                        max_tokens: maxTokens,
+                        stream
+                    }),
+                    signal: this.abortController.signal
+                });
+
+                if (!response.ok) {
+                    throw new Error(`OpenAI API error: ${response.status}`);
+                }
+
                 let completeResponse = '';
                 const reader = response.body?.getReader();
                 const decoder = new TextDecoder();
@@ -178,7 +179,28 @@ export class OpenAIProvider extends BaseProvider {
 
                 return completeResponse;
             } else {
-                const result = await response.json();
+                // Use requestUrl for non-streaming requests
+                const response = await requestUrl({
+                    url: `${this.url}/chat/completions`,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages,
+                        temperature,
+                        max_tokens: maxTokens,
+                        stream: false
+                    })
+                });
+
+                if (response.status !== 200) {
+                    throw new Error(`OpenAI API error: ${response.status}`);
+                }
+
+                const result = response.json;
                 return result.choices?.[0]?.message?.content || '';
             }
         } catch (error) {

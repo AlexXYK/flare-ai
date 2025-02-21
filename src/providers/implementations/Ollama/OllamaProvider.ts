@@ -96,29 +96,30 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
         this.abortController = new AbortController();
 
         try {
-            const response = await fetch(`${this.config.baseUrl}/api/chat`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    model,
-                    messages,
-                    stream,
-                    context: this.context,
-                    options: {
-                        temperature,
-                        num_predict: maxTokens
-                    }
-                }),
-                signal: this.abortController.signal
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
             if (stream && onToken) {
+                // Use fetch for streaming since requestUrl doesn't support it
+                const response = await fetch(`${this.url}/api/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages,
+                        stream: true,
+                        context: this.context,
+                        options: {
+                            temperature,
+                            num_predict: maxTokens
+                        }
+                    }),
+                    signal: this.abortController.signal
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
                 let completeResponse = '';
                 const reader = response.body?.getReader();
                 const decoder = new TextDecoder();
@@ -164,12 +165,40 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
 
                 return completeResponse;
             } else {
-                const result = await response.json();
-                // Store context for future requests if available
-                if (result.context) {
-                    this.context = result.context;
+                // Use requestUrl for non-streaming requests
+                const response = await requestUrl({
+                    url: `${this.url}/api/chat`,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages,
+                        stream: false,
+                        context: this.context,
+                        options: {
+                            temperature,
+                            num_predict: maxTokens
+                        }
+                    })
+                });
+
+                if (response.status !== 200) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                return result.message?.content || '';
+
+                try {
+                    const result = response.json as OllamaChatResponse;
+                    // Store context for future requests if available
+                    if (result.context) {
+                        this.context = result.context;
+                    }
+                    return result.message?.content || '';
+                } catch (e) {
+                    console.error('Failed to parse Ollama response:', e);
+                    throw new Error('Failed to parse Ollama response');
+                }
             }
         } catch (error) {
             if (error instanceof Error && error.name === 'AbortError') {

@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice, DropdownComponent } from 'obsidian';
+import { App, PluginSettingTab, Setting, DropdownComponent, TextComponent, ButtonComponent, Notice, setIcon, setTooltip } from 'obsidian';
 import type FlarePlugin from '../../main';
 import { ProviderSettings } from '../types/AIProvider';
 import { PluginSettings } from '../types/PluginSettings';
@@ -23,47 +23,31 @@ export class GeneralSettingTab extends PluginSettingTab {
         this.hasUnsavedChanges = false;
         this.sectionActionButtons.clear();
 
-        // Header
-        containerEl.createEl('h1', { text: 'FLARE.ai' });
-        
-        const wrapper = containerEl.createDiv('flare-manager');
+        // Create sections directly in the container
+        const providersSection = containerEl.createDiv('providers-section');
+        const flaresSection = containerEl.createDiv('flares-section');
+        const generalSection = containerEl.createDiv('general-section');
+        const historySection = containerEl.createDiv('history-section');
+        const titleSection = containerEl.createDiv('title-section');
 
         // Providers Section
-        const providersSection = this.createSection(wrapper, 'Providers', true);
+        new Setting(providersSection).setName('Providers').setHeading();
         this.plugin.providerManager.createSettingsUI(providersSection);
 
         // Flares Section
-        const flaresSection = this.createSection(wrapper, 'Flares', true);
+        new Setting(flaresSection).setName('Flares').setHeading();
         this.plugin.flareManager.createSettingsUI(flaresSection);
 
-        // General Section (no "Settings" suffix)
-        const generalSection = this.createSection(wrapper, 'General', true);
+        // General Section
+        new Setting(generalSection).setName('General').setHeading();
         this.addGeneralSettings(generalSection);
 
-        // History Section (no "Settings" suffix)
-        const historySection = this.createSection(wrapper, 'History', true);
+        // History Section
+        new Setting(historySection).setName('History').setHeading();
         this.addHistorySettings(historySection);
 
         // Title Generation Section
-        this.addTitleGenerationSettings(wrapper);
-    }
-
-    private createSection(containerEl: HTMLElement, title: string, collapsible: boolean = false): HTMLElement {
-        const section = containerEl.createDiv({ cls: 'flare-section' });
-        const header = section.createDiv({ cls: 'flare-section-header' });
-        const content = section.createDiv({ cls: 'flare-section-content' });
-
-        header.createSpan({ cls: 'flare-section-chevron' });
-        header.createSpan({ text: title });
-
-        if (collapsible) {
-            header.addEventListener('click', () => {
-                header.classList.toggle('is-collapsed');
-                content.classList.toggle('is-hidden');
-            });
-        }
-
-        return content;
+        this.addTitleGenerationSettings(titleSection);
     }
 
     private addProviderSettings(containerEl: HTMLElement) {
@@ -278,15 +262,15 @@ export class GeneralSettingTab extends PluginSettingTab {
     }
 
     private addTitleGenerationSettings(containerEl: HTMLElement) {
-        // Create collapsible section for title generation
-        const titleSection = this.createSection(containerEl, 'Title generation', true);
+        // Create section for title generation
+        new Setting(containerEl).setName('Title generation').setHeading();
 
         // Add action buttons container
-        const actionButtons = titleSection.createDiv({ cls: 'flare-form-actions' });
+        const actionButtons = containerEl.createDiv({ cls: 'flare-form-actions' });
         this.sectionActionButtons.set('title', actionButtons);
 
         // Add auto title generation toggle
-        new Setting(titleSection)
+        new Setting(containerEl)
             .setName('Auto-generate titles')
             .setDesc('Automatically generate titles after a specified number of message exchanges')
             .addToggle(toggle => {
@@ -299,10 +283,11 @@ export class GeneralSettingTab extends PluginSettingTab {
             });
 
         // Add message pairs setting
-        new Setting(titleSection)
+        new Setting(containerEl)
             .setName('Auto-generate after pairs')
             .setDesc('Number of message pairs after which to automatically generate a title')
             .addText(text => {
+                text.inputEl.addClass('flare-pairs-input');
                 text.setValue(String(this.plugin.settings.titleSettings.autoGenerateAfterPairs || 2))
                     .setPlaceholder('2')
                     .onChange(async value => {
@@ -315,7 +300,8 @@ export class GeneralSettingTab extends PluginSettingTab {
                     });
             });
 
-        new Setting(titleSection)
+        // Add provider setting
+        new Setting(containerEl)
             .setName('Provider')
             .setDesc('Select the provider to use for title generation')
             .addDropdown(dropdown => {
@@ -329,8 +315,7 @@ export class GeneralSettingTab extends PluginSettingTab {
             });
 
         // Create model container and setting
-        const modelContainer = titleSection.createDiv('model-container');
-        new Setting(modelContainer)
+        new Setting(containerEl)
             .setName('Model')
             .setDesc('Select the model to use for title generation')
             .addDropdown(dropdown => {
@@ -345,7 +330,7 @@ export class GeneralSettingTab extends PluginSettingTab {
         // Initial model load
         setTimeout(() => this.refreshTitleModels(), 100);
 
-        new Setting(titleSection)
+        new Setting(containerEl)
             .setName('Temperature')
             .setDesc('Set the temperature for title generation (0.0 - 1.5)')
             .addText(text => {
@@ -359,7 +344,7 @@ export class GeneralSettingTab extends PluginSettingTab {
                     });
             });
 
-        new Setting(titleSection)
+        new Setting(containerEl)
             .setName('Maximum tokens')
             .setDesc('Maximum length of generated title')
             .addText(text => {
@@ -375,7 +360,7 @@ export class GeneralSettingTab extends PluginSettingTab {
             });
 
         // Create a container for the prompt setting
-        const promptContainer = titleSection.createDiv('setting-item');
+        const promptContainer = containerEl.createDiv('setting-item');
         const promptInfo = promptContainer.createDiv('setting-item-info');
         promptInfo.createDiv('setting-item-name').setText('Prompt');
         promptInfo.createDiv('setting-item-description').setText('Set the prompt for title generation');
@@ -383,19 +368,14 @@ export class GeneralSettingTab extends PluginSettingTab {
         // Create a container for the textarea
         const textareaContainer = promptContainer.createDiv('setting-item-control');
         
-        const promptArea = textareaContainer.createEl('textarea', {
-            cls: 'flare-system-prompt',
-            attr: {
-                placeholder: 'Enter your prompt here...',
-                spellcheck: 'false',
-                rows: '8',
-                'aria-label': 'Title generation prompt input'
-            }
+        const titlePromptInput = textareaContainer.createEl('textarea', {
+            cls: 'title-prompt-input'
         });
+        setTooltip(titlePromptInput, 'Title generation prompt input');
         
-        promptArea.value = this.plugin.settings.titleSettings.prompt;
-        promptArea.addEventListener('input', () => {
-            this.plugin.settings.titleSettings.prompt = promptArea.value;
+        titlePromptInput.value = this.plugin.settings.titleSettings.prompt;
+        titlePromptInput.addEventListener('input', () => {
+            this.plugin.settings.titleSettings.prompt = titlePromptInput.value;
             this.markSectionAsChanged('title');
         });
 

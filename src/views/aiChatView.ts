@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, TFile, setIcon, Notice, App, WorkspaceLeaf, Menu, Platform, Modal, SuggestModal, debounce } from 'obsidian';
+import { ItemView, MarkdownRenderer, TFile, setIcon, Notice, App, WorkspaceLeaf, Menu, Platform, Modal, SuggestModal, debounce, sanitizeHTMLToDom, setTooltip } from 'obsidian';
 import { TempDialog } from './components/TempDialog';
 
 // @ts-ignore
@@ -328,7 +328,7 @@ export class AIChatView extends ItemView {
 
         // Initialize ResizeObserver
         this.resizeObserver = new ResizeObserver(
-            this.createDebouncedHandler(
+            debounce(
                 () => this.updateLayout(),
                 100,
                 false
@@ -336,7 +336,7 @@ export class AIChatView extends ItemView {
         );
 
         // Initialize debounced height update
-        this.debouncedHeightUpdate = this.createDebouncedHandler(
+        this.debouncedHeightUpdate = debounce(
             () => this.updateInputHeight(),
             50,
             true
@@ -435,66 +435,59 @@ export class AIChatView extends ItemView {
     }
 
     private async createUI() {
-        const container = this.containerEl.children[1];
+        const container = this.containerEl.children[1] as HTMLElement;
         container.empty();
         container.setAttribute('role', 'main');
-        container.setAttribute('aria-label', 'FLARE.ai Chat Interface');
 
         // Create main chat container
         const chatContainer = container.createDiv('flare-chat-container');
         chatContainer.setAttribute('role', 'region');
-        chatContainer.setAttribute('aria-label', 'Chat Messages');
         
         // Create main content area
         const mainContent = chatContainer.createDiv('flare-main-content');
         mainContent.setAttribute('role', 'region');
-        mainContent.setAttribute('aria-label', 'Main Chat Area');
 
         // Create toolbar
         const toolbar = mainContent.createDiv('flare-toolbar');
         toolbar.setAttribute('role', 'toolbar');
-        toolbar.setAttribute('aria-label', 'Chat Controls');
         const toolbarLeft = toolbar.createDiv('flare-toolbar-left');
         const toolbarCenter = toolbar.createDiv('flare-toolbar-center');
         const toolbarRight = toolbar.createDiv('flare-toolbar-right');
-        
+
         // Add history toggle button
         const historyBtn = toolbarLeft.createEl('button', {
-            cls: 'flare-toolbar-button',
-            attr: { 'aria-label': 'Toggle chat history' }
+            cls: 'flare-toolbar-button history-toggle'
         });
         setIcon(historyBtn, 'history');
+        setTooltip(historyBtn, 'Toggle chat history');
         
         // Add new chat button
         const newChatBtn = toolbarLeft.createEl('button', {
-            cls: 'flare-toolbar-button',
-            attr: { 'aria-label': 'New chat' }
+            cls: 'flare-toolbar-button new-chat'
         });
         setIcon(newChatBtn, 'plus');
+        setTooltip(newChatBtn, 'New chat');
         
         // Add chat title
         toolbarCenter.createEl('h2', { text: 'New Chat' });
         
-        // Set window title to FLARE.ai
-        document.title = 'FLARE.ai';
-        
         // Add save button
         const saveBtn = toolbarRight.createEl('button', {
-            cls: 'flare-toolbar-button',
-            attr: { 'aria-label': 'Save chat' }
+            cls: 'flare-toolbar-button save-chat'
         });
         setIcon(saveBtn, 'save');
+        setTooltip(saveBtn, 'Save chat');
         
         // Add clear button
         const clearBtn = toolbarRight.createEl('button', {
-            cls: 'flare-toolbar-button',
-            attr: { 'aria-label': 'Clear chat' }
+            cls: 'flare-toolbar-button clear-chat'
         });
-        setIcon(clearBtn, 'trash-2');
+        setIcon(clearBtn, 'trash');
+        setTooltip(clearBtn, 'Clear chat');
         
         // Create messages area
         this.messagesEl = mainContent.createDiv('flare-messages');
-        
+
         // Instead, create a bottom container that will hold both composer and footer
         const bottomContainer = mainContent.createDiv('flare-bottom-container');
         const composer = bottomContainer.createDiv('flare-composer');
@@ -534,10 +527,11 @@ export class AIChatView extends ItemView {
         // Create send button
         const sendBtn = inputWrapper.createEl('button', {
             cls: 'flare-send-button',
-            attr: { 'aria-label': 'Send message', type: 'button' }
+            attr: { type: 'button' }
         }) as HTMLButtonElement;
         setIcon(sendBtn, 'send');
-        
+        setTooltip(sendBtn, 'Send message');
+
         // Now create footer as a child of bottomContainer, right after the composer
         const footer = bottomContainer.createDiv('flare-footer');
         const footerLeft = footer.createDiv('flare-footer-left');
@@ -692,7 +686,7 @@ export class AIChatView extends ItemView {
                     this.isStreaming = true;
                     setIcon(sendBtn, 'square');
                     sendBtn.classList.add('is-streaming');
-                    sendBtn.setAttribute('aria-label', 'Stop streaming');
+                    setTooltip(sendBtn, 'Stop streaming');
                     
                     try {
                         // Store input value and clear input immediately with proper height reset
@@ -782,7 +776,7 @@ export class AIChatView extends ItemView {
         }) as EventListener);
 
         // Window resize handler for suggestion positioning
-        const debouncedUpdatePosition = this.createDebouncedHandler(
+        const debouncedUpdatePosition = debounce(
             () => {
                 const suggestionContainer = this.containerEl.querySelector('.flare-suggestions');
                 if (suggestionContainer) {
@@ -804,7 +798,7 @@ export class AIChatView extends ItemView {
     ): void {
         this.isAborted = true;  // Set abort state when stopping
         setIcon(button, 'send');
-        button.setAttribute('aria-label', 'Send message');
+        setTooltip(button, 'Send message');
         button.classList.remove('is-streaming');
         this.isStreaming = false;
     }
@@ -1029,7 +1023,7 @@ export class AIChatView extends ItemView {
 
     private setupToolbarHandlers() {
         // History toggle
-        const historyBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Toggle chat history"]');
+        const historyBtn = this.containerEl.querySelector('.flare-toolbar-button.history-toggle');
         if (historyBtn instanceof HTMLElement) {
             this.registerDomEvent(historyBtn, 'click', () => {
                 if (this.historySidebar.isVisible) {
@@ -1041,7 +1035,7 @@ export class AIChatView extends ItemView {
         }
 
         // New chat
-        const newChatBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="New chat"]');
+        const newChatBtn = this.containerEl.querySelector('.flare-toolbar-button.new-chat');
         if (newChatBtn instanceof HTMLElement) {
             this.registerDomEvent(newChatBtn, 'click', () => {
                 this.startNewChat();
@@ -1049,7 +1043,7 @@ export class AIChatView extends ItemView {
         }
 
         // Save chat
-        const saveBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Save chat"]');
+        const saveBtn = this.containerEl.querySelector('.flare-toolbar-button.save-chat');
         if (saveBtn instanceof HTMLElement && !saveBtn.hasAttribute('data-handler-registered')) {
             saveBtn.setAttribute('data-handler-registered', 'true');
             this.registerDomEvent(saveBtn, 'click', async () => {
@@ -1078,7 +1072,7 @@ export class AIChatView extends ItemView {
         }
 
         // Clear chat
-        const clearBtn = this.containerEl.querySelector('.flare-toolbar-button[aria-label="Clear chat"]');
+        const clearBtn = this.containerEl.querySelector('.flare-toolbar-button.clear-chat');
         if (clearBtn instanceof HTMLElement) {
             this.registerDomEvent(clearBtn, 'click', () => {
                 this.clearChat();
@@ -1341,8 +1335,8 @@ export class AIChatView extends ItemView {
                 });
 
                 // Add accessibility attributes
-                messageEl.setAttribute('role', 'article');
-                messageEl.setAttribute('aria-label', `${message.role} message`);
+                messageEl.setAttribute('role', `${message.role}`);
+                setTooltip(messageEl, `${message.role} message`);
                 messageEl.setAttribute('aria-live', message.role === 'assistant' ? 'polite' : 'off');
 
                 // Store original content for comparison
@@ -1408,15 +1402,6 @@ export class AIChatView extends ItemView {
                 errorMessage: error instanceof Error ? error.message : 'Failed to load chat history'
             });
         }
-    }
-
-    private createDebouncedHandler(handler: () => void, delay: number, immediate: boolean) {
-        let timeout: NodeJS.Timeout | null = null;
-        return () => {
-            const callNow = immediate && !timeout;
-            if (!timeout) timeout = setTimeout(handler, delay);
-            else if (!callNow) handler();
-        };
     }
 
     private updateSuggestionsPosition() {
@@ -1564,8 +1549,8 @@ export class AIChatView extends ItemView {
             });
 
             if (userMessage) {
-                userMessage.setAttribute('role', 'article');
-                userMessage.setAttribute('aria-label', 'User message');
+                userMessage.setAttribute('role', 'user');
+                setTooltip(userMessage, 'User message');
                 if (!userMessage.getAttribute('data-timestamp')) {
                     userMessage.setAttribute('data-timestamp', Date.now().toString());
                 }
@@ -1586,8 +1571,8 @@ export class AIChatView extends ItemView {
                 throw new Error('Failed to create loading message');
             }
 
-            loadingMsg.setAttribute('role', 'article');
-            loadingMsg.setAttribute('aria-label', 'Assistant message');
+            loadingMsg.setAttribute('role', 'assistant');
+            setTooltip(loadingMsg, 'Assistant message');
             loadingMsg.setAttribute('data-timestamp', Date.now().toString());
             loadingMsg.classList.add('is-loading');
 
@@ -1692,8 +1677,21 @@ export class AIChatView extends ItemView {
                     }
                 });
 
-                // Always use accumulated content when streaming was involved
-                const finalResponse = options?.stream ? accumulatedResponse : response;
+                // For non-streaming responses, we need to process the response differently
+                let finalResponse = '';
+                if (options?.stream) {
+                    finalResponse = accumulatedResponse;
+                } else {
+                    // For non-streaming, we need to process the response
+                    if (this.currentFlare?.isReasoningModel) {
+                        // Extract reasoning blocks from the complete response
+                        const extraction = this.extractReasoningContent(response, reasoningHeader);
+                        accumulatedReasoningBlocks = extraction.reasoningBlocks;
+                        finalResponse = extraction.responsePart;
+                    } else {
+                        finalResponse = response;
+                    }
+                }
                 
                 // For reasoning models, reconstruct the full content with reasoning blocks
                 let fullContent = finalResponse;
@@ -1707,7 +1705,7 @@ export class AIChatView extends ItemView {
                     const reasoningParts = accumulatedReasoningBlocks.map(block => 
                         `${reasoningHeader}${block}${reasoningEndTag}`
                     );
-                    fullContent = [...reasoningParts, accumulatedResponse].join('\n\n');
+                    fullContent = [...reasoningParts, finalResponse].join('\n\n');
                 }
 
                 // Update loading message with final response
@@ -2002,8 +2000,8 @@ export class AIChatView extends ItemView {
         const timestamp = Date.now();
 
         // Add accessibility attributes
-        messageEl.setAttribute('role', 'article');
-        messageEl.setAttribute('aria-label', `${role} message`);
+        messageEl.setAttribute('role', `${role}`);
+        setTooltip(messageEl, `${role} message`);
         messageEl.setAttribute('aria-live', role === 'assistant' ? 'polite' : 'off');
 
         // Store content and role for deletion
@@ -2158,7 +2156,7 @@ export class AIChatView extends ItemView {
 
     private createActionButton(
         parent: HTMLElement,
-        ariaLabel: string,
+        tooltip: string,
         iconName: string,
         additionalClass?: string
     ): HTMLElement {
@@ -2166,11 +2164,11 @@ export class AIChatView extends ItemView {
             cls: `flare-action-button${additionalClass ? ' ' + additionalClass : ''}`,
             attr: { 
                 'role': 'button',
-                'aria-label': ariaLabel,
                 'tabindex': '0'
             }
         });
         setIcon(btn, iconName);
+        setTooltip(btn, tooltip);
         return btn;
     }
 
@@ -2310,7 +2308,6 @@ export class AIChatView extends ItemView {
             const flareName = mainText.createEl('button', {
                 cls: 'flare-name',
                 attr: {
-                    'aria-label': `Using flare ${settings?.flare || 'default'}`,
                     'tabindex': '0'
                 }
             });
@@ -2340,7 +2337,6 @@ export class AIChatView extends ItemView {
             if (reasoningBlocks.length > 0) {
                 const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
                 reasoningContainer.setAttribute('role', 'region');
-                reasoningContainer.setAttribute('aria-label', 'AI reasoning process');
                 reasoningContainer.setAttribute('aria-expanded', 'false');
 
                 // Create container for rendered content but don't render yet
@@ -2392,7 +2388,6 @@ export class AIChatView extends ItemView {
             // Create and render response container
             const responseContainer = markdownContainer.createDiv('flare-response-content');
             responseContainer.setAttribute('role', 'region');
-            responseContainer.setAttribute('aria-label', 'AI response');
             if (responsePart.trim()) {
                 const currentFile = this.plugin.chatHistoryManager.getCurrentFile();
                 await MarkdownRenderer.render(
@@ -2764,7 +2759,7 @@ export class AIChatView extends ItemView {
             const messageEl = this.containerEl.querySelector(`[data-timestamp="${timestamp}"]`);
             if (messageEl) {
                 const reasoningContent = messageEl.querySelector('.flare-reasoning-content');
-                const toggleBtn = messageEl.querySelector('.flare-message-actions button[aria-label="Toggle reasoning"]');
+                const toggleBtn = messageEl.querySelector('.flare-message-actions button.toggle-reasoning');
                 
                 if (reasoningContent instanceof HTMLElement) {
                     reasoningContent.classList.toggle('is-expanded', this.expandedReasoningMessages.has(timestamp));
@@ -3070,16 +3065,21 @@ export class AIChatView extends ItemView {
         if (reasoningBlocks.length > 0) {
             const reasoningContainer = markdownContainer.createDiv('flare-reasoning-content');
             reasoningContainer.setAttribute('role', 'region');
-            reasoningContainer.setAttribute('aria-label', 'AI reasoning process');
             reasoningContainer.setAttribute('aria-expanded', 'false');
             // Remove immediate rendering - this will happen on expand
         }
 
         const responseContainer = markdownContainer.createDiv('flare-response-content');
         responseContainer.setAttribute('role', 'region');
-        responseContainer.setAttribute('aria-label', 'AI response');
         if (responsePart.trim()) {
-            await MarkdownRenderer.renderMarkdown(responsePart.trim(), responseContainer, '', this.plugin);
+            const currentFile = this.plugin.chatHistoryManager.getCurrentFile();
+            await MarkdownRenderer.render(
+                this.app,
+                responsePart.trim(),
+                responseContainer,
+                currentFile?.path || '',
+                this
+            );
         }
     }
 

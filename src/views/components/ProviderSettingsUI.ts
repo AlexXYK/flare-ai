@@ -1,4 +1,4 @@
-import { Setting, DropdownComponent, Modal, Notice, setIcon } from 'obsidian';
+import { Setting, DropdownComponent, Modal, Notice, setIcon, setTooltip } from 'obsidian';
 import type FlarePlugin from '../../../main';
 import type { ProviderSettings } from '../../types/AIProvider';
 import { ProviderSettingsView } from './ProviderSettingsView';
@@ -23,97 +23,11 @@ export class ProviderSettingsUI {
     display(): void {
         this.container.empty();
 
-        // Create main container
-        const mainContainer = this.container.createEl('div', { cls: 'provider-settings-main' });
-        
-        // Create left and right containers
-        const leftContainer = mainContainer.createEl('div', { cls: 'provider-settings-left' });
-        const rightContainer = mainContainer.createEl('div', { cls: 'provider-settings-right' });
+        // Add Providers heading
+        new Setting(this.container).setName('Providers').setHeading();
 
-        // Create provider selector area
-        const selectorContainer = leftContainer.createEl('div', { cls: 'flare-provider-selector' });
-        this.createProviderSelector(selectorContainer);
-
-        // Create provider type setting right after the selector
-        const providerTypeContainer = leftContainer.createEl('div', { cls: 'provider-type-setting' });
-        this.createProviderTypeDropdown(providerTypeContainer);
-
-        // Create action buttons container after the type dropdown
-        this.actionButtons = leftContainer.createEl('div', { cls: 'flare-form-actions' });
-
-        // Add save/revert buttons
-        new Setting(this.actionButtons)
-            .addButton(button => {
-                button
-                    .setButtonText('Save')
-                    .setCta()
-                    .onClick(async () => {
-                        try {
-                            if (this.providerSettingsView) {
-                                await this.providerSettingsView.validateSettings();
-                            }
-                            await this.plugin.saveData(this.plugin.settings);
-                            // Update original settings after successful save
-                            this.originalSettings = JSON.parse(JSON.stringify(this.plugin.settings));
-                            this.hasUnsavedChanges = false; // Reset unsaved changes flag
-                            this.hideActionButtons();
-                            // After successful save, refresh all dropdowns
-                            this.refreshDropdown();
-                            // Refresh provider dropdowns in flare settings
-                            if (this.plugin.flareManager) {
-                                this.plugin.flareManager.refreshProviderDropdowns();
-                            }
-                            // Refresh provider dropdowns in title settings
-                            if (this.plugin.settingTab) {
-                                this.plugin.settingTab.refreshTitleProviderDropdowns();
-                            }
-                            // Update provider settings view's original settings
-                            if (this.providerSettingsView) {
-                                this.providerSettingsView.updateOriginalSettings();
-                            }
-                            new Notice('Provider settings saved');
-                        } catch (error) {
-                            console.error('Failed to save provider settings:', error);
-                            new Notice('Error saving settings: ' + (error instanceof Error ? error.message : 'Unknown error'));
-                        }
-                    });
-            })
-            .addButton(button => {
-                button
-                    .setButtonText('Revert')
-                    .onClick(() => {
-                        try {
-                            // Restore all settings
-                            Object.assign(this.plugin.settings, JSON.parse(JSON.stringify(this.originalSettings)));
-                            // Refresh the UI
-                            this.display();
-                            this.hideActionButtons();
-                            new Notice('Provider settings reverted');
-                        } catch (error) {
-                            console.error('Failed to revert provider settings:', error);
-                            new Notice('Failed to revert settings');
-                        }
-                    });
-            });
-
-        // Create provider settings view in the right container
-        if (this.currentProvider) {
-            const settings = this.plugin.settings.providers[this.currentProvider];
-            this.providerSettingsView = new ProviderSettingsView(
-                this.plugin,
-                rightContainer,
-                settings,
-                async () => {
-                    await this.plugin.saveData(this.plugin.settings);
-                },
-                this.handleSettingsChange
-            );
-            this.providerSettingsView.display();
-        }
-    }
-
-    private createProviderSelector(container: HTMLElement): void {
-        const dropdownContainer = new Setting(container)
+        // Create provider selector
+        const dropdownContainer = new Setting(this.container)
             .setName('Active provider')
             .setDesc('Select a provider to configure');
 
@@ -200,8 +114,6 @@ export class ProviderSettingsUI {
                     }
                 }
             });
-
-            return d;
         });
 
         // Add buttons container for add/delete in the provider selector area
@@ -209,17 +121,17 @@ export class ProviderSettingsUI {
         
         // Add new provider button
         const addButton = buttonsContainer.createEl('button', {
-            cls: 'clickable-icon',
-            attr: { 'aria-label': 'Add new provider' }
+            cls: 'clickable-icon'
         });
         setIcon(addButton, 'plus');
+        setTooltip(addButton, 'Add new provider');
 
-        // Add delete button
+        // Delete provider button
         const deleteButton = buttonsContainer.createEl('button', {
-            cls: 'clickable-icon',
-            attr: { 'aria-label': 'Delete provider' }
+            cls: 'clickable-icon'
         });
         setIcon(deleteButton, 'trash');
+        setTooltip(deleteButton, 'Delete provider');
         if (!this.currentProvider) {
             deleteButton.addClass('disabled');
         }
@@ -228,21 +140,12 @@ export class ProviderSettingsUI {
         if (dropdown) {
             this.setupAddDeleteHandlers(addButton, deleteButton, dropdown);
         }
-    }
 
-    private createProviderTypeDropdown(container: HTMLElement): void {
-        if (!this.currentProvider) {
-            container.style.display = 'none';
-            return;
-        }
-
-        const provider = this.plugin.settings.providers[this.currentProvider];
-        if (!provider) return;
-
-        container.style.display = 'block';
-        new Setting(container)
+        // Create provider type setting
+        new Setting(this.container)
             .setName('Provider type')
             .setDesc('Select the type of provider')
+            .setDisabled(!this.currentProvider)
             .addDropdown(dropdown => {
                 // Add provider type options
                 dropdown.addOption('', 'Select a type...');
@@ -259,8 +162,11 @@ export class ProviderSettingsUI {
                         dropdown.addOption(type, label);
                     });
 
-                // Set current value
-                dropdown.setValue(provider.type || '');
+                // Set current value if we have a provider
+                if (this.currentProvider) {
+                    const provider = this.plugin.settings.providers[this.currentProvider];
+                    dropdown.setValue(provider.type || '');
+                }
 
                 dropdown.onChange(async value => {
                     if (!this.currentProvider) return;
@@ -288,8 +194,71 @@ export class ProviderSettingsUI {
                     this.display(); // Refresh the UI to show appropriate settings
                     this.showActionButtons(); // Always show action buttons on type change
                 });
+            });
 
-                return dropdown;
+        // Create provider settings view
+        const settings = this.currentProvider ? this.plugin.settings.providers[this.currentProvider] : null;
+        this.providerSettingsView = new ProviderSettingsView(
+            this.plugin,
+            this.container,
+            settings,
+            async () => {
+                await this.plugin.saveData(this.plugin.settings);
+            },
+            this.handleSettingsChange
+        );
+        this.providerSettingsView.display();
+
+        // Create action buttons container
+        this.actionButtons = this.container.createEl('div', { cls: 'flare-form-actions' });
+        this.hideActionButtons(); // Initially hide the action buttons
+
+        // Add save/revert buttons
+        new Setting(this.actionButtons)
+            .addButton(button => {
+                button
+                    .setButtonText('Save')
+                    .setCta()
+                    .onClick(async () => {
+                        try {
+                            if (this.providerSettingsView) {
+                                await this.providerSettingsView.validateSettings();
+                            }
+                            await this.plugin.saveData(this.plugin.settings);
+                            this.originalSettings = JSON.parse(JSON.stringify(this.plugin.settings));
+                            this.hasUnsavedChanges = false;
+                            this.hideActionButtons();
+                            this.refreshDropdown();
+                            if (this.plugin.flareManager) {
+                                this.plugin.flareManager.refreshProviderDropdowns();
+                            }
+                            if (this.plugin.settingTab) {
+                                this.plugin.settingTab.refreshTitleProviderDropdowns();
+                            }
+                            if (this.providerSettingsView) {
+                                this.providerSettingsView.updateOriginalSettings();
+                            }
+                            new Notice('Provider settings saved');
+                        } catch (error) {
+                            console.error('Failed to save provider settings:', error);
+                            new Notice('Error saving settings: ' + (error instanceof Error ? error.message : 'Unknown error'));
+                        }
+                    });
+            })
+            .addButton(button => {
+                button
+                    .setButtonText('Revert')
+                    .onClick(() => {
+                        try {
+                            Object.assign(this.plugin.settings, JSON.parse(JSON.stringify(this.originalSettings)));
+                            this.display();
+                            this.hideActionButtons();
+                            new Notice('Provider settings reverted');
+                        } catch (error) {
+                            console.error('Failed to revert provider settings:', error);
+                            new Notice('Failed to revert settings');
+                        }
+                    });
             });
     }
 

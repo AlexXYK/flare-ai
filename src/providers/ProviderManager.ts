@@ -105,11 +105,6 @@ export abstract class ProviderManager {
         // Create content container
         const content = section.createEl('div', { cls: 'flare-section-content' });
         
-        // Add click handler for collapsing
-        header.addEventListener('click', () => {
-            header.classList.toggle('is-collapsed');
-        });
-        
         return content;
     }
 
@@ -118,7 +113,8 @@ export abstract class ProviderManager {
         const actionButtons = settingsContainer.createEl('div', { cls: 'flare-form-actions' });
 
         // Create General Settings Section
-        const generalSection = this.createSection(settingsContainer, 'General Settings');
+        new Setting(settingsContainer).setName('General settings').setHeading();
+        const generalSection = settingsContainer.createDiv({ cls: 'flare-section-content' });
         
         // Add name setting
         new Setting(generalSection)
@@ -144,7 +140,8 @@ export abstract class ProviderManager {
                 }));
 
         // Create Authentication Section
-        const authSection = this.createSection(settingsContainer, 'Authentication');
+        new Setting(settingsContainer).setName('Authentication').setHeading();
+        const authSection = settingsContainer.createDiv({ cls: 'flare-section-content' });
         this.updateProviderSpecificSettings(authSection, settings, actionButtons);
 
         // Add save and cancel buttons
@@ -227,7 +224,7 @@ export abstract class ProviderManager {
                         }));
 
                 // Create Models Section
-                const ollamaModelsSection = this.createSection(container, 'Available Models');
+                const ollamaModelsSection = this.createSection(container, 'Available models');
                 this.createModelsSection(ollamaModelsSection, settings, actionButtons);
                 break;
 
@@ -261,7 +258,7 @@ export abstract class ProviderManager {
                         }));
 
                 // Create Models Section
-                const modelsSection = this.createSection(container, 'Available Models');
+                const modelsSection = this.createSection(container, 'Available models');
                 this.createModelsSection(modelsSection, settings, actionButtons);
                 break;
 
@@ -295,7 +292,7 @@ export abstract class ProviderManager {
                         }));
 
                 // Create Models Section
-                const azureModelsSection = this.createSection(container, 'Available Models');
+                const azureModelsSection = this.createSection(container, 'Available models');
                 this.createModelsSection(azureModelsSection, settings, actionButtons);
                 break;
         }
@@ -307,10 +304,10 @@ export abstract class ProviderManager {
 
         // Add refresh models button
         new Setting(container)
-            .setName('Available Models')
+            .setName('Available models')
             .setDesc('Select which models to show in the model selector')
             .addButton(button => button
-                .setButtonText('Refresh Models')
+                .setButtonText('Refresh models')
                 .onClick(async () => {
                     try {
                         const models = await this.getAvailableModels(settings);
@@ -319,7 +316,7 @@ export abstract class ProviderManager {
                         
                         this.showActionButtons(actionButtons);
                         await this.createModelsSection(container, settings, actionButtons);
-                        new Notice('Models refreshed');
+                        new Notice('models refreshed');
                     } catch (error) {
                         if (error instanceof Error) {
                             new Notice('Error refreshing models: ' + error.message);

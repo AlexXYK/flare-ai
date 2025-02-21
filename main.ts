@@ -1,4 +1,4 @@
-import { App, Plugin, WorkspaceLeaf, Notice, TFile, sanitizeHTMLToDom } from 'obsidian';
+import { App, Plugin, WorkspaceLeaf, Notice, TFile, sanitizeHTMLToDom, setTooltip } from 'obsidian';
 import { GeneralSettingTab } from './src/settings/GeneralSettingTab';
 import { AIChatView, VIEW_TYPE_AI_CHAT } from './src/views/aiChatView';
 import { 
@@ -170,9 +170,10 @@ export default class FlarePlugin extends Plugin {
     private setupUI() {
         try {
             // Add ribbon icon with proper aria label and tooltip
-            this.addRibbonIcon('flame', PLUGIN_NAME, (evt: MouseEvent) => {
+            const ribbonIconEl = this.addRibbonIcon('flame', PLUGIN_NAME, (evt: MouseEvent) => {
                 this.activateView();
-            }).setAttribute('aria-label', 'Open FLARE.ai Chat');
+            });
+            setTooltip(ribbonIconEl, 'Open FLARE.ai Chat');
         } catch (error) {
             console.error('FLARE.ai: Failed to setup UI:', error);
             new Notice('Failed to setup FLARE.ai UI components');
@@ -607,30 +608,34 @@ export default class FlarePlugin extends Plugin {
                 };
             }
 
-            // Read and parse file content
+            // Get file metadata from cache
+            const fileCache = this.app.metadataCache.getFileCache(flareFile);
+            if (!fileCache || !fileCache.frontmatter) {
+                throw new Error('Invalid flare file format: missing frontmatter');
+            }
+
+            // Read file content for system prompt
             const content = await this.app.vault.read(flareFile);
             const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
             if (!frontmatterMatch) {
-                throw new Error('Invalid flare file format');
+                throw new Error('Invalid flare file format: missing frontmatter');
             }
-
-            const [_, frontmatterContent, systemPrompt] = frontmatterMatch;
-            const frontmatter = this.parseFrontmatter(frontmatterContent);
+            const systemPrompt = frontmatterMatch[2].trim();
 
             return {
                 name: flareName,
-                provider: frontmatter.provider || defaultProvider,
-                model: frontmatter.model || model,
-                enabled: frontmatter.enabled ?? true,
-                description: frontmatter.description || '',
-                temperature: frontmatter.temperature ?? 0.7,
-                maxTokens: frontmatter.maxTokens,
-                contextWindow: frontmatter.contextWindow ?? -1,
-                handoffContext: frontmatter.handoffContext ?? -1,
+                provider: fileCache.frontmatter.provider || defaultProvider,
+                model: fileCache.frontmatter.model || model,
+                enabled: fileCache.frontmatter.enabled ?? true,
+                description: fileCache.frontmatter.description || '',
+                temperature: fileCache.frontmatter.temperature ?? 0.7,
+                maxTokens: fileCache.frontmatter.maxTokens,
+                contextWindow: fileCache.frontmatter.contextWindow ?? -1,
+                handoffContext: fileCache.frontmatter.handoffContext ?? -1,
                 systemPrompt: systemPrompt.trim(),
-                stream: frontmatter.stream ?? false,
-                isReasoningModel: frontmatter.isReasoningModel ?? false,
-                reasoningHeader: frontmatter.reasoningHeader || '<think>'
+                stream: fileCache.frontmatter.stream ?? false,
+                isReasoningModel: fileCache.frontmatter.isReasoningModel ?? false,
+                reasoningHeader: fileCache.frontmatter.reasoningHeader || '<think>'
             };
         } catch (error) {
             console.error('Failed to load flare config:', error);
@@ -1057,26 +1062,5 @@ export default class FlarePlugin extends Plugin {
 
     private formatTaskResult(values: any[]): string {
         return values.map((task: any) => `- [ ] ${task}`).join('\n');
-    }
-
-    private parseFrontmatter(content: string): any {
-        const frontmatter: any = {};
-        content.split('\n').forEach(line => {
-            const match = line.match(/^(\w+):\s*(.*)$/);
-            if (match) {
-                const [_, key, value] = match;
-                // Handle quoted strings
-                if (value.startsWith('"') && value.endsWith('"')) {
-                    frontmatter[key] = value.slice(1, -1);
-                } else if (value === 'true' || value === 'false') {
-                    frontmatter[key] = value === 'true';
-                } else if (!isNaN(Number(value))) {
-                    frontmatter[key] = Number(value);
-                } else {
-                    frontmatter[key] = value;
-                }
-            }
-        });
-        return frontmatter;
     }
 } 

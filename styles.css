@@ -731,7 +731,7 @@
 }
 
 /* Always show reasoning toggle button */
-.flare-message:not(.is-loading) .flare-message-actions .flare-action-button[aria-label="Toggle reasoning"] {
+.flare-message:not(.is-loading) .flare-message-actions .flare-action-button.toggle-reasoning {
     opacity: 1;
     background: var(--background-modifier-hover);
 }
@@ -817,14 +817,8 @@
     color: var(--text-error);
 }
 
-/* Always show reasoning toggle button */
-.flare-message:not(.is-loading) .flare-message-actions .flare-action-button[aria-label="Toggle reasoning"] {
-    opacity: 1;
-    background: var(--background-modifier-hover);
-}
-
 /* Active state for reasoning toggle */
-.flare-action-button[aria-label="Toggle reasoning"].is-active {
+.flare-action-button.toggle-reasoning.is-active {
     color: var(--text-accent);
     background: var(--background-modifier-hover);
     transform: translateY(-1px);
@@ -875,212 +869,105 @@
 
 /* 4. Settings Tab Styles
    ---------------------- */
-/* (Settings Tab Styles - No Changes in this Revision, Keeping Original) */
-.providers-section {
-    padding: 0;
+/* Settings Tab Styles - Sections */
+.providers-section,
+.flares-section,
+.general-section,
+.history-section,
+.title-section {
     display: flex;
     flex-direction: column;
-    gap: 0;
-    background: var(--background-primary);
-}
-
-.flare-provider-selector {
-    margin: 0;
-}
-
-.flare-provider-selector .setting-item {
-    border: none;
     padding: 0;
-}
-
-.flare-provider-selector .setting-item-control {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-/* Remove all custom dropdown styling */
-.flare-dropdown {
-    width: 200px;
-}
-
-/* Collapsible sections spacing */
-.flare-section {
-    margin: 0;
-    border: none;
+    margin-bottom: 12px;
     background: var(--background-primary);
-    overflow: visible;
-}
-
-.flare-section + .flare-section {
-    border-top: 1px solid var(--background-modifier-border);
-}
-
-.flare-section-header {
-    padding: 12px 0;
-    background: var(--background-primary);
-    border-radius: 0;
-    display: flex;
-    align-items: center;
-    padding: 12px 16px;
-    background: var(--background-secondary-alt);
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-    border-radius: 8px 8px 0 0;
-}
-
-.flare-section-header:hover {
-    background: var(--background-modifier-hover);
-}
-
-.flare-section-header h4 {
-    margin: 0;
-    font-size: 1.1em;
-    font-weight: 600;
-    color: var(--text-normal);
-}
-
-.flare-section-header.is-collapsed {
-    border-bottom: none;
-    border-radius: 8px;
-    border-radius: 8px;
-}
-
-.flare-section-header::after {
-    content: '';
-    width: 16px;
-    height: 16px;
-    margin-left: auto;
-    background-color: var(--text-muted);
-    -webkit-mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
-    mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
-    -webkit-mask-size: contain;
-    mask-size: contain;
-    -webkit-mask-repeat: no-repeat;
-    mask-repeat: no-repeat;
-    transition: transform 0.15s ease;
-}
-
-.flare-section-header.is-collapsed::after {
-    transform: rotate(-90deg);
-}
-
-.flare-section-content {
-    padding: 8px;
-    border-top: none;
-    background: var(--background-primary);
-    border-top: 1px solid var(--background-modifier-border);
-    display: block;
-    transition: opacity 0.15s ease;
-    opacity: 1;
-    height: auto;
-    overflow: visible;
-}
-
-.flare-section-header.is-collapsed + .flare-section-content {
-    display: none;
-    opacity: 0;
-    height: 0;
-    overflow: hidden;
 }
 
 /* Provider Settings */
-.provider-settings {
-    background: var(--background-primary);
-    padding: 0;
-    margin-top: 12px;
-}
-
-.provider-settings .setting-item {
-    border: none;
-    padding: 12px 0;
-}
-
-.provider-settings .setting-item:first-child {
-    padding-top: 0;
-    border-top: none;
-}
-
-.provider-settings .setting-item:last-child {
-    padding-bottom: 0;
-    border-bottom: none;
-}
-
-.provider-settings .setting-item:not(:last-child) {
-    border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.provider-settings .setting-item-info {
-    margin-bottom: 8px;
-}
-
-.provider-settings .setting-item-name {
-    font-weight: 600;
-    color: var(--text-normal);
-}
-
-.provider-settings .setting-item-description {
-    color: var(--text-muted);
-    font-size: 0.9em;
-    margin-top: 4px;
-}
-
-.provider-settings .setting-item-control {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.provider-settings input[type="text"],
-.provider-settings input[type="password"] {
-    width: 100%;
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
-    font-size: 14px;
-    transition: all 0.15s ease;
-    padding: 4px 8px;
-    width: calc(100% - 28px); /* Adjust for smaller button */
-    background-color: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-}
-
-.provider-settings input[type="text"]:focus,
-.provider-settings input[type="password"]:focus {
-    border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 1px var(--interactive-accent);
-}
-
-
-
-
-/* Action Buttons */
 .flare-form-actions {
     display: none;
-    margin-top: 12px;
-    padding-top: 12px;
+    padding: 11.25px 0px;
     border-top: 1px solid var(--background-modifier-border);
 }
 
 .flare-form-actions.is-visible {
-    display: flex !important;
+    display: flex;
     justify-content: flex-end;
     gap: 8px;
 }
 
-/* Models List Styles */
-.models-list {
-    margin-top: 12px;
+.flare-provider-buttons {
+    display: flex;
+    gap: 4px;
+    margin-left: 8px;
+}
+
+.flare-provider-buttons button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 4px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.flare-provider-buttons button:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+}
+
+.flare-provider-buttons button.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Password visibility toggle */
+.password-visibility-toggle {
+    background: none;
+    cursor: pointer;
+    padding: 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+    position: relative;
+    background-color: var(--background-modifier-hover);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
-    overflow: hidden;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0.8;
+    transition: all 0.15s ease;
+    min-width: 24px;
+    min-height: 24px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+}
+
+.password-visibility-toggle:hover {
+    opacity: 1;
+    background-color: var(--background-modifier-hover-alt);
+}
+
+/* Mobile optimizations */
+.is-mobile .password-visibility-toggle {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 6px;
+    flex: 0 0 36px;
+}
+
+/* Models List */
+.models-list {
+    margin: 12px 0px;
+    border-radius: 4px;
     background: var(--background-primary);
     max-height: 300px;
     display: flex;
@@ -1090,7 +977,7 @@
 .models-list-header {
     display: flex;
     align-items: center;
-    padding: 8px 16px;
+    padding: 8px 12px;
     background: var(--background-secondary-alt);
     border-bottom: 1px solid var(--background-modifier-border);
     position: sticky;
@@ -1109,37 +996,6 @@
     transition: color 0.15s ease;
 }
 
-.model-header:hover {
-    color: var(--text-accent);
-}
-
-.model-header::after {
-    content: '';
-    width: 12px;
-    height: 12px;
-    opacity: 0;
-    background-color: currentColor;
-    -webkit-mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
-    mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
-    -webkit-mask-size: contain;
-    mask-size: contain;
-    -webkit-mask-repeat: no-repeat;
-    mask-repeat: no-repeat;
-    transition: all 0.15s ease;
-}
-
-.model-header:hover::after {
-    opacity: 0.5;
-}
-
-.model-header.is-sorted::after {
-    opacity: 1;
-}
-
-.model-header.is-sorted.sort-desc::after {
-    transform: rotate(180deg);
-}
-
 .model-name-header {
     flex: 1;
     padding-left: 4px;
@@ -1153,42 +1009,66 @@
 .models-list-content {
     overflow-y: auto;
     flex: 1;
-    -webkit-overflow-scrolling: touch;
-    scroll-behavior: smooth;
     padding: 4px 0;
 }
 
-.models-list .setting-item {
+.models-list-content .setting-item {
     margin: 0;
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
-    transition: background-color 0.15s ease;
+    padding: 4px 12px;
+    border: none;
 }
 
-.models-list .setting-item:hover {
+.models-list-content .setting-item:not(:last-child) {
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.models-list-content .setting-item:hover {
     background: var(--background-modifier-hover);
 }
 
-.models-list .setting-item:last-child {
-    border-bottom: none;
+/* Mobile optimizations */
+.is-mobile .models-list {
+    max-height: 400px;
 }
 
-.models-list .setting-item-name {
-    padding-left: 4px;
-    font-size: 0.95em;
+.is-mobile .models-list-header {
+    padding: 12px 16px;
 }
 
-.models-list .setting-item-control {
+.is-mobile .models-list-content .setting-item {
+    padding: 8px 16px;
+}
+
+.is-mobile .model-header {
+    min-height: 32px;
+}
+
+/* Action Buttons */
+.flare-form-actions {
+    display: none;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.flare-form-actions.is-visible {
+    display: flex;
     justify-content: flex-end;
-    padding-right: 4px;
+    gap: 8px;
 }
 
-/* Title Generation Settings */
-/* Style for the pairs input specifically */
-.setting-item input[type="text"][placeholder="2"] {
-    width: 60px;
-    text-align: center;
+/* System Prompt */
+.system-prompt {
+    width: 100%;
+    min-height: 150px;
+    margin-top: 8px;
+    font-family: var(--font-monospace);
+    line-height: 1.4;
+    padding: 12px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    resize: vertical;
 }
 
 /* Mobile optimizations */
@@ -1278,11 +1158,6 @@
     font-size: 0.9em;
 }
 
-/* Loading state */
-.setting-item-control button:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-}
 
 /* Adjust container padding for mobile */
 @media (max-width: 768px) {
@@ -1466,32 +1341,6 @@
     transform: rotate(-90deg);
 }
 
-/* Context menu positioning */
-.flare-history-context-menu {
-    --menu-x: 0;
-    --menu-y: 0;
-    position: fixed;
-    background: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
-    padding: 4px;
-    box-shadow: var(--shadow-s);
-    z-index: 1001;
-    min-width: 160px;
-    opacity: 0;
-    transform: translate(var(--menu-x), var(--menu-y));
-    transition: opacity 0.15s ease, transform 0.15s ease;
-    pointer-events: none;
-    --menu-x: 0;
-    --menu-y: 0;
-    transform: translate(var(--menu-x), var(--menu-y));
-}
-
-.flare-history-context-menu.is-positioned {
-    opacity: 1;
-    pointer-events: auto;
-}
-
 /* Action buttons visibility */
 .flare-action-buttons {
     display: none;
@@ -1502,40 +1351,6 @@
 .flare-action-buttons.is-visible {
     display: flex;
     opacity: 1;
-}
-
-/* Context menu item styling */
-.flare-context-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    cursor: pointer;
-    border-radius: 4px;
-    transition: all 0.15s ease;
-    color: var(--text-normal);
-}
-
-.flare-context-menu-item:hover {
-    background-color: var(--background-modifier-hover);
-}
-
-.flare-context-menu-item.is-danger {
-    color: var(--text-error);
-}
-
-.flare-context-menu-item.is-danger:hover {
-    background-color: var(--background-modifier-error);
-    color: var(--text-on-accent);
-}
-
-.flare-context-menu-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    color: inherit;
 }
 
 /* Empty State */
@@ -1566,9 +1381,7 @@
     opacity: 0.7;
 }
 
-/* 6. Mobile & Touch Optimizations
-   ----------------------------- */
-/* Mobile toolbar sizing */
+/* Mobile & Touch Optimizations */
 .is-mobile .flare-chat-container .flare-toolbar {
     min-height: 36px;  /* Larger for touch */
     height: 36px;
@@ -1600,9 +1413,6 @@
     }
 }
 
-/* Mobile optimization for flare-footer */
-
-
 /* Remove conflicting styles */
 @media (max-width: 768px) {
     body .view-content[data-type="flare-chat"] .flare-footer {
@@ -1623,8 +1433,7 @@
     .flare-provider-buttons .clickable-icon:hover,
     .password-visibility-toggle:hover,
     .flare-suggestion-item:hover,
-    .flare-history-item:hover > .flare-history-item-content,
-    .flare-context-menu-item:hover {
+    .flare-history-item:hover > .flare-history-item-content {
         background-color: transparent;
         color: inherit;
         transform: none;
@@ -1641,29 +1450,21 @@
     .flare-provider-buttons .clickable-icon:active,
     .password-visibility-toggle:active,
     .flare-suggestion-item:active,
-    .flare-history-item:active > .flare-history-item-content,
-    .flare-context-menu-item:active {
+    .flare-history-item:active > .flare-history-item-content {
         background-color: var(--background-modifier-hover);
         color: var(--text-accent);
         transition: none;
-    }
-
-    /* Special handling for danger items */
-    .flare-context-menu-item.is-danger:active {
-        background-color: var(--background-modifier-error);
-        color: var(--text-on-accent);
     }
 }
 
 /* 7. Utility Classes & Dynamic States
    ---------------------------------- */
-/* (Utility Classes & Dynamic States - No Changes in this Revision, Keeping Original) */
 /* Dynamic States */
-.is-hidden {
+.flare-chat-container .is-hidden {
     display: none !important;
 }
 
-.is-visible {
+.flare-chat-container .is-visible {
     display: block !important;
 }
 
@@ -1881,29 +1682,6 @@
     gap: 8px;
 }
 
-/* Provider type selector */
-.provider-type-setting {
-    display: none;
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid var(--background-modifier-border);
-}
-
-.provider-type-setting.is-visible {
-    display: block;
-}
-
-.provider-type-setting .setting-item {
-    border: none;
-    padding: 0;
-}
-
-.provider-type-setting .setting-item-control {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
 /* Flare UI */
 .flare-dropdown-group {
     display: flex;
@@ -1994,46 +1772,6 @@
 .modal-button-container button.mod-secondary {
     background-color: var(--background-modifier-hover);
     color: var(--text-normal);
-}
-
-/* Password visibility toggle */
-.password-visibility-toggle {
-    background: none;
-    cursor: pointer;
-    padding: 4px 8px;
-    opacity: 0.7;
-    transition: opacity 0.2s ease;
-    position: relative;
-    background-color: var(--background-modifier-hover);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    cursor: pointer;
-    padding: 2px;
-    opacity: 0.8;
-    transition: all 0.15s ease;
-    min-width: 24px;
-    min-height: 24px;
-    width: 24px;
-    height: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 0 0 auto; /* Prevents the button from growing or shrinking */
-}
-
-/* Mobile optimizations */
-.is-mobile .password-visibility-toggle {
-    width: 36px;
-    height: 36px;
-    min-width: 36px;
-    min-height: 36px;
-    padding: 6px;
-    flex: 0 0 36px; /* Fixed width on mobile */
-}
-
-.password-visibility-toggle:hover {
-    opacity: 1;
-    background-color: var(--background-modifier-hover-alt);
 }
 
 /* Remove the SVG-based icons */
