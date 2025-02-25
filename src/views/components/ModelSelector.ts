@@ -158,11 +158,8 @@ export class ModelSelector {
     }
 
     private createDropup() {
-        // Remove any existing dropup
-        if (this.dropupEl) {
-            this.dropupEl.remove();
-            this.dropupEl = null;
-        }
+        // Remove any existing dropup and cleanup
+        this.cleanup();
 
         // Create new dropup
         this.dropupEl = document.body.createDiv('flare-model-dropup');
@@ -170,15 +167,18 @@ export class ModelSelector {
         // Position the dropup above the settings bar
         this.updateDropupPosition();
         
-        // Clear any existing provider sections
-        if (this.dropupEl) {
-            this.dropupEl.empty();
-            
+        // Create provider sections
+        if (this.dropupEl && this.plugin.settings.providers) {
             // Group models by provider
             Object.entries(this.plugin.settings.providers).forEach(([providerId, provider]) => {
                 if (!provider.enabled) return;
                 
+                // Check if section already exists
+                const existingSection = this.dropupEl!.querySelector(`[data-provider-id="${providerId}"]`);
+                if (existingSection) return;
+                
                 const section = this.dropupEl!.createDiv('flare-provider-section');
+                section.dataset.providerId = providerId;
                 
                 // Provider header
                 const header = section.createDiv('flare-provider-header');
@@ -319,25 +319,14 @@ export class ModelSelector {
     }
 
     private cleanup() {
-        // Remove event listeners first
-        if (this.modelButton) {
-            this.modelButton.removeEventListener('click', this.clickHandler);
-            this.modelButton = null;
-        }
-
-        // Remove dropup if it exists
+        // Remove existing dropup
         if (this.dropupEl) {
             this.dropupEl.remove();
             this.dropupEl = null;
         }
 
-        // Clean up footer elements
-        if (this.footerLeftEl) {
-            this.footerLeftEl.empty();
-        }
-        if (this.footerRightEl) {
-            this.footerRightEl.empty();
-        }
+        // Remove any orphaned dropups
+        document.querySelectorAll('.flare-model-dropup').forEach(el => el.remove());
     }
 
     public destroy() {

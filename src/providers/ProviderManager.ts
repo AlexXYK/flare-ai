@@ -16,7 +16,23 @@ export abstract class ProviderManager {
     }
 
     createSettingsUI(containerEl: HTMLElement) {
-        // Create provider selector UI
+        // Add Providers heading
+        new Setting(containerEl)
+            .setName('Providers')
+            .setHeading();
+
+        // Create provider selector
+        const dropdownContainer = new Setting(containerEl)
+            .setName('Active provider')
+            .setDesc('Select a provider to configure');
+
+        // Create provider type setting
+        const typeContainer = new Setting(containerEl)
+            .setName('Provider type')
+            .setDesc('Select the type of provider')
+            .setDisabled(!this.currentProvider);
+
+        // Create provider settings UI
         const settingsUI = new ProviderSettingsUI(this.plugin, containerEl, (providerId) => {
             this.currentProvider = providerId;
             // Clear previous settings

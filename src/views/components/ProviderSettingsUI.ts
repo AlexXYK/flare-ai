@@ -21,10 +21,13 @@ export class ProviderSettingsUI {
     }
 
     display(): void {
+        // Clear container
         this.container.empty();
 
         // Add Providers heading
-        new Setting(this.container).setName('Providers').setHeading();
+        new Setting(this.container)
+            .setName('Providers')
+            .setHeading();
 
         // Create provider selector
         const dropdownContainer = new Setting(this.container)
@@ -46,74 +49,7 @@ export class ProviderSettingsUI {
                 });
 
             d.setValue(this.currentProvider || '');
-            d.onChange(value => {
-                const oldProvider = this.currentProvider;
-                this.currentProvider = value || null;
-                
-                // Only refresh UI if actually changing provider
-                if (oldProvider !== this.currentProvider) {
-                    // If there are unsaved changes, ask for confirmation
-                    if (this.hasUnsavedChanges) {
-                        const modal = new Modal(this.plugin.app);
-                        modal.titleEl.setText('Unsaved Changes');
-                        modal.contentEl.createEl('p', {
-                            text: 'You have unsaved changes. Do you want to save them before switching providers?'
-                        });
-                        
-                        const buttonContainer = modal.contentEl.createEl('div', { cls: 'modal-button-container' });
-                        
-                        // Save button
-                        buttonContainer.createEl('button', {
-                            text: 'Save',
-                            cls: 'mod-cta'
-                        }).addEventListener('click', async () => {
-                            try {
-                                if (this.providerSettingsView) {
-                                    await this.providerSettingsView.validateSettings();
-                                }
-                                await this.plugin.saveData(this.plugin.settings);
-                                this.hasUnsavedChanges = false;
-                                this.hideActionButtons();
-                                this.switchProvider(value);
-                                new Notice('Provider settings saved');
-                            } catch (error) {
-                                console.error('Failed to save provider settings:', error);
-                                new Notice('Error saving settings: ' + (error instanceof Error ? error.message : 'Unknown error'));
-                                // Revert dropdown selection
-                                d.setValue(oldProvider || '');
-                                this.currentProvider = oldProvider;
-                            }
-                            modal.close();
-                        });
-                        
-                        // Discard button
-                        buttonContainer.createEl('button', {
-                            text: 'Discard',
-                            cls: 'mod-warning'
-                        }).addEventListener('click', () => {
-                            this.hasUnsavedChanges = false;
-                            this.hideActionButtons();
-                            this.switchProvider(value);
-                            modal.close();
-                        });
-                        
-                        // Cancel button
-                        buttonContainer.createEl('button', {
-                            text: 'Cancel',
-                            cls: 'mod-secondary'
-                        }).addEventListener('click', () => {
-                            // Revert dropdown selection
-                            d.setValue(oldProvider || '');
-                            this.currentProvider = oldProvider;
-                            modal.close();
-                        });
-                        
-                        modal.open();
-                    } else {
-                        this.switchProvider(value);
-                    }
-                }
-            });
+            d.onChange(value => this.handleProviderChange(value, d));
         });
 
         // Add buttons container for add/delete in the provider selector area
@@ -140,6 +76,51 @@ export class ProviderSettingsUI {
         if (dropdown) {
             this.setupAddDeleteHandlers(addButton, deleteButton, dropdown);
         }
+
+        // Create action buttons container
+        this.actionButtons = this.container.createEl('div', { cls: 'flare-form-actions' });
+        
+        // Add save/revert buttons
+        new Setting(this.actionButtons)
+            .addButton(button => {
+                button
+                    .setButtonText('Save')
+                    .setCta()
+                    .setDisabled(!this.currentProvider)
+                    .onClick(async () => {
+                        try {
+                            if (this.providerSettingsView) {
+                                await this.providerSettingsView.validateSettings();
+                            }
+                            await this.plugin.saveData(this.plugin.settings);
+                            this.originalSettings = JSON.parse(JSON.stringify(this.plugin.settings));
+                            this.hasUnsavedChanges = false;
+                            this.hideActionButtons();
+                            this.refreshDropdown();
+                            if (this.plugin.flareManager) {
+                                this.plugin.flareManager.refreshProviderDropdowns();
+                            }
+                            if (this.plugin.settingTab) {
+                                this.plugin.settingTab.refreshTitleProviderDropdowns();
+                            }
+                            if (this.providerSettingsView) {
+                                this.providerSettingsView.updateOriginalSettings();
+                            }
+                            new Notice('Provider settings saved');
+                        } catch (error) {
+                            console.error('Failed to save provider settings:', error);
+                            new Notice('Error saving settings: ' + (error instanceof Error ? error.message : 'Unknown error'));
+                        }
+                    });
+            })
+            .addButton(button => {
+                button
+                    .setButtonText('Revert')
+                    .setDisabled(!this.currentProvider)
+                    .onClick(() => {
+                        this.revertChanges();
+                    });
+            });
 
         // Create provider type setting
         new Setting(this.container)
@@ -197,69 +178,16 @@ export class ProviderSettingsUI {
             });
 
         // Create provider settings view
-        const settings = this.currentProvider ? this.plugin.settings.providers[this.currentProvider] : null;
         this.providerSettingsView = new ProviderSettingsView(
             this.plugin,
             this.container,
-            settings,
+            this.currentProvider ? this.plugin.settings.providers[this.currentProvider] : null,
             async () => {
                 await this.plugin.saveData(this.plugin.settings);
             },
             this.handleSettingsChange
         );
         this.providerSettingsView.display();
-
-        // Create action buttons container
-        this.actionButtons = this.container.createEl('div', { cls: 'flare-form-actions' });
-        this.hideActionButtons(); // Initially hide the action buttons
-
-        // Add save/revert buttons
-        new Setting(this.actionButtons)
-            .addButton(button => {
-                button
-                    .setButtonText('Save')
-                    .setCta()
-                    .onClick(async () => {
-                        try {
-                            if (this.providerSettingsView) {
-                                await this.providerSettingsView.validateSettings();
-                            }
-                            await this.plugin.saveData(this.plugin.settings);
-                            this.originalSettings = JSON.parse(JSON.stringify(this.plugin.settings));
-                            this.hasUnsavedChanges = false;
-                            this.hideActionButtons();
-                            this.refreshDropdown();
-                            if (this.plugin.flareManager) {
-                                this.plugin.flareManager.refreshProviderDropdowns();
-                            }
-                            if (this.plugin.settingTab) {
-                                this.plugin.settingTab.refreshTitleProviderDropdowns();
-                            }
-                            if (this.providerSettingsView) {
-                                this.providerSettingsView.updateOriginalSettings();
-                            }
-                            new Notice('Provider settings saved');
-                        } catch (error) {
-                            console.error('Failed to save provider settings:', error);
-                            new Notice('Error saving settings: ' + (error instanceof Error ? error.message : 'Unknown error'));
-                        }
-                    });
-            })
-            .addButton(button => {
-                button
-                    .setButtonText('Revert')
-                    .onClick(() => {
-                        try {
-                            Object.assign(this.plugin.settings, JSON.parse(JSON.stringify(this.originalSettings)));
-                            this.display();
-                            this.hideActionButtons();
-                            new Notice('Provider settings reverted');
-                        } catch (error) {
-                            console.error('Failed to revert provider settings:', error);
-                            new Notice('Failed to revert settings');
-                        }
-                    });
-            });
     }
 
     private setupAddDeleteHandlers(addButton: HTMLElement, deleteButton: HTMLElement, dropdown: DropdownComponent): void {
@@ -385,5 +313,86 @@ export class ProviderSettingsUI {
             });
         // Reset the dropdown's value to currentProvider, if any
         dropdown.setValue(this.currentProvider || '');
+    }
+
+    private revertChanges(): void {
+        try {
+            Object.assign(this.plugin.settings, JSON.parse(JSON.stringify(this.originalSettings)));
+            this.display();
+            this.hideActionButtons();
+            new Notice('Provider settings reverted');
+        } catch (error) {
+            console.error('Failed to revert provider settings:', error);
+            new Notice('Failed to revert settings');
+        }
+    }
+
+    private handleProviderChange(value: string, dropdown: DropdownComponent): void {
+        const oldProvider = this.currentProvider;
+        this.currentProvider = value || null;
+        
+        // Only refresh UI if actually changing provider
+        if (oldProvider !== this.currentProvider) {
+            // If there are unsaved changes, ask for confirmation
+            if (this.hasUnsavedChanges) {
+                const modal = new Modal(this.plugin.app);
+                modal.titleEl.setText('Unsaved Changes');
+                modal.contentEl.createEl('p', {
+                    text: 'You have unsaved changes. Do you want to save them before switching providers?'
+                });
+                
+                const buttonContainer = modal.contentEl.createEl('div', { cls: 'modal-button-container' });
+                
+                // Save button
+                buttonContainer.createEl('button', {
+                    text: 'Save',
+                    cls: 'mod-cta'
+                }).addEventListener('click', async () => {
+                    try {
+                        if (this.providerSettingsView) {
+                            await this.providerSettingsView.validateSettings();
+                        }
+                        await this.plugin.saveData(this.plugin.settings);
+                        this.hasUnsavedChanges = false;
+                        this.hideActionButtons();
+                        this.switchProvider(value);
+                        new Notice('Provider settings saved');
+                    } catch (error) {
+                        console.error('Failed to save provider settings:', error);
+                        new Notice('Error saving settings: ' + (error instanceof Error ? error.message : 'Unknown error'));
+                        // Revert dropdown selection
+                        dropdown.setValue(oldProvider || '');
+                        this.currentProvider = oldProvider;
+                    }
+                    modal.close();
+                });
+                
+                // Discard button
+                buttonContainer.createEl('button', {
+                    text: 'Discard',
+                    cls: 'mod-warning'
+                }).addEventListener('click', () => {
+                    this.hasUnsavedChanges = false;
+                    this.hideActionButtons();
+                    this.switchProvider(value);
+                    modal.close();
+                });
+                
+                // Cancel button
+                buttonContainer.createEl('button', {
+                    text: 'Cancel',
+                    cls: 'mod-secondary'
+                }).addEventListener('click', () => {
+                    // Revert dropdown selection
+                    dropdown.setValue(oldProvider || '');
+                    this.currentProvider = oldProvider;
+                    modal.close();
+                });
+                
+                modal.open();
+            } else {
+                this.switchProvider(value);
+            }
+        }
     }
 } 

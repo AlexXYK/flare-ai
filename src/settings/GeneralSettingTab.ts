@@ -315,7 +315,8 @@ export class GeneralSettingTab extends PluginSettingTab {
             });
 
         // Create model container and setting
-        new Setting(containerEl)
+        const modelContainer = containerEl.createDiv({ cls: 'model-container' });
+        new Setting(modelContainer)
             .setName('Model')
             .setDesc('Select the model to use for title generation')
             .addDropdown(dropdown => {
@@ -327,8 +328,8 @@ export class GeneralSettingTab extends PluginSettingTab {
                 });
             });
 
-        // Initial model load
-        setTimeout(() => this.refreshTitleModels(), 100);
+        // Initial model load - increased timeout to give provider time to initialize
+        setTimeout(() => this.refreshTitleModels(), 500);
 
         new Setting(containerEl)
             .setName('Temperature')
@@ -369,7 +370,7 @@ export class GeneralSettingTab extends PluginSettingTab {
         const textareaContainer = promptContainer.createDiv('setting-item-control');
         
         const titlePromptInput = textareaContainer.createEl('textarea', {
-            cls: 'title-prompt-input'
+            cls: 'system-prompt'
         });
         setTooltip(titlePromptInput, 'Title generation prompt input');
         
@@ -590,9 +591,63 @@ export class GeneralSettingTab extends PluginSettingTab {
     }
 
     private async refreshTitleModels() {
-        const modelContainer = this.containerEl.querySelector('.model-container') as HTMLElement;
-        if (modelContainer) {
+        try {
+            const modelContainer = this.containerEl.querySelector('.model-container');
+            if (!(modelContainer instanceof HTMLElement)) {
+                console.error('Model container not found or invalid type');
+                return;
+            }
+
+            const provider = this.plugin.settings.providers[this.plugin.settings.titleSettings.provider];
+            if (!provider?.type) {
+                console.error('No valid provider selected');
+                return;
+            }
+
+            // Show loading state
+            if (this.titleModelDropdown) {
+                this.titleModelDropdown.setDisabled(true);
+                this.titleModelDropdown.addOption('loading', 'Loading models...');
+                this.titleModelDropdown.setValue('loading');
+            }
+
             await this.refreshModelSelection(modelContainer);
+
+            // Update the dropdown after refresh
+            if (this.titleModelDropdown) {
+                this.titleModelDropdown.setDisabled(false);
+                const currentValue = this.titleModelDropdown.getValue();
+                if (currentValue === 'loading') {
+                    const defaultModel = provider?.defaultModel || '';
+                    this.titleModelDropdown.setValue(defaultModel);
+                }
+            }
+        } catch (error) {
+            console.error('Error refreshing title models:', error);
+            
+            // Create error notice using Obsidian's native components
+            new Notice('Failed to refresh models. Please try again.', 5000);
+            
+            if (this.titleModelDropdown) {
+                this.titleModelDropdown.setDisabled(false);
+                // Clear and reset dropdown
+                this.titleModelDropdown.selectEl.empty();
+                this.titleModelDropdown.addOption('', 'Select a model...');
+                this.titleModelDropdown.setValue('');
+            }
+
+            // Show error state using Obsidian's native Setting component
+            const errorSetting = new Setting(this.containerEl)
+                .setClass('flare-error-setting')
+                .setName('Error loading models')
+                .setDesc(error instanceof Error ? error.message : 'Failed to load models')
+                .addButton(button => button
+                    .setButtonText('Retry')
+                    .setWarning()
+                    .onClick(() => {
+                        errorSetting.settingEl.remove();
+                        this.refreshTitleModels();
+                    }));
         }
     }
 } 

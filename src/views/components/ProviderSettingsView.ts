@@ -6,6 +6,8 @@ export class ProviderSettingsView {
     private originalSettings: ProviderSettings;
     private actionButtons: HTMLElement | null = null;
     private hasSettingsChanged: boolean = false;
+    private currentSortOrder: 'asc' | 'desc' = 'asc';
+    private currentSortCriteria: 'name' | 'visibility' = 'name';
 
     constructor(
         private plugin: FlarePlugin,
@@ -21,6 +23,11 @@ export class ProviderSettingsView {
             enabled: false,
             visibleModels: []
         }));
+
+        // Ensure visibleModels is initialized
+        if (this.settings) {
+            this.settings.visibleModels = this.settings.visibleModels || [];
+        }
     }
 
     private settingChanged(newValue: any, path: string) {
@@ -72,6 +79,7 @@ export class ProviderSettingsView {
             .addText(text => text
                 .setPlaceholder('Enter provider name')
                 .setValue(this.settings?.name || '')
+                .setDisabled(isDisabled)
                 .onChange(value => {
                     if (!this.settings) return;
                     this.settings.name = value;
@@ -85,54 +93,56 @@ export class ProviderSettingsView {
             .setDisabled(isDisabled)
             .addToggle(toggle => toggle
                 .setValue(this.settings?.enabled || false)
+                .setDisabled(isDisabled)
                 .onChange(value => {
                     if (!this.settings) return;
                     this.settings.enabled = value;
                     this.settingChanged(value, 'enabled');
                 }));
 
-        // API Key (for providers that need it)
-        if (!isDisabled && ['openai', 'openrouter', 'anthropic', 'azure'].includes(this.settings?.type || '')) {
-            new Setting(this.container)
-                .setName('API Key')
-                .setDesc(`Your ${this.settings?.type?.toUpperCase() || ''} API key`)
-                .addText(text => {
-                    const input = text
-                        .setPlaceholder('Enter API key')
-                        .setValue(this.settings?.apiKey || '')
-                        .onChange(value => {
-                            if (!this.settings) return;
-                            this.settings.apiKey = value.trim();
-                            this.settingChanged(value, 'apiKey');
-                        });
-                    input.inputEl.type = 'password';
-                    this.addPasswordToggle(input.inputEl);
-                });
-        }
+        // API Key setting (always show, just disabled if not needed)
+        new Setting(this.container)
+            .setName('API Key')
+            .setDesc('Your provider API key')
+            .setDisabled(isDisabled || !['openai', 'openrouter', 'anthropic', 'azure'].includes(this.settings?.type || ''))
+            .addText(text => {
+                const input = text
+                    .setPlaceholder('Enter API key')
+                    .setValue(this.settings?.apiKey || '')
+                    .setDisabled(isDisabled || !['openai', 'openrouter', 'anthropic', 'azure'].includes(this.settings?.type || ''))
+                    .onChange(value => {
+                        if (!this.settings) return;
+                        this.settings.apiKey = value.trim();
+                        this.settingChanged(value, 'apiKey');
+                    });
+                input.inputEl.type = 'password';
+                this.addPasswordToggle(input.inputEl);
+            });
 
-        // Base URL (for providers that support it)
-        if (!isDisabled && ['openai', 'azure', 'ollama', 'openrouter'].includes(this.settings?.type || '')) {
-            const defaultUrls: Record<string, string> = {
-                openai: 'https://api.openai.com/v1',
-                azure: 'https://<resource>.openai.azure.com',
-                ollama: 'http://localhost:11434',
-                openrouter: 'https://openrouter.ai/api/v1'
-            };
-
-            new Setting(this.container)
-                .setName('Base URL')
-                .setDesc(this.settings?.type === 'azure' ? 'Your Azure OpenAI endpoint URL' : 'API endpoint URL')
-                .addText(text => text
+        // Base URL setting (always show, just disabled if not needed)
+        new Setting(this.container)
+            .setName('Base URL')
+            .setDesc('API endpoint URL')
+            .setDisabled(isDisabled || !['openai', 'azure', 'ollama', 'openrouter'].includes(this.settings?.type || ''))
+            .addText(text => {
+                const defaultUrls: Record<string, string> = {
+                    openai: 'https://api.openai.com/v1',
+                    azure: 'https://<resource>.openai.azure.com',
+                    ollama: 'http://localhost:11434',
+                    openrouter: 'https://openrouter.ai/api/v1'
+                };
+                return text
                     .setPlaceholder(defaultUrls[this.settings?.type || ''] || '')
                     .setValue(this.settings?.baseUrl || '')
+                    .setDisabled(isDisabled || !['openai', 'azure', 'ollama', 'openrouter'].includes(this.settings?.type || ''))
                     .onChange(value => {
                         if (!this.settings) return;
                         this.settings.baseUrl = value.trim();
                         this.settingChanged(value, 'baseUrl');
-                    }));
-        }
+                    });
+            });
 
-        // Models section
+        // Models section (always show, just disabled if no provider)
         const modelsHeading = new Setting(this.container)
             .setName('Available Models')
             .setDesc('Select which models to show in the model selector')
@@ -146,14 +156,62 @@ export class ProviderSettingsView {
                         button.setButtonText('Refreshing...');
                         button.setDisabled(true);
 
+                        // Clear existing models list first
+                        this.settings.availableModels = [];
+                        const modelsContent = this.container.querySelector('.models-list-content') as HTMLElement;
+                        if (modelsContent) {
+                            modelsContent.empty();
+                            // Show loading state
+                            new Setting(modelsContent)
+                                .setName('Loading models...')
+                                .setDesc('Please wait while models are being fetched')
+                                .setDisabled(true);
+                        }
+
                         const models = await this.plugin.providerManager.getAvailableModels(this.settings);
                         this.settings.availableModels = models;
                         this.settings.visibleModels = this.settings.visibleModels || [];
                         
+                        // Clear existing models list content
+                        if (modelsContent) {
+                            modelsContent.empty();
+                            
+                            // Sort models by visibility first, then alphabetically
+                            const sortedModels = [...models].sort((a, b) => {
+                                const aVisible = this.settings?.visibleModels?.includes(a) || false;
+                                const bVisible = this.settings?.visibleModels?.includes(b) || false;
+                                if (aVisible !== bVisible) {
+                                    return bVisible ? 1 : -1;
+                                }
+                                return a.localeCompare(b);
+                            });
+
+                            // Repopulate the models list
+                            if (sortedModels.length) {
+                                this.renderModels(modelsContent, sortedModels);
+                            } else {
+                                // Show empty state
+                                new Setting(modelsContent)
+                                    .setName('No models available')
+                                    .setDesc('No models were found for this provider')
+                                    .setDisabled(true);
+                            }
+                        }
+                        
                         this.onSettingsChange();
-                        this.display();
                         new Notice('Models refreshed');
                     } catch (error) {
+                        // Clear models on error
+                        this.settings.availableModels = [];
+                        const modelsContent = this.container.querySelector('.models-list-content') as HTMLElement;
+                        if (modelsContent) {
+                            modelsContent.empty();
+                            // Show error state
+                            new Setting(modelsContent)
+                                .setName('Error loading models')
+                                .setDesc(error instanceof Error ? error.message : 'Failed to load models. Please try again.')
+                                .setDisabled(true);
+                        }
                         if (error instanceof Error) {
                             new Notice('Error refreshing models: ' + error.message);
                         }
@@ -168,54 +226,35 @@ export class ProviderSettingsView {
 
         // Add header
         const header = modelsContainer.createEl('div', { cls: 'models-list-header' });
-        header.createEl('div', { 
+        const modelHeader = header.createEl('div', { 
             cls: 'model-header model-name-header',
             text: 'Model'
         });
-        header.createEl('div', { 
+        const visibilityHeader = header.createEl('div', { 
             cls: 'model-header visibility-header',
             text: 'Show'
         });
+
+        // Add click event for sorting
+        modelHeader.addEventListener('click', () => {
+            this.toggleSortOrder('name');
+        });
+
+        visibilityHeader.addEventListener('click', () => {
+            this.toggleSortOrder('visibility');
+        });
+
+        // Add chevron to indicate sorting direction
+        const modelChevron = modelHeader.createEl('span', { cls: 'chevron' });
+        const visibilityChevron = visibilityHeader.createEl('span', { cls: 'chevron' });
+        this.updateChevron(modelChevron, visibilityChevron);
 
         // Create models list content
         const modelsContent = modelsContainer.createEl('div', { cls: 'models-list-content' });
 
         // Create models list if we have models
         if (!isDisabled && this.settings?.availableModels?.length) {
-            // Sort models by visibility first, then alphabetically
-            const sortedModels = [...this.settings.availableModels].sort((a, b) => {
-                const aVisible = this.settings?.visibleModels?.includes(a) || false;
-                const bVisible = this.settings?.visibleModels?.includes(b) || false;
-                if (aVisible !== bVisible) {
-                    return bVisible ? 1 : -1;
-                }
-                return a.localeCompare(b);
-            });
-
-            sortedModels.forEach(model => {
-                new Setting(modelsContent)
-                    .setName(model)
-                    .addToggle(toggle => toggle
-                        .setValue(this.settings?.visibleModels?.includes(model) || false)
-                        .onChange(value => {
-                            if (!this.settings) return;
-                            if (!this.settings.visibleModels) {
-                                this.settings.visibleModels = [];
-                            }
-                            
-                            if (value) {
-                                if (!this.settings.visibleModels.includes(model)) {
-                                    this.settings.visibleModels.push(model);
-                                }
-                            } else {
-                                this.settings.visibleModels = this.settings.visibleModels.filter(m => m !== model);
-                            }
-                            this.settingChanged(this.settings.visibleModels, 'visibleModels');
-                            
-                            // Re-render the models list to update sorting
-                            this.display();
-                        }));
-            });
+            this.renderModels(modelsContent);
         } else {
             // Show empty state as a disabled setting
             new Setting(modelsContent)
@@ -223,6 +262,112 @@ export class ProviderSettingsView {
                 .setDesc(isDisabled ? 'Select a provider to view available models' : 'Click "Refresh Models" to load available models')
                 .setDisabled(true);
         }
+    }
+
+    private toggleSortOrder(criteria: 'name' | 'visibility') {
+        if (this.currentSortCriteria === criteria) {
+            this.currentSortOrder = this.currentSortOrder === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.currentSortCriteria = criteria;
+            this.currentSortOrder = 'asc';
+        }
+        this.sortModels(criteria);
+    }
+
+    private sortModels(criteria: 'name' | 'visibility') {
+        if (!this.settings || !this.settings.availableModels) return;
+
+        const visibleModels = this.settings.visibleModels || [];
+
+        const sortedModels = [...this.settings.availableModels].sort((a, b) => {
+            let comparison = 0;
+            if (criteria === 'name') {
+                comparison = a.localeCompare(b);
+            } else {
+                const aVisible = visibleModels.includes(a);
+                const bVisible = visibleModels.includes(b);
+                comparison = aVisible === bVisible ? a.localeCompare(b) : (aVisible ? -1 : 1);
+            }
+            return this.currentSortOrder === 'asc' ? comparison : -comparison;
+        });
+
+        // Update the models list
+        const modelsContent = this.container.querySelector('.models-list-content') as HTMLElement;
+        if (modelsContent) {
+            modelsContent.empty();
+            this.renderModels(modelsContent, sortedModels);
+        }
+
+        // Update chevron direction
+        const modelChevron = this.container.querySelector('.model-name-header .chevron') as HTMLElement;
+        const visibilityChevron = this.container.querySelector('.visibility-header .chevron') as HTMLElement;
+        this.updateChevron(modelChevron, visibilityChevron);
+    }
+
+    private updateChevron(modelChevron: HTMLElement, visibilityChevron: HTMLElement) {
+        const chevronDirection = this.currentSortOrder === 'asc' ? '▼' : '▲';
+        if (this.currentSortCriteria === 'name') {
+            modelChevron.textContent = chevronDirection;
+            visibilityChevron.textContent = '';
+        } else {
+            modelChevron.textContent = '';
+            visibilityChevron.textContent = chevronDirection;
+        }
+    }
+
+    private renderModels(modelsContent: HTMLElement, models = this.settings?.availableModels || []) {
+        models.forEach(model => {
+            new Setting(modelsContent)
+                .setName(model)
+                .addToggle(toggle => toggle
+                    .setValue(this.settings?.visibleModels?.includes(model) || false)
+                    .onChange(value => {
+                        if (!this.settings) return;
+                        if (!this.settings.visibleModels) {
+                            this.settings.visibleModels = [];
+                        }
+                        
+                        if (value) {
+                            if (!this.settings.visibleModels.includes(model)) {
+                                this.settings.visibleModels.push(model);
+                            }
+                        } else {
+                            this.settings.visibleModels = this.settings.visibleModels.filter(m => m !== model);
+                        }
+                        this.settingChanged(this.settings.visibleModels, 'visibleModels');
+                        
+                        // Update the sort order if needed without re-rendering everything
+                        if (this.currentSortCriteria === 'visibility') {
+                            const modelsContent = this.container.querySelector('.models-list-content') as HTMLElement;
+                            if (modelsContent) {
+                                modelsContent.empty();
+                                const sortedModels = this.getSortedModels(models);
+                                this.renderModels(modelsContent, sortedModels);
+                            }
+                        }
+                    }));
+        });
+    }
+
+    private getSortedModels(models: string[]): string[] {
+        if (!this.settings) return models;
+        
+        const visibleModels = this.settings.visibleModels || [];
+        return [...models].sort((a, b) => {
+            if (this.currentSortCriteria === 'name') {
+                const comparison = a.localeCompare(b);
+                return this.currentSortOrder === 'asc' ? comparison : -comparison;
+            } else {
+                const aVisible = visibleModels.includes(a);
+                const bVisible = visibleModels.includes(b);
+                if (aVisible !== bVisible) {
+                    return this.currentSortOrder === 'asc' 
+                        ? (aVisible ? -1 : 1) 
+                        : (aVisible ? 1 : -1);
+                }
+                return a.localeCompare(b);
+            }
+        });
     }
 
     private addPasswordToggle(inputEl: HTMLInputElement): void {
