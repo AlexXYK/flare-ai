@@ -4,7 +4,7 @@ import { ProviderSettings } from '../types/AIProvider';
 import { AIProvider } from './aiProviders';
 import { ProviderSettingsUI } from '../views/components/ProviderSettingsUI';
 import { ProviderSettingsView } from '../views/components/ProviderSettingsView';
-import { OpenAIProvider, OllamaProvider, OpenRouterProvider } from './aiProviders';
+import { OpenAIProvider, OllamaProvider, OpenRouterProvider, AnthropicProvider, GeminiProvider } from './aiProviders';
 
 export abstract class ProviderManager {
     protected provider: AIProvider | null = null;
@@ -12,7 +12,9 @@ export abstract class ProviderManager {
     public id: string;
 
     constructor(protected plugin: FlarePlugin) {
-        this.id = '';  // Should be set by implementing classes
+        // The ID will be set by the main plugin during registration
+        // based on provider name for better cross-device compatibility
+        this.id = '';
     }
 
     createSettingsUI(containerEl: HTMLElement) {
@@ -81,6 +83,18 @@ export abstract class ProviderManager {
 
     async initialize() {
         // Initialize providers if needed
+    }
+
+    async cleanup(): Promise<void> {
+        // Clean up provider resources if needed
+        if (this.provider && 'cancelRequest' in this.provider) {
+            try {
+                this.provider.cancelRequest?.();
+            } catch (error) {
+                console.error(`Error cleaning up provider ${this.id}:`, error);
+            }
+        }
+        return Promise.resolve();
     }
 
     private createActionButtons(container: HTMLElement): HTMLElement {
@@ -193,19 +207,35 @@ export abstract class ProviderManager {
             case 'anthropic':
                 new Setting(container)
                     .setClass('provider-specific-setting')
-                    .setName('API Key')
+                    .setName('API key')
                     .setDesc('Your Anthropic API key')
                     .addText(text => {
                         const input = text
                             .setPlaceholder('Enter API key')
-                        .setValue(settings.apiKey || '')
-                        .onChange(value => {
-                            settings.apiKey = value;
+                            .setValue(settings.apiKey || '')
+                            .onChange(value => {
+                                settings.apiKey = value;
                                 this.showActionButtons(actionButtons);
                             });
                         input.inputEl.type = 'password';
                         this.addPasswordToggle(input.inputEl);
                     });
+
+                new Setting(container)
+                    .setClass('provider-specific-setting')
+                    .setName('Base URL')
+                    .setDesc('Optional: Custom base URL for API requests')
+                    .addText(text => text
+                        .setPlaceholder('https://api.anthropic.com/v1')
+                        .setValue(settings.baseUrl || '')
+                        .onChange(value => {
+                            settings.baseUrl = value;
+                            this.showActionButtons(actionButtons);
+                        }));
+
+                // Create Models Section
+                const anthropicModelsSection = this.createSection(container, 'Available models');
+                this.createModelsSection(anthropicModelsSection, settings, actionButtons);
                 break;
 
             case 'ollama':
@@ -216,7 +246,9 @@ export abstract class ProviderManager {
                     .setDesc('Ollama API endpoint URL')
                     .addText(text => text
                         .setPlaceholder('http://localhost:11434')
-                        .setValue(settings.baseUrl || 'http://localhost:11434')
+                        .setValue(settings.baseUrl !== undefined && settings.baseUrl !== null && settings.baseUrl !== '' 
+                            ? settings.baseUrl 
+                            : 'http://localhost:11434')
                         .onChange(async value => {
                             settings.baseUrl = value;
                             this.showActionButtons(actionButtons);
@@ -285,7 +317,6 @@ export abstract class ProviderManager {
                     .setDesc('Your Azure OpenAI API key')
                     .addText(text => {
                         const input = text
-                            .setPlaceholder('Enter API key')
                         .setValue(settings.apiKey || '')
                         .onChange(value => {
                             settings.apiKey = value;
@@ -435,7 +466,11 @@ export abstract class ProviderManager {
                 }
 
                 case 'ollama': {
-                    const provider = new OllamaProvider(settings.baseUrl || '');
+                    const provider = new OllamaProvider(
+                        settings.baseUrl !== undefined && settings.baseUrl !== null && settings.baseUrl !== '' 
+                            ? settings.baseUrl 
+                            : 'http://localhost:11434'
+                    );
                     provider.setConfig(settings);
                     const allModels = await provider.getAvailableModels();
 
@@ -464,11 +499,55 @@ export abstract class ProviderManager {
                     return allModels;
                 }
 
+                case 'anthropic': {
+                    if (!settings.apiKey) {
+                        throw new Error('No API key provided for Anthropic provider');
+                    }
+
+                    const provider = new AnthropicProvider(settings.apiKey, settings.baseUrl);
+                    provider.setConfig(settings);
+                    const allModels = await provider.getAvailableModels();
+
+                    // Filter models based on settings
+                    if (settings.visibleModels?.length) {
+                        return allModels.filter(model => settings.visibleModels?.includes(model));
+                    }
+
+                    return allModels;
+                }
+
+                case 'gemini': {
+                    if (!settings.apiKey) {
+                        throw new Error('No API key provided for Gemini provider');
+                    }
+
+                    const provider = new GeminiProvider(settings.apiKey, settings.baseUrl);
+                    provider.setConfig(settings);
+                    const allModels = await provider.getAvailableModels();
+
+                    // Filter models based on settings
+                    if (settings.visibleModels?.length) {
+                        return allModels.filter(model => settings.visibleModels?.includes(model));
+                    }
+
+                    return allModels;
+                }
+
                 default:
                     throw new Error(`Unknown provider type: ${providerType}`);
             }
         } catch (error) {
             throw error;
         }
+    }
+
+    // Add a function to get a stable name for this provider type
+    public getProviderTypeName(): string {
+        return this.id;
+    }
+    
+    // Allow setting the ID from outside (will be done during registration)
+    public setId(id: string): void {
+        this.id = id;
     }
 } 

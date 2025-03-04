@@ -158,8 +158,10 @@ export class FlareManager {
                 file.basename === flareName
             );
 
-            const defaultProvider = Object.keys(this.plugin.settings.providers)[0];
-            const defaultProviderSettings = this.plugin.settings.providers[defaultProvider];
+            // Find a default provider to use
+            let defaultProviderEntry = Object.entries(this.plugin.settings.providers)[0] || [null, null];
+            let defaultProviderId = defaultProviderEntry[0] || '';
+            let defaultProviderSettings = defaultProviderEntry[1];
             
             // Ensure we have a valid model
             let model = '';
@@ -184,7 +186,9 @@ export class FlareManager {
                 console.debug(`No flare file found for ${flareName}`);
                 return {
                     name: flareName,
-                    provider: defaultProvider,
+                    providerName: defaultProviderSettings?.name || 'Default Provider',
+                    providerType: defaultProviderSettings?.type || '',
+                    provider: defaultProviderId, // Keep for backward compatibility
                     model: model,
                     enabled: true,
                     description: '',
@@ -210,50 +214,74 @@ export class FlareManager {
             }
             const systemPrompt = frontmatterMatch[2].trim();
 
-            // Map provider name to internal ID
-            let providerId = fileCache.frontmatter.provider;
-            if (providerId) {
-                // First check if it's a valid provider ID
-                if (this.plugin.settings.providers[providerId]) {
-                    // Use as is - it's already a valid ID
-                } else {
-                    // Look for a provider with matching name
-                    const matchingProvider = Object.entries(this.plugin.settings.providers)
-                        .find(([_, settings]) => settings.name === providerId);
-                    if (matchingProvider) {
-                        providerId = matchingProvider[0];
-                    } else {
-                        // If no match found, use first available provider
-                        providerId = Object.keys(this.plugin.settings.providers)[0] || '';
-                        console.warn(`Provider "${fileCache.frontmatter.provider}" not found, using ${providerId}`);
-                    }
+            // Extract provider information from frontmatter
+            const providerName = fileCache.frontmatter?.providerName || '';
+            const providerType = fileCache.frontmatter?.providerType || '';
+            const providerId = fileCache.frontmatter?.provider || '';
+            
+            // Find the matching provider using name and type
+            let matchedProviderId: string | null = null;
+            let matchedProviderSettings: any = null;
+            
+            // First try to match by name (preferred method)
+            if (providerName) {
+                const matchByName = Object.entries(this.plugin.settings.providers)
+                    .find(([_, settings]) => settings.name === providerName);
+                if (matchByName) {
+                    matchedProviderId = matchByName[0];
+                    matchedProviderSettings = matchByName[1];
                 }
             }
-
-            // Get provider settings
-            const selectedProviderSettings = this.plugin.settings.providers[providerId];
+            
+            // If no match by name, try by type
+            if (!matchedProviderId && providerType) {
+                const matchByType = Object.entries(this.plugin.settings.providers)
+                    .find(([_, settings]) => settings.type === providerType);
+                if (matchByType) {
+                    matchedProviderId = matchByType[0];
+                    matchedProviderSettings = matchByType[1];
+                }
+            }
+            
+            // If still no match, try by ID for backward compatibility
+            if (!matchedProviderId && providerId) {
+                if (this.plugin.settings.providers[providerId]) {
+                    matchedProviderId = providerId;
+                    matchedProviderSettings = this.plugin.settings.providers[providerId];
+                }
+            }
+            
+            // If no match found, use the first available provider
+            if (!matchedProviderId || !matchedProviderSettings) {
+                matchedProviderId = defaultProviderId;
+                matchedProviderSettings = defaultProviderSettings;
+                console.warn(`No matching provider found for flare "${flareName}", using ${matchedProviderSettings?.name || 'default provider'}`);
+            }
             
             // Validate windows
-            const handoffContext = fileCache.frontmatter.handoffContext ?? -1;
-            const contextWindow = fileCache.frontmatter.contextWindow ?? -1;
+            const handoffContext = fileCache.frontmatter?.handoffContext ?? -1;
+            const contextWindow = fileCache.frontmatter?.contextWindow ?? -1;
 
+            // Create the flare config with complete provider information
             return {
                 name: flareName,
-                provider: providerId,
-                model: fileCache.frontmatter.model || selectedProviderSettings?.defaultModel || '',
-                temperature: fileCache.frontmatter.temperature !== undefined ? fileCache.frontmatter.temperature : 0.7,
-                maxTokens: fileCache.frontmatter.maxTokens,
+                providerName: matchedProviderSettings?.name || providerName || 'Unknown Provider',
+                providerType: matchedProviderSettings?.type || providerType || '',
+                provider: matchedProviderId || '', // Keep for backward compatibility
+                model: fileCache.frontmatter?.model || matchedProviderSettings?.defaultModel || '',
+                temperature: fileCache.frontmatter?.temperature !== undefined ? fileCache.frontmatter.temperature : 0.7,
+                maxTokens: fileCache.frontmatter?.maxTokens,
                 systemPrompt: systemPrompt,
-                enabled: fileCache.frontmatter.enabled ?? true,
-                description: fileCache.frontmatter.description || '',
+                enabled: fileCache.frontmatter?.enabled ?? true,
+                description: fileCache.frontmatter?.description || '',
                 contextWindow: contextWindow,
                 handoffContext: handoffContext,
-                stream: fileCache.frontmatter.stream ?? false,
-                isReasoningModel: fileCache.frontmatter.isReasoningModel ?? false,
-                reasoningHeader: fileCache.frontmatter.reasoningHeader || '<think>'
+                stream: fileCache.frontmatter?.stream ?? false,
+                isReasoningModel: fileCache.frontmatter?.isReasoningModel ?? false,
+                reasoningHeader: fileCache.frontmatter?.reasoningHeader || '<think>'
             };
         } catch (error) {
-            console.error('Failed to load flare config:', error);
+            console.error('Error loading flare config:', error);
             return null;
         }
     }
@@ -381,18 +409,9 @@ export class FlareManager {
             this.plugin.flares = [];
             
             // Initial load of flares
-            const loadedFlares = await this.loadFlares();
+            await this.loadFlares();
             
-            // Create default flare if no flares exist
-            if (loadedFlares.length === 0) {
-                console.debug('No flares found during initialization, creating default flare');
-                const defaultFlareName = await this.createNewFlare();
-                if (!defaultFlareName) {
-                    throw new Error('Failed to create default flare');
-                }
-                await this.loadFlares();  // Reload flares after creating default
-            }
-
+            // Set initialization flag
             this.isInitialized = true;
         } catch (error) {
             console.error('Failed to initialize FlareManager:', error);
@@ -504,6 +523,19 @@ export class FlareManager {
                         this.flareDropdown.addOption(newFlareName, newFlareName);
                         this.flareDropdown.setValue(newFlareName);
                     }
+                    
+                    // Set as current flare
+                    this.currentFlare = newFlareName;
+                    
+                    // Enable the delete button since we now have a selected flare
+                    const deleteButton = buttonsContainer.querySelector('.clickable-icon.delete-flare');
+                    if (deleteButton instanceof HTMLElement) {
+                        deleteButton.classList.remove('disabled');
+                    }
+                    
+                    // Load and show the settings for the new flare
+                    await this.showFlareSettings(containerEl, newFlareName);
+                    
                     new Notice(`Created new flare: ${newFlareName}`);
                 }
             });
@@ -565,16 +597,26 @@ export class FlareManager {
         this.hasUnsavedChanges = false;
 
         try {
-            // Keep the heading, selector, and action buttons
+            // Create a reference to the existing elements we want to preserve
             const heading = containerEl.querySelector('.setting-item.setting-item-heading');
             const selector = containerEl.querySelector('.setting-item:not(.setting-item-heading)');
             const actionButtons = containerEl.querySelector('.flare-form-actions') as HTMLElement;
-            containerEl.empty();
-
-            // Restore elements in correct order
-            if (heading) containerEl.appendChild(heading);
-            if (selector) containerEl.appendChild(selector);
-            if (actionButtons) {
+            
+            // Clear only the settings content, preserving the structure
+            // Find all settings below the selector but not including the action buttons
+            const settingsToRemove = Array.from(containerEl.children).filter(el => {
+                // Keep heading and selector
+                if (el === heading || el === selector || el === actionButtons) {
+                    return false;
+                }
+                return true;
+            });
+            
+            // Remove only those elements that should be removed
+            settingsToRemove.forEach(el => el.remove());
+            
+            // Ensure action buttons are at the end
+            if (actionButtons && actionButtons.parentElement === containerEl) {
                 containerEl.appendChild(actionButtons);
                 this.actionButtons = actionButtons;
                 
@@ -590,18 +632,29 @@ export class FlareManager {
 
             // Load flare config if we have a flare selected
             if (flareName) {
-                const flare = await this.loadFlareConfig(flareName);
-                if (!flare) {
-                    throw new Error('Failed to load flare configuration');
+                try {
+                    const flare = await this.loadFlareConfig(flareName);
+                    if (!flare) {
+                        console.error('Failed to load flare configuration for ' + flareName);
+                        // Use default config instead of throwing
+                        this.currentFlareConfig = this.getDefaultFlareConfig(flareName);
+                    } else {
+                        // Store original settings for comparison
+                        this.originalSettings = Object.freeze({ ...flare });
+                        this.currentFlareConfig = { ...flare };
+                    }
+                } catch (configError) {
+                    console.error('Error loading flare config:', configError);
+                    // Use default config instead of throwing
+                    this.currentFlareConfig = this.getDefaultFlareConfig(flareName);
                 }
-                // Store original settings for comparison
-                this.originalSettings = Object.freeze({ ...flare });
-                this.currentFlareConfig = { ...flare };
             } else {
                 // Use empty config for disabled state
                 this.currentFlareConfig = {
                     name: '',
                     provider: '',
+                    providerType: '',
+                    providerName: '',
                     model: '',
                     enabled: true,
                     description: '',
@@ -625,19 +678,9 @@ export class FlareManager {
         } catch (error) {
             if (error instanceof Error && error.message !== 'Operation cancelled') {
                 console.error('Error loading flare:', error);
+                // Only show notice, don't create error message in UI
                 new Notice('Error loading flare: ' + getErrorMessage(error));
             }
-            const errorMessage = containerEl.createEl('div', {
-                text: 'Failed to load flare settings: ' + getErrorMessage(error),
-                cls: 'flare-error-message'
-            });
-            
-            // Add retry button
-            const retryButton = errorMessage.createEl('button', {
-                text: 'Retry',
-                cls: 'mod-warning'
-            });
-            retryButton.onclick = () => this.showFlareSettings(containerEl, flareName);
         }
     }
 
@@ -694,6 +737,7 @@ export class FlareManager {
      * @param isDisabled Whether the settings should be disabled
      */
     private createProviderSettingsSection(formElement: HTMLElement, isDisabled: boolean) {
+        // Provider dropdown
         new Setting(formElement)
             .setName('Provider')
             .setDesc('Select the AI provider to use')
@@ -714,7 +758,7 @@ export class FlareManager {
                 // Set current value if it exists and the provider is still valid
                 const currentProvider = this.plugin.settings.providers[this.currentFlareConfig.provider || ''];
                 if (currentProvider?.enabled && currentProvider.type && this.plugin.providers.has(currentProvider.type)) {
-                    dropdown.setValue(this.currentFlareConfig.provider);
+                    dropdown.setValue(this.currentFlareConfig.provider || '');
                 } else {
                     dropdown.setValue('');
                 }
@@ -722,22 +766,110 @@ export class FlareManager {
                 dropdown.setDisabled(isDisabled)
                     .onChange(async (value) => {
                         if (!this.currentFlareConfig) return;
+                        
+                        // Store the old provider type for comparison
+                        const oldProviderId = this.currentFlareConfig.provider || '';
+                        const oldProviderSettings = oldProviderId ? this.plugin.settings.providers[oldProviderId] : null;
+                        const oldProviderType = oldProviderSettings?.type || '';
+                        
+                        // Update current flare config with new provider
                         this.currentFlareConfig.provider = value;
+                        
+                        // Get new provider settings
+                        const newProviderSettings = value ? this.plugin.settings.providers[value] : null;
+                        const newProviderType = newProviderSettings?.type || '';
+                        
+                        // Update providerName and providerType in the config
+                        if (newProviderSettings) {
+                            this.currentFlareConfig.providerName = newProviderSettings.name || '';
+                            this.currentFlareConfig.providerType = newProviderType;
+                        } else {
+                            this.currentFlareConfig.providerName = '';
+                            this.currentFlareConfig.providerType = '';
+                        }
+                        
                         // Reset model when provider changes
                         this.currentFlareConfig.model = '';
+                        
                         const settingItem = (dropdown as any).settingEl || dropdown.selectEl.closest('.setting-item');
                         if (settingItem) {
                             this.markAsChanged(formElement, settingItem);
                         }
+                        
+                        // Check if streaming is supported by this provider
+                        const supportsStreaming = newProviderType === 'openai' || 
+                                               newProviderType === 'ollama' || 
+                                               newProviderType === 'openrouter';
+                        
+                        // Find streaming toggle setting using the data attribute
+                        const streamingSetting = formElement.querySelector('[data-setting-id="streaming-toggle"]');
+                        if (streamingSetting instanceof HTMLElement) {
+                            const toggleEl = streamingSetting.querySelector('input[type="checkbox"]');
+                            
+                            if (toggleEl instanceof HTMLInputElement) {
+                                // Update the streaming toggle based on the new provider
+                                if (!supportsStreaming) {
+                                    // Disable streaming for unsupported providers
+                                    toggleEl.disabled = true;
+                                    streamingSetting.classList.add('is-disabled');
+                                    
+                                    // Set stream to false for unsupported providers
+                                    this.currentFlareConfig.stream = false;
+                                    toggleEl.checked = false;
+                                } else {
+                                    // Enable streaming for supported providers
+                                    toggleEl.disabled = isDisabled; // Only disable if the form is disabled
+                                    streamingSetting.classList.remove('is-disabled');
+                                    
+                                    // Don't automatically turn on streaming when switching providers
+                                    // Just ensure the toggle is correctly reflecting the current config value
+                                    toggleEl.checked = !!this.currentFlareConfig.stream;
+                                }
+                            }
+                        }
+                        
                         // Update the model dropdown with the new provider's models
                         await this.updateModelDropdown(formElement, value);
                     });
                 return dropdown;
             });
 
+        // Model dropdown - create as a regular setting-item
+        const modelSetting = new Setting(formElement)
+            .setName('Model')
+            .setDesc('Select the model to use for this flare')
+            .setDisabled(isDisabled)
+            .addDropdown((dropdown) => {
+                if (!this.currentFlareConfig) return dropdown;
+                
+                // Add default option
+                dropdown.addOption('', 'Select a model...');
+                
+                // Set up change handler
+                dropdown.onChange(value => {
+                    if (!this.currentFlareConfig) return;
+                    this.currentFlareConfig.model = value;
+                    const settingItem = modelSetting.settingEl;
+                    if (settingItem) {
+                        this.markAsChanged(formElement, settingItem);
+                    }
+                });
+
+                // If we have a provider, load its models
+                if (this.currentFlareConfig.provider) {
+                    // Load models after dropdown is initialized
+                    this.loadModelsForDropdown(this.currentFlareConfig.provider, dropdown);
+                }
+                
+                return dropdown;
+            });
+
+        // Store reference to model setting for updates
+        (formElement as any).modelSetting = modelSetting;
+
         // Add reasoning model toggle for all providers
         new Setting(formElement)
-            .setName('Reasoning Model')
+            .setName('Reasoning model')
             .setDesc('Enable for models that support reasoning (e.g. deepseek-coder)')
             .setDisabled(isDisabled)
             .addToggle(toggle => {
@@ -786,33 +918,122 @@ export class FlareManager {
         // Set initial visibility
         reasoningHeaderSetting.settingEl.style.display = 
             this.currentFlareConfig?.isReasoningModel ? '' : 'none';
+    }
 
-        // Initial model dropdown
-        if (this.currentFlareConfig?.provider) {
-            this.updateModelDropdown(formElement, this.currentFlareConfig.provider, isDisabled);
+    /** Loads models for a provider into a dropdown
+     * @param providerId The ID of the provider
+     * @param dropdown The dropdown to populate
+     */
+    private async loadModelsForDropdown(providerId: string, dropdown: DropdownComponent) {
+        const provider = this.plugin.settings.providers[providerId];
+        if (!provider) return;
+
+        try {
+            // Get all available models
+            const allModels = await this.plugin.getModelsForProvider(provider.type);
+            
+            // Filter models based on visibility settings
+            let visibleModels = allModels;
+            if (provider.visibleModels && provider.visibleModels.length > 0) {
+                // For Gemini and Ollama, directly use the visible models from provider settings
+                // This ensures custom models added by the user are included
+                if (provider.type === 'gemini' || provider.type === 'ollama') {
+                    visibleModels = provider.visibleModels;
+                } else {
+                    visibleModels = allModels.filter(model => 
+                        provider.visibleModels?.includes(model) ?? false
+                    );
+                }
+            }
+
+            // Clear existing options except the default
+            dropdown.selectEl.empty();
+            dropdown.addOption('', 'Select a model...');
+
+            // Add model options
+            visibleModels.forEach(model => {
+                dropdown.addOption(model, model);
+            });
+            
+            // Check if current flare's model exists in the dropdown but is not in visibleModels
+            if (this.currentFlareConfig?.model && 
+                !visibleModels.includes(this.currentFlareConfig.model)) {
+                
+                // Add the missing model with a special class
+                const option = document.createElement('option');
+                option.value = this.currentFlareConfig.model;
+                option.textContent = this.currentFlareConfig.model;
+                option.className = 'flare-missing-model';
+                dropdown.selectEl.appendChild(option);
+                
+                // Sort options alphabetically (except the first "Select a model..." option)
+                const options = Array.from(dropdown.selectEl.options).slice(1);
+                options.sort((a, b) => a.text.localeCompare(b.text));
+                
+                // Clear and re-add sorted options
+                dropdown.selectEl.innerHTML = '';
+                dropdown.selectEl.appendChild(document.createElement('option')).textContent = 'Select a model...';
+                options.forEach(opt => dropdown.selectEl.appendChild(opt));
+            }
+
+            // Set current value if exists
+            if (this.currentFlareConfig) {
+                dropdown.setValue(this.currentFlareConfig.model || provider.defaultModel || '');
+            }
+        } catch (error) {
+            console.error('Failed to load models:', error);
+            if (Array.isArray(provider.availableModels) && provider.availableModels.length > 0) {
+                new Notice('Failed to load models');
+            }
         }
     }
 
     private async createAdvancedSettingsSection(form: HTMLElement, isDisabled: boolean) {
+        // Check if current flare uses anthropic provider
+        let isAnthropicProvider = false;
+        let isGeminiProvider = false;
+        let supportsStreaming = false;
+        
+        if (this.currentFlareConfig && this.currentFlareConfig.provider) {
+            const providerSettings = this.plugin.settings.providers[this.currentFlareConfig.provider];
+            isAnthropicProvider = providerSettings?.type === 'anthropic';
+            isGeminiProvider = providerSettings?.type === 'gemini';
+            supportsStreaming = providerSettings?.type === 'openai' || 
+                               providerSettings?.type === 'ollama' || 
+                               providerSettings?.type === 'openrouter';
+        }
+
         // Streaming toggle
-        new Setting(form)
-            .setName('Enable Streaming')
-            .setDesc('Stream tokens as they are generated. Only supported by some providers.')
-            .setDisabled(isDisabled)
-            .addToggle(toggle => {
-                if (!this.currentFlareConfig) return toggle;
-                toggle.setValue(this.currentFlareConfig.stream ?? false)
-                    .setDisabled(isDisabled)
-                    .onChange(value => {
-                        if (!this.currentFlareConfig) return;
-                        this.currentFlareConfig.stream = value;
-                        const settingItem = (toggle as any).settingEl || toggle.toggleEl.closest('.setting-item');
-                        if (settingItem) {
-                            this.markAsChanged(form, settingItem);
-                        }
-                    });
-                return toggle;
-            });
+        const streamingSetting = new Setting(form)
+            .setName('Enable streaming')
+            .setDesc('Stream tokens as they are generated. Only supported by OpenAI, Ollama, and OpenRouter.')
+            .setDisabled(isDisabled || !supportsStreaming);
+            
+        // Ensure the setting item has a data attribute to easily find it later
+        streamingSetting.settingEl.setAttribute('data-setting-id', 'streaming-toggle');
+            
+        streamingSetting.addToggle(toggle => {
+            if (!this.currentFlareConfig) return toggle;
+            
+            // Use streaming setting from config, default to false
+            toggle.setValue(this.currentFlareConfig.stream ?? false)
+                .setDisabled(isDisabled || !supportsStreaming)
+                .onChange(value => {
+                    if (!this.currentFlareConfig) return;
+                    this.currentFlareConfig.stream = value;
+                    const settingItem = streamingSetting.settingEl;
+                    if (settingItem) {
+                        this.markAsChanged(form, settingItem);
+                    }
+                });
+            
+            // Add disabled class for styling if provider doesn't support streaming
+            if (!supportsStreaming) {
+                streamingSetting.settingEl.classList.add('is-disabled');
+            }
+            
+            return toggle;
+        });
 
         // Temperature
         new Setting(form)
@@ -840,7 +1061,7 @@ export class FlareManager {
 
         // Max tokens
         new Setting(form)
-            .setName('Max Tokens')
+            .setName('Max tokens')
             .setDesc('Maximum length of the response')
             .setDisabled(isDisabled)
             .addText(text => {
@@ -864,7 +1085,7 @@ export class FlareManager {
 
         // Context Window
         new Setting(form)
-            .setName('Context Window')
+            .setName('Context window')
             .setDesc('Maximum number of conversation pairs to maintain during chat (-1 for all)')
             .setDisabled(isDisabled)
             .addText(text => {
@@ -886,9 +1107,9 @@ export class FlareManager {
                 return text;
             });
 
-        // Handoff Context
+        // Handoff context
         new Setting(form)
-            .setName('Handoff Context')
+            .setName('Handoff context')
             .setDesc('Number of conversation pairs to carry over when switching to this flare (-1 for all)')
             .setDisabled(isDisabled)
             .addText(text => {
@@ -914,7 +1135,7 @@ export class FlareManager {
     private async createSystemPromptSection(form: HTMLElement, isDisabled: boolean) {
         // System prompt
         new Setting(form)
-            .setName('System Prompt')
+            .setName('System prompt')
             .setDesc('Instructions for the AI')
             .setDisabled(isDisabled);
 
@@ -1072,11 +1293,50 @@ export class FlareManager {
                     // Reload flares after deletion
                     await this.loadFlares();
                     
-                    // Find the settings container and recreate the UI
-                    const settingsContainer = document.querySelector('.workspace-leaf-content[data-type="flare-chat"] .view-content');
-                    if (settingsContainer instanceof HTMLElement) {
-                        settingsContainer.empty();
-                        await this.createSettingsUI(settingsContainer);
+                    // Update the dropdown
+                    if (this.flareDropdown) {
+                        // Remove the option from the dropdown
+                        const optionToRemove = this.flareDropdown.selectEl.querySelector(`option[value="${flareName}"]`);
+                        if (optionToRemove) {
+                            optionToRemove.remove();
+                        }
+                        
+                        // Set dropdown to default "Select a flare..." option
+                        this.flareDropdown.setValue('');
+                    }
+                    
+                    // Find the appropriate container - target just the flares-section to prevent affecting provider settings
+                    const flareSettingsContainer = document.querySelector('.flares-section');
+                    
+                    if (flareSettingsContainer instanceof HTMLElement) {
+                        // Instead of trying to update the current container which might have mixed content,
+                        // recreate the entire flare settings UI in the proper container
+                        await this.createSettingsUI(flareSettingsContainer);
+                    } else {
+                        // Fallback to more targeted approach if we can't find the main container
+                        // Find the settings container - try multiple potential selectors
+                        let settingsContainer = document.querySelector('.flare-settings-container') as HTMLElement | null;
+                        
+                        // If not found, try looking in the plugin view
+                        if (!settingsContainer) {
+                            settingsContainer = document.querySelector('.workspace-leaf-content[data-type="flare-chat"] .view-content .flare-settings') as HTMLElement | null;
+                        }
+                        
+                        // Or if it's in the flare settings modal
+                        if (!settingsContainer) {
+                            settingsContainer = document.querySelector('.modal .flare-settings') as HTMLElement | null;
+                        }
+                        
+                        if (settingsContainer instanceof HTMLElement) {
+                            // Show empty/disabled settings
+                            await this.showFlareSettings(settingsContainer, null);
+                            
+                            // Disable delete button
+                            const deleteButton = settingsContainer.querySelector('.flare-buttons .clickable-icon.delete-flare');
+                            if (deleteButton instanceof HTMLElement) {
+                                deleteButton.classList.add('disabled');
+                            }
+                        }
                     }
                     
                     new Notice(`Deleted flare: ${flareName}`);
@@ -1100,76 +1360,83 @@ export class FlareManager {
         const provider = this.plugin.settings.providers[providerId];
         if (!provider) return;
 
-        // Remove any existing model settings first
-        const existingModelSetting = container.querySelector('.flare-model-setting');
-        if (existingModelSetting) {
-            existingModelSetting.remove();
-        }
+        // Get the model setting from the container
+        const modelSetting = (container as any).modelSetting;
+        if (!modelSetting) return;
 
-        const modelSettingContainer = container.createDiv('flare-model-setting');
-        new Setting(modelSettingContainer)
-            .setName('Model')
-            .setDesc('Select the model to use for this flare')
-            .setDisabled(isDisabled)
-            .addDropdown(async (dropdown) => {
-                try {
-                    // Get all available models
-                    const allModels = await this.plugin.getModelsForProvider(provider.type);
-                    
-                    // Filter models based on visibility settings
-                    let visibleModels = allModels;
-                    if (provider.visibleModels && provider.visibleModels.length > 0) {
-                        visibleModels = allModels.filter(model => 
-                            provider.visibleModels?.includes(model) ?? false
-                        );
-                    }
+        // Get the dropdown component
+        const dropdown = modelSetting.components[0] as DropdownComponent;
+        if (!dropdown) return;
 
-                    visibleModels.forEach(model => {
-                        dropdown.addOption(model, model);
-                    });
-
-                    if (this.currentFlareConfig) {
-                        dropdown.setValue(this.currentFlareConfig.model || provider.defaultModel || '')
-                            .setDisabled(isDisabled)
-                            .onChange(value => {
-                                if (this.currentFlareConfig) {
-                                    this.currentFlareConfig.model = value;
-                                    this.markAsChanged();
-                                }
-                            });
-                    }
-                } catch (error) {
-                    console.debug('Failed to load models:', error);
-                    // Only show notice if this isn't a new provider (no models configured yet)
-                    if (Array.isArray(provider.availableModels) && provider.availableModels.length > 0) {
-                        new Notice('Failed to load models');
-                    }
-
-                    // Remove any existing error messages
-                    const existingError = container.querySelector('.flare-error-message');
-                    if (existingError) existingError.remove();
-
-                    // Create error message container
-                    const errorDiv = document.createElement('div');
-                    errorDiv.className = 'flare-error-message';
-                    errorDiv.textContent = 'Failed to load models. Please try again.';
-                    
-                    // Create retry button
-                    const retryButton = document.createElement('button');
-                    retryButton.className = 'mod-warning';
-                    retryButton.textContent = 'Retry';
-                    retryButton.onclick = () => {
-                        errorDiv.remove();
-                        this.updateModelDropdown(container, providerId, isDisabled);
-                    };
-                    
-                    // Add button to error message
-                    errorDiv.appendChild(retryButton);
-                    
-                    // Add error message to container
-                    container.appendChild(errorDiv);
+        try {
+            // Get all available models
+            const allModels = await this.plugin.getModelsForProvider(provider.type);
+            
+            // Filter models based on visibility settings
+            let visibleModels = allModels;
+            if (provider.visibleModels && provider.visibleModels.length > 0) {
+                // For Gemini and Ollama, directly use the visible models from provider settings
+                // This ensures custom models added by the user are included
+                if (provider.type === 'gemini' || provider.type === 'ollama') {
+                    visibleModels = provider.visibleModels;
+                } else {
+                    visibleModels = allModels.filter(model => 
+                        provider.visibleModels?.includes(model) ?? false
+                    );
                 }
+            }
+
+            // Clear existing options
+            dropdown.selectEl.empty();
+            dropdown.addOption('', 'Select a model...');
+
+            // Add model options
+            visibleModels.forEach(model => {
+                dropdown.addOption(model, model);
             });
+            
+            // Check if current flare's model exists in the dropdown but is not in visibleModels
+            if (this.currentFlareConfig?.model && 
+                !visibleModels.includes(this.currentFlareConfig.model)) {
+                
+                // Add the missing model with a special class
+                const option = document.createElement('option');
+                option.value = this.currentFlareConfig.model;
+                option.textContent = this.currentFlareConfig.model;
+                option.className = 'flare-missing-model';
+                dropdown.selectEl.appendChild(option);
+                
+                // Sort options alphabetically (except the first "Select a model..." option)
+                const options = Array.from(dropdown.selectEl.options).slice(1);
+                options.sort((a, b) => a.text.localeCompare(b.text));
+                
+                // Clear and re-add sorted options
+                dropdown.selectEl.innerHTML = '';
+                dropdown.selectEl.appendChild(document.createElement('option')).textContent = 'Select a model...';
+                options.forEach(opt => dropdown.selectEl.appendChild(opt));
+            }
+
+            // Set current value if exists
+            if (this.currentFlareConfig) {
+                dropdown.setValue(this.currentFlareConfig.model || provider.defaultModel || '')
+                    .setDisabled(isDisabled)
+                    .onChange(value => {
+                        if (this.currentFlareConfig) {
+                            this.currentFlareConfig.model = value;
+                            const settingItem = modelSetting.settingEl;
+                            if (settingItem) {
+                                this.markAsChanged(container, settingItem);
+                            }
+                        }
+                    });
+            }
+        } catch (error) {
+            console.error('Failed to load models:', error);
+            // Only show notice if this isn't a new provider (no models configured yet)
+            if (Array.isArray(provider.availableModels) && provider.availableModels.length > 0) {
+                new Notice('Failed to load models');
+            }
+        }
     }
 
     private async getNextAvailableFlareNumber(baseName: string): Promise<string> {
@@ -1220,9 +1487,57 @@ export class FlareManager {
 
             // Get a unique name starting with "NewFlare"
             const name = await this.getNextAvailableFlareNumber('NewFlare');
+            
+            // Look for a default provider setting in plugin settings
+            let defaultProviderId = this.plugin.settings.defaultProvider;
+            
+            // If no default is set, try to find a suitable default
+            if (!defaultProviderId || !this.plugin.settings.providers[defaultProviderId]) {
+                // Try to find OpenAI, Ollama, or any other provider in that order
+                const providerEntries = Object.entries(this.plugin.settings.providers);
+                
+                // First, look for specific provider types (prefer OpenAI, then Ollama)
+                const preferredTypes = ['openai', 'ollama', 'openrouter'];
+                
+                for (const preferredType of preferredTypes) {
+                    const matchingProvider = providerEntries.find(([_, settings]) => 
+                        settings.type === preferredType && settings.enabled
+                    );
+                    
+                    if (matchingProvider) {
+                        defaultProviderId = matchingProvider[0];
+                        break;
+                    }
+                }
+                
+                // If none of the preferred types found, use the first available
+                if (!defaultProviderId) {
+                    const firstEnabled = providerEntries.find(([_, settings]) => 
+                        settings.enabled
+                    );
+                    
+                    if (firstEnabled) {
+                        defaultProviderId = firstEnabled[0];
+                    } else {
+                        // Fallback to the first provider if nothing else available
+                        defaultProviderId = Object.keys(this.plugin.settings.providers)[0] || '';
+                    }
+                }
+            }
+            
+            const defaultProviderSettings = this.plugin.settings.providers[defaultProviderId];
+            
+            // Determine if streaming should be enabled based on provider type
+            const providerType = defaultProviderSettings?.type || '';
+            const supportsStreaming = providerType === 'openai' || 
+                                     providerType === 'ollama' || 
+                                     providerType === 'openrouter';
+            
             const flare: FlareConfig = {
                 name,
-                provider: Object.keys(this.plugin.settings.providers)[0] || '',
+                providerName: defaultProviderSettings?.name || 'Default Provider',
+                providerType: providerType,
+                provider: defaultProviderId, // Keep for backward compatibility
                 model: '',
                 enabled: true,
                 description: 'New Flare',
@@ -1231,7 +1546,7 @@ export class FlareManager {
                 systemPrompt: "You are a helpful AI assistant.",
                 contextWindow: -1, // Default to all context
                 handoffContext: -1, // Default to no handoff context
-                stream: false, // Default to no streaming
+                stream: false, // Default to no streaming, even for supported providers
                 isReasoningModel: false,
                 reasoningHeader: '<think>'
             };
@@ -1239,23 +1554,31 @@ export class FlareManager {
             // Create the file path
             const filePath = `${flareFolder}/${name}.md`;
 
-            // Create initial file with empty frontmatter
-            const file = await this.plugin.app.vault.create(filePath, '---\n---\n\n' + flare.systemPrompt);
+            // Create initial file with complete frontmatter instead of empty
+            const initialContent = `---
+providerName: ${flare.providerName}
+providerType: ${flare.providerType}
+provider: ${flare.provider}
+model: ${flare.model}
+enabled: ${flare.enabled}
+description: "${flare.description}"
+temperature: ${flare.temperature}
+maxTokens: ${flare.maxTokens}
+contextWindow: ${flare.contextWindow}
+handoffContext: ${flare.handoffContext}
+stream: ${flare.stream}
+isReasoningModel: ${flare.isReasoningModel}
+reasoningHeader: "${flare.reasoningHeader}"
+---
 
-            // Update frontmatter using processFrontMatter
-            await this.plugin.app.fileManager.processFrontMatter(file, (frontmatter) => {
-                frontmatter.provider = flare.provider;
-                frontmatter.model = flare.model;
-                frontmatter.enabled = flare.enabled;
-                frontmatter.description = flare.description;
-                frontmatter.temperature = flare.temperature;
-                frontmatter.maxTokens = flare.maxTokens;
-                frontmatter.contextWindow = flare.contextWindow;
-                frontmatter.handoffContext = flare.handoffContext;
-                frontmatter.stream = flare.stream;
-                frontmatter.isReasoningModel = flare.isReasoningModel;
-                frontmatter.reasoningHeader = flare.reasoningHeader;
-            });
+${flare.systemPrompt}`;
+
+            // Create the file with all frontmatter already populated
+            const file = await this.plugin.app.vault.create(filePath, initialContent);
+            
+            // Add to cache and reload flares
+            this.flareCache.set(name, flare);
+            await this.loadFlares();
 
             return name;
         } catch (error) {
@@ -1344,10 +1667,31 @@ export class FlareManager {
             // Extract basename from filePath
             const basename = filePath.split('/').pop()?.replace('.md', '') || '';
             
+            // Get provider id, ensure we have type and name
+            const providerId = fileCache.frontmatter.provider || '';
+            let providerName = fileCache.frontmatter.providerName || '';
+            let providerType = fileCache.frontmatter.providerType || '';
+            
+            // If we have a provider ID but no type/name, try to get them from settings
+            if (providerId && (!providerName || !providerType)) {
+                const providerSettings = this.plugin.settings.providers[providerId];
+                if (providerSettings) {
+                    providerType = providerType || providerSettings.type || '';
+                    providerName = providerName || providerSettings.name || 'Default Provider';
+                }
+            }
+            
+            // If we still don't have name/type, set defaults
+            if (!providerName) {
+                providerName = 'Default Provider';
+            }
+            
             // Create flare config
             const flare: FlareConfig = {
                 name: basename,
-                provider: fileCache.frontmatter.provider || '',
+                providerName: providerName,
+                providerType: providerType,
+                provider: providerId, // Keep for backward compatibility
                 model: fileCache.frontmatter.model || '',
                 enabled: fileCache.frontmatter.enabled ?? true,
                 description: fileCache.frontmatter.description || '',
@@ -1411,12 +1755,6 @@ export class FlareManager {
         if (!this.currentFlareConfig) return;
 
         try {
-            console.debug('Saving flare config:', {
-                name: flareName,
-                isReasoningModel: this.currentFlareConfig.isReasoningModel,
-                reasoningHeader: this.currentFlareConfig.reasoningHeader
-            });
-
             // Get file path and reference
             const filePath = `${this.plugin.settings.flaresFolder}/${flareName}.md`;
             let file = this.plugin.app.vault.getAbstractFileByPath(filePath);
@@ -1424,10 +1762,39 @@ export class FlareManager {
             // Get system prompt (everything after frontmatter)
             const systemPrompt = this.currentFlareConfig.systemPrompt || '';
 
+            // Make sure provider name and type are set (should be, but just in case)
+            if (!this.currentFlareConfig.providerName || !this.currentFlareConfig.providerType) {
+                const providerId = this.currentFlareConfig.provider || '';
+                const providerSettings = providerId ? this.plugin.settings.providers[providerId] : null;
+                
+                if (providerSettings) {
+                    this.currentFlareConfig.providerName = this.currentFlareConfig?.providerName;
+                    this.currentFlareConfig.providerType = this.currentFlareConfig?.providerType;
+                } else {
+                    // Fallback to the first available provider if we can't find a match
+                    const firstProvider = Object.entries(this.plugin.settings.providers)[0];
+                    if (firstProvider && firstProvider[1]) {
+                        this.currentFlareConfig.providerName = firstProvider[1].name || 'Default Provider';
+                        this.currentFlareConfig.providerType = firstProvider[1].type || '';
+                        this.currentFlareConfig.provider = firstProvider[0]; // update ID too
+                    } else {
+                        // Absolute fallback with defaults if no providers exist
+                        this.currentFlareConfig.providerName = 'Default Provider';
+                        this.currentFlareConfig.providerType = '';
+                        this.currentFlareConfig.provider = '';
+                    }
+                }
+            }
+
             if (file instanceof TFile) {
                 // Update existing file
                 await this.plugin.app.fileManager.processFrontMatter(file, (frontmatter) => {
+                    // Use name and type as primary identifiers
+                    frontmatter.providerName = this.currentFlareConfig?.providerName;
+                    frontmatter.providerType = this.currentFlareConfig?.providerType;
+                    // Keep provider ID for backward compatibility
                     frontmatter.provider = this.currentFlareConfig?.provider;
+                    
                     frontmatter.model = this.currentFlareConfig?.model;
                     frontmatter.enabled = this.currentFlareConfig?.enabled;
                     frontmatter.description = this.currentFlareConfig?.description;
@@ -1449,7 +1816,23 @@ export class FlareManager {
                 }
             } else {
                 // Create new file with initial frontmatter and content
-                const initialContent = `---\nprovider: ${this.currentFlareConfig.provider}\nmodel: ${this.currentFlareConfig.model}\nenabled: ${this.currentFlareConfig.enabled}\ndescription: "${this.currentFlareConfig.description}"\ntemperature: ${this.currentFlareConfig.temperature}\nmaxTokens: ${this.currentFlareConfig.maxTokens}\ncontextWindow: ${this.currentFlareConfig.contextWindow}\nhandoffContext: ${this.currentFlareConfig.handoffContext}\nstream: ${this.currentFlareConfig.stream}\nisReasoningModel: ${this.currentFlareConfig.isReasoningModel}\nreasoningHeader: "${this.currentFlareConfig.reasoningHeader}"\n---\n\n${systemPrompt}`;
+                const initialContent = `---
+providerName: ${this.currentFlareConfig.providerName}
+providerType: ${this.currentFlareConfig.providerType}
+provider: ${this.currentFlareConfig.provider}
+model: ${this.currentFlareConfig.model}
+enabled: ${this.currentFlareConfig.enabled}
+description: "${this.currentFlareConfig.description}"
+temperature: ${this.currentFlareConfig.temperature}
+maxTokens: ${this.currentFlareConfig.maxTokens}
+contextWindow: ${this.currentFlareConfig.contextWindow}
+handoffContext: ${this.currentFlareConfig.handoffContext}
+stream: ${this.currentFlareConfig.stream}
+isReasoningModel: ${this.currentFlareConfig.isReasoningModel}
+reasoningHeader: "${this.currentFlareConfig.reasoningHeader}"
+---
+
+${systemPrompt}`;
                 file = await this.plugin.app.vault.create(filePath, initialContent);
             }
 
@@ -1459,5 +1842,29 @@ export class FlareManager {
             console.error('Failed to save flare config:', error);
             throw error;
         }
+    }
+
+    // Helper method to get default flare config
+    private getDefaultFlareConfig(flareName: string): FlareConfig {
+        const defaultProviderId = Object.keys(this.plugin.settings.providers)[0] || '';
+        const defaultProvider = this.plugin.settings.providers[defaultProviderId];
+        
+        return {
+            name: flareName,
+            providerName: defaultProvider?.name || 'Default Provider',
+            providerType: defaultProvider?.type || '',
+            provider: defaultProviderId, // Keep for backward compatibility
+            model: '',
+            enabled: true,
+            description: 'New Flare',
+            temperature: 0.7,
+            maxTokens: 2048,
+            systemPrompt: "You are a helpful AI assistant.",
+            contextWindow: -1,
+            handoffContext: -1,
+            stream: false,
+            isReasoningModel: false,
+            reasoningHeader: '<think>'
+        };
     }
 } 

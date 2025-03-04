@@ -47,18 +47,38 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
 
     constructor(private baseUrl: string) {
         super();
-        this.url = baseUrl.trim() || 'http://localhost:11434';
+        
+        if (baseUrl && baseUrl.trim() !== '') {
+            this.url = baseUrl.trim();
+        } else {
+            this.url = 'http://localhost:11434';
+        }
     }
 
     setConfig(config: ProviderSettings) {
         super.setConfig(config);
-        this.url = config.baseUrl?.trim() || 'http://localhost:11434';
+        
+        // Only update URL if it's not already set with a custom value from the constructor
+        // and the config provides a non-empty baseUrl
+        if (config.baseUrl && config.baseUrl.trim() !== '') {
+            // Always use the explicitly provided config value
+            this.url = config.baseUrl.trim();
+        } else if (this.url === '') {
+            // Only use the default if we don't already have a URL
+            this.url = 'http://localhost:11434';
+        }
+        
+        // Explicitly set baseUrl in this.config to ensure it's preserved
+        // after setConfig is called
+        if (this.config && this.url && this.url !== 'http://localhost:11434') {
+            this.config.baseUrl = this.url;
+        }
     }
 
     async getAvailableModels(): Promise<string[]> {
         try {
             const response = await requestUrl({
-                url: `${this.config.baseUrl}/api/tags`,
+                url: `${this.url}/api/tags`,
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
@@ -202,7 +222,6 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
             }
         } catch (error) {
             if (error instanceof Error && error.name === 'AbortError') {
-                console.log('Request aborted');
                 return 'Request aborted';
             }
             throw error;

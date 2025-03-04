@@ -22,4 +22,12 @@ export { OllamaManager } from './implementations/Ollama/OllamaManager';
 
 // Export OpenRouter implementation
 export { OpenRouterProvider } from './implementations/OpenRouter/OpenRouterProvider';
-export { OpenRouterManager } from './implementations/OpenRouter/OpenRouterManager'; 
+export { OpenRouterManager } from './implementations/OpenRouter/OpenRouterManager';
+
+// Export Anthropic implementation
+export { AnthropicProvider } from './implementations/Anthropic/AnthropicProvider';
+export { AnthropicManager } from './implementations/Anthropic/AnthropicManager';
+
+// Export Gemini implementation
+export { GeminiProvider } from './implementations/Gemini/GeminiProvider';
+export { GeminiManager } from './implementations/Gemini/GeminiManager'; 

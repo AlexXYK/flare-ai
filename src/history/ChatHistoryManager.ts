@@ -1,14 +1,15 @@
-import { TFile, TFolder } from 'obsidian';
+import { TFile, TFolder, Notice, normalizePath, MarkdownRenderer } from 'obsidian';
 import type FlarePlugin from '../../main';
 import { getErrorMessage } from '../utils/errors';
-import { Notice } from 'obsidian';
 
 interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
     content: string;
     timestamp: number;
     settings: {
-        provider: string;
+        provider?: string;
+        providerName?: string;
+        providerType?: string;
         model: string;
         temperature: number;
         flare?: string;
@@ -26,7 +27,9 @@ interface ChatHistory {
     lastModified: number;
     title: string;
     flare?: string;
-    provider: string;
+    provider?: string;
+    providerName?: string;
+    providerType?: string;
     model: string;
     temperature: number;
     messages: ChatMessage[];
@@ -51,13 +54,22 @@ export class ChatHistoryManager {
         try {
             // Create new history object with default values
             const now = new Date();
+            
+            // Get default provider info
+            const defaultProviderId = this.plugin.settings.defaultProvider || 'default';
+            const defaultProvider = this.plugin.settings.providers[defaultProviderId];
+            const defaultModel = defaultProvider?.defaultModel || 'default';
+            
+            // Include provider name and type for better cross-device compatibility
             this.currentHistory = {
                 date: now.getTime(),
                 lastModified: now.getTime(),
                 title: title || 'New Chat',
                 messages: [],
-                provider: this.plugin.settings.defaultProvider || 'default',
-                model: this.plugin.settings.providers[this.plugin.settings.defaultProvider || 'default']?.defaultModel || 'default',
+                provider: defaultProviderId,
+                providerName: defaultProvider?.name || 'Default Provider',
+                providerType: defaultProvider?.type || '',
+                model: defaultModel,
                 temperature: 0.7
             };
 
@@ -102,7 +114,10 @@ export class ChatHistoryManager {
             this.unsavedChanges = false;
             return this.currentHistory;
         } catch (error: unknown) {
-            throw new Error(`Failed to create new history: ${getErrorMessage(error)}`);
+            const errorMessage = `Failed to create new history: ${getErrorMessage(error)}`;
+            new Notice(errorMessage);
+            console.error(errorMessage, error);
+            throw new Error(errorMessage);
         }
     }
 
@@ -148,28 +163,45 @@ export class ChatHistoryManager {
 
             // Read file content using cached read for better performance
             const content = await this.plugin.app.vault.cachedRead(file);
-            const messages = this.parseMessages(content.split(/^---\n[\s\S]*?\n---\n/)[1] || '');
+            
+            // Extract content after frontmatter in a way that won't be confused by "---" in the content
+            let messagesContent = '';
+            if (content.startsWith('---\n')) {
+                const secondFrontmatterMarker = content.indexOf('\n---\n', 4);
+                if (secondFrontmatterMarker !== -1) {
+                    messagesContent = content.substring(secondFrontmatterMarker + 5); // Skip past the frontmatter
+                }
+            }
+            
+            const messages = this.parseMessages(messagesContent);
 
-            // Create new history object with default values
+            // Create new history object
+            const providerId = fileCache.frontmatter.provider || this.plugin.settings.defaultProvider || 'default';
+            const providerSettings = this.plugin.settings.providers[providerId];
+            
             this.currentHistory = {
                 date: fileCache.frontmatter.date || Date.now(),
                 lastModified: fileCache.frontmatter['last-modified'] || Date.now(),
                 title: fileCache.frontmatter.title || file.basename.split('-').slice(1).join('-'), // Remove timestamp prefix
                 flare: fileCache.frontmatter.flare,
-                provider: this.plugin.settings.defaultProvider || 'default',
-                model: (this.plugin.settings.providers[this.plugin.settings.defaultProvider || 'default'] || {}).defaultModel || 'default',
-                temperature: 0.7,
+                provider: providerId,
+                providerName: fileCache.frontmatter.providerName || providerSettings?.name || 'Default Provider',
+                providerType: fileCache.frontmatter.providerType || providerSettings?.type || '',
+                model: fileCache.frontmatter.model || providerSettings?.defaultModel || 'default',
+                temperature: typeof fileCache.frontmatter.temperature === 'number' ? fileCache.frontmatter.temperature : 0.7,
                 messages: messages || []
             };
 
             this.currentFile = file;
             this.unsavedChanges = false;
-        } catch (error: unknown) {
+        } catch (error) {
+            const errorMessage = 'Failed to load history: ' + getErrorMessage(error);
             console.error('Error loading history:', error);
+            new Notice(errorMessage);
             // Reset state on error
             this.currentHistory = null;
             this.currentFile = null;
-            throw new Error('Failed to load history: ' + getErrorMessage(error));
+            throw new Error(errorMessage);
         }
     }
 
@@ -181,10 +213,20 @@ export class ChatHistoryManager {
         if (this.currentHistory) {
             const time = message.timestamp ?? Date.now();
             const fullMessage: ChatMessage = {
-                ...message,
+                role: message.role || 'user',
+                content: message.content || '',
                 timestamp: time,
-                settings: { ...(message.settings ?? {}), timestamp: time }
+                settings: {
+                    ...(message.settings ?? {}), 
+                    timestamp: time,
+                    provider: message.settings?.provider || this.currentHistory.provider || 'default',
+                    providerName: message.settings?.providerName || this.currentHistory.providerName || 'Default Provider',
+                    providerType: message.settings?.providerType || this.currentHistory.providerType || '',
+                    model: message.settings?.model || this.currentHistory.model || 'default',
+                    temperature: Number(message.settings?.temperature || this.currentHistory.temperature || 0),
+                }
             } as ChatMessage;
+            
             this.currentHistory.messages.push(fullMessage);
             this.currentHistory.lastModified = Date.now();
             this.unsavedChanges = true;
@@ -193,6 +235,9 @@ export class ChatHistoryManager {
             if (this.plugin.settings.autoSaveEnabled) {
                 await this.saveCurrentHistory(false, false);
             }
+            
+            // Notify other components about the change
+            this.plugin.app.workspace.trigger('chat-history-changed');
         }
     }
 
@@ -218,7 +263,7 @@ export class ChatHistoryManager {
                     fileName = counter === 0 ? 
                         `chat-${dateStr}.md` : 
                         `chat-${dateStr}-${counter}.md`;
-                    filePath = `${basePath}/${fileName}`;
+                    filePath = normalizePath(`${basePath}/${fileName}`);
                     counter++;
                 } while (await this.plugin.app.vault.adapter.exists(filePath));
 
@@ -245,16 +290,15 @@ export class ChatHistoryManager {
 
                 // Update frontmatter
                 await this.plugin.app.fileManager.processFrontMatter(this.currentFile, (frontmatter) => {
-                    const formatDate = (timestamp: number) => {
-                        const date = new Date(timestamp);
-                        return date.toISOString().replace('T', ' ').split('.')[0];
-                    };
-                    frontmatter.date = formatDate(this.currentHistory?.date || Date.now());
-                    frontmatter['last-modified'] = formatDate(this.currentHistory?.lastModified || Date.now());
+                    frontmatter.date = this.currentHistory?.date;
+                    frontmatter['last-modified'] = this.currentHistory?.lastModified;
                     frontmatter.title = this.currentHistory?.title;
-                    if (this.currentHistory?.flare) {
-                        frontmatter.flare = this.currentHistory.flare;
-                    }
+                    frontmatter.flare = this.currentHistory?.flare;
+                    frontmatter.provider = this.currentHistory?.provider;
+                    frontmatter.providerName = this.currentHistory?.providerName;
+                    frontmatter.providerType = this.currentHistory?.providerType;
+                    frontmatter.model = this.currentHistory?.model;
+                    frontmatter.temperature = this.currentHistory?.temperature;
                 });
 
                 // Format messages
@@ -282,76 +326,165 @@ export class ChatHistoryManager {
 
                 // Read current content to preserve frontmatter
                 const content = await this.plugin.app.vault.read(this.currentFile);
-                const frontmatterMatch = content.match(/^---\n[\s\S]*?\n---\n/);
-                if (frontmatterMatch) {
-                    // Replace everything after frontmatter with new messages
-                    const newContent = content.replace(/^---\n[\s\S]*?\n---\n[\s\S]*$/, `${frontmatterMatch[0]}\n${messages}`);
+                
+                // Instead of using regex to match frontmatter, which can be confused with "---" in content,
+                // check if the file starts with "---" and find the end of the first frontmatter block
+                let newContent = content;
+                if (content.startsWith('---\n')) {
+                    const secondFrontmatterMarker = content.indexOf('\n---\n', 4);
+                    if (secondFrontmatterMarker !== -1) {
+                        // Extract just the frontmatter block
+                        const frontmatterBlock = content.substring(0, secondFrontmatterMarker + 5); // include the trailing \n
+                        // Append new message content
+                        newContent = `${frontmatterBlock}\n${messages}`;
+                        await this.plugin.app.vault.modify(this.currentFile, newContent);
+                    } else {
+                        // Fallback: create properly formatted content
+                        newContent = `---\n---\n\n${messages}`;
+                        await this.plugin.app.vault.modify(this.currentFile, newContent);
+                    }
+                } else {
+                    // If for some reason there is no frontmatter, create it
+                    newContent = `---\n---\n\n${messages}`;
                     await this.plugin.app.vault.modify(this.currentFile, newContent);
                 }
+                
+                if (showNotice) {
+                    new Notice("Chat history saved successfully");
+                }
+                
+                // Trigger event for other components
+                this.plugin.app.workspace.trigger('chat-history-changed');
             }
 
             this.unsavedChanges = false;
         } catch (error) {
-            throw error;
+            const errorMessage = `Failed to save chat history: ${getErrorMessage(error)}`;
+            console.error("Failed to save history:", error);
+            if (showNotice) {
+                new Notice(errorMessage);
+            }
+            throw new Error(errorMessage);
         }
     }
 
     private parseMessages(content: string): ChatMessage[] {
         const messages: ChatMessage[] = [];
-        const messageBlocks = content.split(/^## /m).filter(Boolean);
-
-        messageBlocks.forEach(block => {
-            try {
-                const lines = block.trim().split('\n');
-                const roleStr = lines[0].toLowerCase();
+        
+        // If no content, return empty array
+        if (!content || content.trim().length === 0) {
+            return messages;
+        }
+        
+        try {
+            // First, find all message headers (lines starting with ## )
+            const headerMatches = Array.from(content.matchAll(/^## (User|Assistant|System)\s*$/gim));
+            
+            // If no headers found, return empty array
+            if (headerMatches.length === 0) {
+                return messages;
+            }
+            
+            // Create message blocks by finding the content between headers
+            for (let i = 0; i < headerMatches.length; i++) {
+                const match = headerMatches[i];
                 
-                // Only process valid roles
-                if (!['system', 'user', 'assistant'].includes(roleStr)) {
-                    return;
+                // Skip if no match index
+                if (match.index === undefined) continue;
+                
+                // Find current header and next header positions
+                const currentHeaderPos = match.index;
+                const nextHeaderPos = (i < headerMatches.length - 1) ? headerMatches[i+1].index : content.length;
+                
+                // Extract the entire block including the header
+                const fullBlock = content.substring(currentHeaderPos, nextHeaderPos).trim();
+                
+                // Parse the role from the header (the capture group in the regex)
+                const role = match[1].toLowerCase() as 'user' | 'assistant' | 'system';
+                
+                // Skip if not a valid role
+                if (!['user', 'assistant', 'system'].includes(role)) {
+                    continue;
                 }
-
-                // Cast to valid role type
-                const role = roleStr as 'system' | 'user' | 'assistant';
                 
-                // Extract settings if present
-                const settingsMatch = block.match(/<!-- settings: (.*?) -->/s);
-                let settings = settingsMatch ? JSON.parse(settingsMatch[1]) : {};
+                // Find the settings comment at the end of the block
+                // We'll use a more specific pattern that looks for settings at the end
+                const settingsMatch = fullBlock.match(/<!-- settings: (.*?) -->\s*$/);
+                let settingsData: Record<string, any> = {
+                    provider: 'default',
+                    model: 'default',
+                    temperature: 0
+                };
+                
+                // Extract and parse settings
+                if (settingsMatch && settingsMatch[1]) {
+                    try {
+                        // Handle complex JSON that might have nested structures
+                        let jsonStr = settingsMatch[1];
+                        const parsedSettings = JSON.parse(jsonStr);
+                        
+                        // Validate and merge with default settings
+                        settingsData = {
+                            ...settingsData,
+                            ...parsedSettings,
+                            // Ensure required properties have the correct types
+                            provider: typeof parsedSettings.provider === 'string' ? parsedSettings.provider : 'default',
+                            model: typeof parsedSettings.model === 'string' ? parsedSettings.model : 'default',
+                            temperature: typeof parsedSettings.temperature === 'number' ? parsedSettings.temperature : 0
+                        };
+                    } catch (e) {
+                        console.warn('Failed to parse settings JSON:', e);
+                    }
+                }
                 
                 // Get timestamp from settings or default to now
-                const timestamp = settings?.timestamp || Date.now();
-                delete settings?.timestamp; // Remove timestamp from settings after extraction
+                const timestamp = settingsData?.timestamp || Date.now();
                 
-                // Get content (everything between role and settings/end)
-                const content = lines.slice(1).join('\n')
-                    .replace(/<!-- settings: .*? -->/s, '')
-                    .trim();
-
-                // Ensure settings has all required fields
-                settings = {
-                    provider: settings.provider || 'default',
-                    model: settings.model || 'default',
-                    temperature: Number(settings.temperature || 0),
-                    flare: settings.flare,
-                    isReasoningModel: settings.isReasoningModel,
-                    reasoningHeader: settings.reasoningHeader,
-                    maxTokens: settings.maxTokens,
-                    contextWindow: settings.contextWindow,
-                    handoffContext: settings.handoffContext,
+                // Extract message content - everything after the header line up to the settings comment
+                let messageContent = '';
+                
+                // Find the end of the header line
+                const headerEndPos = fullBlock.indexOf('\n');
+                if (headerEndPos !== -1) {
+                    // Get everything after the header
+                    messageContent = fullBlock.substring(headerEndPos + 1);
+                    
+                    // Remove the settings comment at the end if it exists
+                    if (settingsMatch) {
+                        const settingsPos = messageContent.lastIndexOf('<!-- settings:');
+                        if (settingsPos !== -1) {
+                            messageContent = messageContent.substring(0, settingsPos).trim();
+                        }
+                    }
+                }
+                
+                // Create settings object
+                const settings: ChatMessage['settings'] = {
+                    provider: settingsData.provider,
+                    model: settingsData.model,
+                    temperature: Number(settingsData.temperature),
+                    flare: settingsData.flare,
+                    isReasoningModel: settingsData.isReasoningModel,
+                    reasoningHeader: settingsData.reasoningHeader,
+                    maxTokens: settingsData.maxTokens,
+                    contextWindow: settingsData.contextWindow,
+                    handoffContext: settingsData.handoffContext,
                 };
-
+                
+                // Add the message
                 messages.push({
                     role,
-                    content,
+                    content: messageContent,
                     timestamp,
                     settings
                 });
-            } catch (error) {
-                console.warn('Failed to parse message block:', error);
-                // Skip invalid message blocks
             }
-        });
-
-        return messages;
+            
+            return messages;
+        } catch (error) {
+            console.error('Failed to parse message blocks:', error);
+            return [];
+        }
     }
 
     private sanitizeFileName(name: string): string {
@@ -362,10 +495,10 @@ export class ChatHistoryManager {
     }
 
     private async ensureFolderExists(path: string): Promise<void> {
-        const adapter = this.plugin.app.vault.adapter;
-        const exists = await adapter.exists(path);
+        const normalizedPath = normalizePath(path);
+        const exists = await this.plugin.app.vault.adapter.exists(normalizedPath);
         if (!exists) {
-            await this.plugin.app.vault.createFolder(path);
+            await this.plugin.app.vault.createFolder(normalizedPath);
         }
     }
 
@@ -473,7 +606,9 @@ export class ChatHistoryManager {
             
             return finalTitle;
         } catch (error: unknown) {
-            throw new Error('Failed to generate title: ' + getErrorMessage(error));
+            const errorMessage = 'Failed to generate title: ' + getErrorMessage(error);
+            new Notice(errorMessage);
+            throw new Error(errorMessage);
         }
     }
 
@@ -484,5 +619,269 @@ export class ChatHistoryManager {
             this.currentHistory.lastModified = Date.now();
             this.unsavedChanges = true;
         }
+    }
+
+    /**
+     * Exports the current chat history to a file in the export folder
+     * @returns Promise<TFile> The exported file
+     * @throws Error if export fails
+     */
+    async exportHistory(): Promise<TFile> {
+        if (!this.currentHistory || this.currentHistory.messages.length === 0) {
+            throw new Error("No chat history to export");
+        }
+
+        try {
+            // Ensure export folder exists
+            const exportFolder = this.plugin.settings.exportSettings?.exportFolder || 'FLAREai/exports';
+            await this.ensureFolderExists(exportFolder);
+
+            // Generate export filename
+            const now = new Date();
+            const dateStr = this.formatDate(now, this.plugin.settings.dateFormat || 'MM-DD-YYYY');
+            const title = this.currentHistory.title || 'Chat';
+            const sanitizedTitle = this.sanitizeFileName(title);
+            
+            let fileName = `${sanitizedTitle}-${dateStr}.md`;
+            let filePath = normalizePath(`${exportFolder}/${fileName}`);
+            
+            // Check if file exists and generate unique name if needed
+            let counter = 1;
+            while (await this.plugin.app.vault.adapter.exists(filePath)) {
+                fileName = `${sanitizedTitle}-${dateStr}-${counter}.md`;
+                filePath = normalizePath(`${exportFolder}/${fileName}`);
+                counter++;
+            }
+
+            // Generate content using templates
+            const content = await this.generateExportContent();
+            
+            // Create file
+            const file = await this.plugin.app.vault.create(filePath, content);
+            
+            return file;
+        } catch (error) {
+            const errorMessage = `Failed to export chat history: ${getErrorMessage(error)}`;
+            console.error("Failed to export chat history:", error);
+            new Notice(errorMessage);
+            throw new Error(errorMessage);
+        }
+    }
+
+    /**
+     * Generates the content for an exported chat history
+     * @returns Promise<string> The formatted content
+     */
+    private async generateExportContent(): Promise<string> {
+        if (!this.currentHistory) {
+            throw new Error("No chat history to export");
+        }
+
+        try {
+            // Get templates from settings
+            const exportSettings = this.plugin.settings.exportSettings || {
+                frontmatterTemplate: `---
+title: {{title}}
+date: {{date}}
+---`,
+                metadataTemplate: "",
+                includeSystemMessages: true,
+                includeReasoningBlocks: true
+            };
+
+            // Prepare frontmatter context
+            const frontmatterContext = {
+                title: this.currentHistory.title || 'Chat Export',
+                date: new Date().toISOString().split('T')[0],
+                flare: this.currentHistory.flare || '',
+                model: this.currentHistory.model || '',
+                provider: this.currentHistory.provider || '',
+                temperature: this.currentHistory.temperature || 0.7
+            };
+
+            // Apply frontmatter template
+            const frontmatter = this.applyTemplate(
+                exportSettings.frontmatterTemplate, 
+                frontmatterContext
+            );
+
+            // Format messages
+            const messagesPromises = this.currentHistory.messages
+                .filter(msg => 
+                    exportSettings.includeSystemMessages || msg.role !== 'system'
+                )
+                .map(async msg => {
+                    // Format message header
+                    const header = `## ${msg.role.charAt(0).toUpperCase() + msg.role.slice(1)}`;
+                    
+                    // Only add metadata for assistant messages if template is specified
+                    let metadata = '';
+                    if (msg.role === 'assistant' && exportSettings.metadataTemplate) {
+                        const metadataContext = {
+                            flare: msg.settings?.flare || this.currentHistory?.flare || '',
+                            provider: msg.settings?.provider || this.currentHistory?.provider || '',
+                            model: msg.settings?.model || this.currentHistory?.model || '',
+                            temperature: msg.settings?.temperature || this.currentHistory?.temperature || 0.7,
+                            maxTokens: msg.settings?.maxTokens || '',
+                            date: new Date(msg.timestamp).toISOString().split('T')[0],
+                            time: new Date(msg.timestamp).toTimeString().split(' ')[0]
+                        };
+                        
+                        metadata = this.applyTemplate(
+                            exportSettings.metadataTemplate,
+                            metadataContext
+                        );
+                        
+                        if (metadata) {
+                            metadata = `> ${metadata}\n\n`;
+                        }
+                    }
+                    
+                    // Get message content
+                    let content = msg.content;
+                    
+                    // Process reasoning blocks if needed
+                    if (msg.role === 'assistant') {
+                        if (!exportSettings.includeReasoningBlocks && 
+                            msg.settings?.isReasoningModel && msg.settings?.reasoningHeader) {
+                            // Extract reasoning and response parts
+                            const { responsePart } = this.extractReasoningContent(
+                                content, 
+                                msg.settings.reasoningHeader
+                            );
+                            
+                            // Use only the response part
+                            content = responsePart;
+                        } else if (exportSettings.includeReasoningBlocks && 
+                                   msg.settings?.isReasoningModel && msg.settings?.reasoningHeader) {
+                            // Replace reasoning tags with parentheses
+                            const reasoningHeader = msg.settings.reasoningHeader;
+                            const reasoningEndTag = reasoningHeader.replace('<', '</');
+                            
+                            // First, normalize all newlines to ensure consistent handling
+                            content = content.replace(/\r\n/g, '\n');
+                            
+                            // Use a more direct approach for handling the replacement
+                            // Split the content into chunks based on reasoning tags
+                            const chunks: string[] = [];
+                            let insideReasoning = false;
+                            let currentChunk = '';
+                            
+                            // Handle the opening and closing tags
+                            const openTag = new RegExp(this.escapeRegexSpecials(reasoningHeader), 'g');
+                            const closeTag = new RegExp(this.escapeRegexSpecials(reasoningEndTag), 'g');
+                            
+                            // First do a simple replacement of tags
+                            let processedContent = content;
+                            processedContent = processedContent.replace(openTag, '(');
+                            processedContent = processedContent.replace(closeTag, ')');
+                            
+                            // Now split by parentheses to process chunks
+                            const parts = processedContent.split(/(\(|\))/);
+                            let newContent = '';
+                            let inReasoning = false;
+                            
+                            for (let i = 0; i < parts.length; i++) {
+                                if (parts[i] === '(') {
+                                    // Start of reasoning
+                                    inReasoning = true;
+                                    newContent += '(';
+                                } else if (parts[i] === ')') {
+                                    // End of reasoning - add a single newline
+                                    inReasoning = false;
+                                    newContent += ')\n';
+                                } else if (parts[i].trim()) {
+                                    // Regular content
+                                    if (inReasoning) {
+                                        // Inside reasoning - just add content
+                                        newContent += parts[i];
+                                    } else {
+                                        // Outside reasoning - ensure it starts with a clean line if after a reasoning block
+                                        if (i > 0 && parts[i-1] === ')') {
+                                            // Already has a newline added after the closing parenthesis
+                                            newContent += parts[i].trim();
+                                        } else {
+                                            newContent += parts[i];
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Final cleanup - ensure no double newlines
+                            content = newContent.replace(/\n\n+/g, '\n\n');
+                        }
+                    }
+                    
+                    return `${header}\n\n${metadata}${content}\n\n`;
+                });
+
+            // Wait for all message formatting to complete
+            const messages = await Promise.all(messagesPromises);
+
+            // Combine everything
+            return `${frontmatter}\n\n${messages.join('')}`;
+        } catch (error) {
+            console.error("Failed to generate export content:", error);
+            throw new Error(`Failed to generate export content: ${getErrorMessage(error)}`);
+        }
+    }
+
+    /**
+     * Applies a template using handlebar-like syntax
+     * @param template The template string with {{variable}} placeholders
+     * @param context The context object with values for the placeholders
+     * @returns The rendered template
+     */
+    private applyTemplate(template: string, context: Record<string, string | number | undefined>): string {
+        if (!template) return '';
+        
+        return template.replace(/\{\{([^}]+)\}\}/g, (match, key) => {
+            const trimmedKey = key.trim();
+            const value = context[trimmedKey];
+            return value !== undefined ? String(value) : '';
+        });
+    }
+
+    /**
+     * Extracts reasoning content and response part from a message
+     * @param content Message content
+     * @param reasoningHeader Reasoning header marker
+     * @returns Object with reasoning blocks and response part
+     */
+    private extractReasoningContent(content: string, reasoningHeader: string): {
+        reasoningBlocks: string[];
+        responsePart: string;
+    } {
+        const reasoningEndTag = reasoningHeader.replace('<', '</');
+        const escapedHeader = this.escapeRegexSpecials(reasoningHeader);
+        const escapedEndTag = this.escapeRegexSpecials(reasoningEndTag);
+        const allReasoningRegex = new RegExp(`${escapedHeader}([\\s\\S]*?)${escapedEndTag}`, 'g');
+        
+        const reasoningBlocks: string[] = [];
+        let responsePart = content;
+        let match: RegExpExecArray | null;
+
+        // Extract all reasoning blocks
+        while ((match = allReasoningRegex.exec(content)) !== null) {
+            if (match[1]) {
+                reasoningBlocks.push(match[1].trim());
+            }
+            // Remove this reasoning block from response
+            responsePart = responsePart.replace(match[0], '').trim();
+        }
+
+        // Clean up any extra newlines in response
+        responsePart = responsePart.replace(/^\n+|\n+$/g, '');
+
+        return { reasoningBlocks, responsePart };
+    }
+
+    /**
+     * Escapes special regex characters in a string
+     * @param str The string to escape
+     * @returns The escaped string
+     */
+    private escapeRegexSpecials(str: string): string {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 } 

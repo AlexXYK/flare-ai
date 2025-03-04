@@ -29,16 +29,15 @@ export class HistorySidebar {
         this.onSelect = onSelect;
         
         // Initialize DOM elements
-        this.sidebarEl = document.createElement('div');
-        this.sidebarEl.classList.add('flare-history-sidebar');
+        this.sidebarEl = createEl('div', { cls: 'flare-history-sidebar' });
         
-        this.searchInput = document.createElement('input');
-        this.searchInput.type = 'text';
-        this.searchInput.placeholder = 'Search history...';
-        this.searchInput.classList.add('flare-history-search');
+        this.searchInput = createEl('input', {
+            type: 'text',
+            placeholder: 'Search history...',
+            cls: 'flare-history-search'
+        });
         
-        this.treeContainer = document.createElement('div');
-        this.treeContainer.classList.add('flare-history-tree');
+        this.treeContainer = createEl('div', { cls: 'flare-history-tree' });
         
         this.createSidebar();
     }
@@ -87,10 +86,16 @@ export class HistorySidebar {
     private createActionButton(container: HTMLElement, icon: string, tooltip: string): HTMLElement {
         const button = container.createEl('button', {
             cls: 'flare-history-action-button',
-            attr: { 'aria-label': tooltip, title: tooltip }
+            attr: { title: tooltip }
         });
         setIcon(button, icon);
         setTooltip(button, tooltip);
+        
+        // Add data attribute for easier selection
+        if (icon === 'refresh-cw') {
+            button.setAttribute('data-action', 'refresh');
+        }
+        
         return button;
     }
 
@@ -285,25 +290,27 @@ export class HistorySidebar {
         const fragment = document.createDocumentFragment();
 
         items.forEach(item => {
-            const itemEl = document.createElement('div');
-            itemEl.className = `flare-history-item ${item.type}`;
-            itemEl.setAttribute('data-path', item.path);
-            itemEl.setAttribute('tabindex', '0');
+            const itemEl = createEl('div', {
+                cls: `flare-history-item ${item.type}`,
+                attr: {
+                    'data-path': item.path,
+                    'tabindex': '0'
+                }
+            });
 
             // Create content container
-            const content = document.createElement('div');
-            content.className = 'flare-history-item-content';
+            const content = createEl('div', { cls: 'flare-history-item-content' });
             
             // Icon
-            const icon = document.createElement('span');
-            icon.className = 'flare-history-icon';
+            const icon = createEl('span', { cls: 'flare-history-icon' });
             setIcon(icon, item.type === 'folder' ? 'folder' : 'file-text');
             content.appendChild(icon);
 
             // Name
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'flare-history-name';
-            nameSpan.textContent = item.name;
+            const nameSpan = createEl('span', {
+                cls: 'flare-history-name',
+                text: item.name
+            });
             content.appendChild(nameSpan);
 
             itemEl.appendChild(content);
@@ -311,8 +318,7 @@ export class HistorySidebar {
             if (item.type === 'folder') {
                 // Show children if they exist
                 if (item.children?.length) {
-                    const childContainer = document.createElement('div');
-                    childContainer.className = 'flare-history-children';
+                    const childContainer = createEl('div', { cls: 'flare-history-children' });
                     this.displayTree(item.children, childContainer);
                     itemEl.appendChild(childContainer);
                 }
@@ -559,7 +565,7 @@ export class HistorySidebar {
 
     public async refresh() {
         try {
-            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[aria-label="Refresh History"]');
+            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[data-action="refresh"]');
             if (refreshButton) {
                 refreshButton.addClass('is-refreshing');
             }
@@ -572,7 +578,7 @@ export class HistorySidebar {
         } catch (error) {
             console.error('Error refreshing history:', error);
         } finally {
-            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[aria-label="Refresh History"]');
+            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[data-action="refresh"]');
             if (refreshButton) {
                 refreshButton.removeClass('is-refreshing');
             }
