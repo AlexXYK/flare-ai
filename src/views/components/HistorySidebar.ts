@@ -1,4 +1,4 @@
-import { TFile, setIcon, App } from 'obsidian';
+import { TFile, setIcon, App, Menu, setTooltip } from 'obsidian';
 import type FlarePlugin from '../../../main';
 
 interface HistoryTreeItem {
@@ -29,16 +29,15 @@ export class HistorySidebar {
         this.onSelect = onSelect;
         
         // Initialize DOM elements
-        this.sidebarEl = document.createElement('div');
-        this.sidebarEl.classList.add('flare-history-sidebar');
+        this.sidebarEl = createEl('div', { cls: 'flare-history-sidebar' });
         
-        this.searchInput = document.createElement('input');
-        this.searchInput.type = 'text';
-        this.searchInput.placeholder = 'Search history...';
-        this.searchInput.classList.add('flare-history-search');
+        this.searchInput = createEl('input', {
+            type: 'text',
+            placeholder: 'Search history...',
+            cls: 'flare-history-search'
+        });
         
-        this.treeContainer = document.createElement('div');
-        this.treeContainer.classList.add('flare-history-tree');
+        this.treeContainer = createEl('div', { cls: 'flare-history-tree' });
         
         this.createSidebar();
     }
@@ -87,9 +86,16 @@ export class HistorySidebar {
     private createActionButton(container: HTMLElement, icon: string, tooltip: string): HTMLElement {
         const button = container.createEl('button', {
             cls: 'flare-history-action-button',
-            attr: { 'aria-label': tooltip, title: tooltip }
+            attr: { title: tooltip }
         });
         setIcon(button, icon);
+        setTooltip(button, tooltip);
+        
+        // Add data attribute for easier selection
+        if (icon === 'refresh-cw') {
+            button.setAttribute('data-action', 'refresh');
+        }
+        
         return button;
     }
 
@@ -284,25 +290,27 @@ export class HistorySidebar {
         const fragment = document.createDocumentFragment();
 
         items.forEach(item => {
-            const itemEl = document.createElement('div');
-            itemEl.className = `flare-history-item ${item.type}`;
-            itemEl.setAttribute('data-path', item.path);
-            itemEl.setAttribute('tabindex', '0');
+            const itemEl = createEl('div', {
+                cls: `flare-history-item ${item.type}`,
+                attr: {
+                    'data-path': item.path,
+                    'tabindex': '0'
+                }
+            });
 
             // Create content container
-            const content = document.createElement('div');
-            content.className = 'flare-history-item-content';
+            const content = createEl('div', { cls: 'flare-history-item-content' });
             
             // Icon
-            const icon = document.createElement('span');
-            icon.className = 'flare-history-icon';
+            const icon = createEl('span', { cls: 'flare-history-icon' });
             setIcon(icon, item.type === 'folder' ? 'folder' : 'file-text');
             content.appendChild(icon);
 
             // Name
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'flare-history-name';
-            nameSpan.textContent = item.name;
+            const nameSpan = createEl('span', {
+                cls: 'flare-history-name',
+                text: item.name
+            });
             content.appendChild(nameSpan);
 
             itemEl.appendChild(content);
@@ -310,8 +318,7 @@ export class HistorySidebar {
             if (item.type === 'folder') {
                 // Show children if they exist
                 if (item.children?.length) {
-                    const childContainer = document.createElement('div');
-                    childContainer.className = 'flare-history-children';
+                    const childContainer = createEl('div', { cls: 'flare-history-children' });
                     this.displayTree(item.children, childContainer);
                     itemEl.appendChild(childContainer);
                 }
@@ -488,69 +495,57 @@ export class HistorySidebar {
     }
 
     private showContextMenu(item: HTMLElement, x: number, y: number) {
-        // Remove any existing context menu
-        this.hideContextMenu();
-        
-        // Create context menu
-        this.contextMenu = document.createElement('div');
-        this.contextMenu.className = 'flare-history-context-menu';
-        document.body.appendChild(this.contextMenu);
-        
-        // Position menu
-        const menuRect = this.contextMenu.getBoundingClientRect();
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-        
-        // Adjust position to keep menu in viewport
-        const menuX = Math.min(x, viewportWidth - menuRect.width);
-        const menuY = Math.min(y, viewportHeight - menuRect.height);
-        
-        // Use CSS custom properties for positioning
-        this.contextMenu.style.setProperty('--menu-x', `${menuX}px`);
-        this.contextMenu.style.setProperty('--menu-y', `${menuY}px`);
-        this.contextMenu.classList.add('is-visible');
-        
-        // Add menu items based on item type
+        const menu = new Menu();
         const path = item.getAttribute('data-path') || '';
         const isFolder = item.classList.contains('folder');
         
         if (isFolder) {
-            this.addContextMenuItem('New Chat', 'plus', () => this.createNewChat(path));
-            this.addContextMenuItem('Rename', 'pencil', () => this.renameItem(item, path));
-            this.addContextMenuItem('Delete', 'trash', () => this.deleteFolder(path), true);
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('plus')
+                    .setTitle('New Chat')
+                    .onClick(() => this.createNewChat(path));
+            });
+            
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('pencil')
+                    .setTitle('Rename')
+                    .onClick(() => this.renameItem(item, path));
+            });
+            
+            menu.addSeparator();
+            
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('trash')
+                    .setTitle('Delete')
+                    .onClick(() => this.deleteFolder(path));
+            });
         } else {
-            this.addContextMenuItem('Rename', 'pencil', () => this.renameItem(item, path));
-            this.addContextMenuItem('Delete', 'trash', () => this.deleteHistory(path), true);
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('pencil')
+                    .setTitle('Rename')
+                    .onClick(() => this.renameItem(item, path));
+            });
+            
+            menu.addSeparator();
+            
+            menu.addItem((menuItem) => {
+                menuItem
+                    .setIcon('trash')
+                    .setTitle('Delete')
+                    .onClick(() => this.deleteHistory(path));
+            });
         }
-        
-        // Add click outside listener
-        document.addEventListener('click', this.hideContextMenu);
-    }
 
-    private addContextMenuItem(text: string, icon: string, onClick: () => void, isDanger = false) {
-        if (!this.contextMenu) return;
-
-        const item = this.contextMenu.createDiv({
-            cls: `flare-context-menu-item${isDanger ? ' is-danger' : ''}`
-        });
-        
-        const iconSpan = item.createSpan('flare-context-menu-icon');
-        setIcon(iconSpan, icon);
-        
-        item.createSpan('flare-context-menu-text').setText(text);
-        
-        item.onclick = (e) => {
-            e.stopPropagation();
-            onClick();
-            this.hideContextMenu();
-        };
+        // Show menu at position
+        menu.showAtPosition({ x, y });
     }
 
     private hideContextMenu() {
-        if (this.contextMenu) {
-            this.contextMenu.remove();
-            this.contextMenu = null;
-        }
+        // No longer needed - Menu class handles its own cleanup
     }
 
     // Clean up method to prevent memory leaks
@@ -565,13 +560,12 @@ export class HistorySidebar {
         document.removeEventListener('click', this.handleOutsideClick);
         document.removeEventListener('keydown', this.handleKeyDown);
         document.removeEventListener('touchstart', this.handleOutsideClick);
-        this.hideContextMenu();
         this.sidebarEl.detach();
     }
 
     public async refresh() {
         try {
-            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[aria-label="Refresh History"]');
+            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[data-action="refresh"]');
             if (refreshButton) {
                 refreshButton.addClass('is-refreshing');
             }
@@ -584,7 +578,7 @@ export class HistorySidebar {
         } catch (error) {
             console.error('Error refreshing history:', error);
         } finally {
-            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[aria-label="Refresh History"]');
+            const refreshButton = this.sidebarEl.querySelector('.flare-history-action-button[data-action="refresh"]');
             if (refreshButton) {
                 refreshButton.removeClass('is-refreshing');
             }

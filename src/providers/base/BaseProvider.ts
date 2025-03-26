@@ -50,4 +50,11 @@ export abstract class BaseProvider implements AIProvider {
             this.abortController = undefined;
         }
     }
+
+    /**
+     * Alias for stopRequest for backwards compatibility
+     */
+    cancelRequest() {
+        this.stopRequest();
+    }
 } 

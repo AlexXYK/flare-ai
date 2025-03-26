@@ -53,8 +53,20 @@ export class OpenRouterProvider extends BaseProvider {
     }
 
     async getAvailableModels(): Promise<string[]> {
+        this.abortController = new AbortController();
+
         try {
-            const response = await fetch(`${this.url}/models`, {
+            // Create timeout promise
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => {
+                    this.abortController?.abort();
+                    reject(new Error('Request timed out while fetching models. Please try again.'));
+                }, 10000);
+            });
+
+            // Use requestUrl instead of fetch
+            const response = await requestUrl({
+                url: `${this.url}/models`,
                 headers: {
                     'Authorization': `Bearer ${this.apiKey}`,
                     'HTTP-Referer': window.location.href,
@@ -63,12 +75,17 @@ export class OpenRouterProvider extends BaseProvider {
                 }
             });
 
-            if (!response.ok) {
+            if (response.status !== 200) {
+                if (response.status === 401) {
+                    throw new Error('Invalid API key or unauthorized access');
+                } else if (response.status === 429) {
+                    throw new Error('Rate limit exceeded. Please try again later');
+                }
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            const data = await response.json() as OpenRouterResponse;
-            if (!data.data || !Array.isArray(data.data)) {
+            const data = response.json as OpenRouterResponse;
+            if (!data?.data || !Array.isArray(data.data)) {
                 throw new Error('Invalid response format from OpenRouter API');
             }
 
@@ -81,9 +98,18 @@ export class OpenRouterProvider extends BaseProvider {
                     return cleanA.localeCompare(cleanB);
                 });
 
+            if (this.models.length === 0) {
+                throw new Error('No models available from OpenRouter');
+            }
+
             return this.models;
         } catch (error) {
+            if (error instanceof Error) {
+                throw new Error(`Failed to fetch OpenRouter models: ${error.message}`);
+            }
             throw error;
+        } finally {
+            this.abortController = undefined;
         }
     }
 
@@ -118,8 +144,6 @@ export class OpenRouterProvider extends BaseProvider {
                 });
             }
 
-            this.abortController = new AbortController();
-
             const requestBody = {
                 model: options?.model || 'openai/gpt-3.5-turbo',
                 messages: messages,
@@ -128,29 +152,32 @@ export class OpenRouterProvider extends BaseProvider {
                 stream: options?.stream ?? false
             };
 
-            const response = await fetch(`${this.url}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.apiKey}`,
-                    'HTTP-Referer': window.location.href,
-                    'X-Title': 'FLARE.ai Obsidian Plugin',
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(requestBody),
-                signal: this.abortController.signal
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                try {
-                    const error = JSON.parse(errorText);
-                    throw new Error(`OpenRouter API error: ${error.error?.message || errorText}`);
-                } catch (e) {
-                    throw new Error(`OpenRouter API error: ${errorText}`);
-                }
-            }
+            this.abortController = new AbortController();
 
             if (options?.stream && options.onToken) {
+                // Use fetch for streaming since requestUrl doesn't support it
+                const response = await fetch(`${this.url}/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'HTTP-Referer': window.location.href,
+                        'X-Title': 'FLARE.ai Obsidian Plugin',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody),
+                    signal: this.abortController.signal
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    try {
+                        const error = JSON.parse(errorText);
+                        throw new Error(`OpenRouter API error: ${error.error?.message || errorText}`);
+                    } catch (e) {
+                        throw new Error(`OpenRouter API error: ${errorText}`);
+                    }
+                }
+
                 let completeResponse = '';
                 const reader = response.body?.getReader();
                 const decoder = new TextDecoder();
@@ -195,18 +222,39 @@ export class OpenRouterProvider extends BaseProvider {
 
                 return completeResponse;
             } else {
-                const data = await response.json();
+                // Use requestUrl for non-streaming requests
+                const response = await requestUrl({
+                    url: `${this.url}/chat/completions`,
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${this.apiKey}`,
+                        'HTTP-Referer': window.location.href,
+                        'X-Title': 'FLARE.ai Obsidian Plugin',
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (response.status !== 200) {
+                    const errorText = response.text;
+                    try {
+                        const error = JSON.parse(errorText);
+                        throw new Error(`OpenRouter API error: ${error.error?.message || errorText}`);
+                    } catch (e) {
+                        throw new Error(`OpenRouter API error: ${errorText}`);
+                    }
+                }
+
+                const data = response.json;
                 return data.choices[0].message.content;
             }
         } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') {
+                return 'Request aborted';
+            }
             throw error;
         } finally {
             this.abortController = undefined;
         }
-    }
-
-    private async makeRequest(url: string, options: RequestInit) {
-        const response = await fetch(url, options);
-        return response;
     }
 } 

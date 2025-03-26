@@ -54,24 +54,40 @@ export class OpenAIProvider extends BaseProvider {
     async getAvailableModels(): Promise<string[]> {
         try {
             const response = await requestUrl({
-                url: 'https://api.openai.com/v1/models',
+                url: `${this.url}/models`,
                 headers: {
-                    'Authorization': `Bearer ${this.apiKey}`
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    'Content-Type': 'application/json'
                 }
             });
 
             if (response.status !== 200) {
+                if (response.status === 401) {
+                    throw new Error('Invalid API key or unauthorized access');
+                } else if (response.status === 429) {
+                    throw new Error('Rate limit exceeded. Please try again later');
+                }
                 throw new Error(`OpenAI API error: ${response.status}`);
             }
 
             const data = response.json as OpenAIModelsResponse;
-            return data.data.map(model => model.id);
+            if (!data?.data || !Array.isArray(data.data)) {
+                throw new Error('Invalid response format from OpenAI API');
+            }
+
+            return data.data
+                .filter(model => model.id && typeof model.id === 'string')
+                .map(model => model.id)
+                .sort((a, b) => a.localeCompare(b));
         } catch (error) {
+            if (error instanceof Error) {
+                throw new Error(`Failed to fetch OpenAI models: ${error.message}`);
+            }
             throw error;
         }
     }
 
-    async sendMessage(message: string, options?: MessageOptions): Promise<string> {
+    async sendMessage(message: string, options?: MessageOptions & StreamingOptions): Promise<string> {
         try {
             if (!message?.trim()) {
                 return '';
@@ -84,10 +100,45 @@ export class OpenAIProvider extends BaseProvider {
             const temperature = options?.temperature ?? 0.7;
             const maxTokens = options?.maxTokens;
 
-            const response = await this.makeRequest(messages, model, temperature, maxTokens, options?.stream, options?.onToken);
+            // Use either the provided signal or create our own abort controller
+            const externalSignal = options?.signal;
+            this.abortController = new AbortController();
+            
+            // If an external signal is provided, handle its abort event
+            if (externalSignal) {
+                // If the signal is already aborted, throw immediately
+                if (externalSignal.aborted) {
+                    throw new Error('Request aborted by user');
+                }
+                
+                // Otherwise, set up a listener to abort our controller when the external signal aborts
+                externalSignal.addEventListener('abort', () => {
+                    if (this.abortController) {
+                        this.abortController.abort();
+                    }
+                });
+            }
+
+            const response = await this.makeRequest(
+                messages, 
+                model, 
+                temperature, 
+                maxTokens, 
+                options?.stream, 
+                options?.onToken,
+                this.abortController.signal
+            );
             return response;
         } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') {
+                const abortError = new Error('Request aborted by user');
+                abortError.name = 'AbortError';
+                throw abortError;
+            }
             throw error;
+        } finally {
+            // Ensure controller is properly cleaned up
+            this.abortController = undefined;
         }
     }
 
@@ -97,32 +148,32 @@ export class OpenAIProvider extends BaseProvider {
         temperature: number,
         maxTokens?: number,
         stream?: boolean,
-        onToken?: (token: string) => void
+        onToken?: (token: string) => void,
+        signal?: AbortSignal
     ): Promise<string> {
-        this.abortController = new AbortController();
-
         try {
-            const response = await fetch('https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${this.apiKey}`
-                },
-                body: JSON.stringify({
-                    model,
-                    messages,
-                    temperature,
-                    max_tokens: maxTokens,
-                    stream
-                }),
-                signal: this.abortController.signal
-            });
-
-            if (!response.ok) {
-                throw new Error(`OpenAI API error: ${response.status}`);
-            }
-
             if (stream && onToken) {
+                // Use fetch for streaming since requestUrl doesn't support it
+                const response = await fetch(`${this.url}/chat/completions`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${this.apiKey}`
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages,
+                        temperature,
+                        max_tokens: maxTokens,
+                        stream
+                    }),
+                    signal
+                });
+
+                if (!response.ok) {
+                    throw new Error(`OpenAI API error: ${response.status}`);
+                }
+
                 let completeResponse = '';
                 const reader = response.body?.getReader();
                 const decoder = new TextDecoder();
@@ -133,6 +184,11 @@ export class OpenAIProvider extends BaseProvider {
 
                 try {
                     while (true) {
+                        // Check if aborted before each read
+                        if (signal?.aborted) {
+                            throw new Error('Request aborted by user');
+                        }
+                        
                         const { done, value } = await reader.read();
                         if (done) break;
 
@@ -162,15 +218,62 @@ export class OpenAIProvider extends BaseProvider {
 
                 return completeResponse;
             } else {
-                const result = await response.json();
-                return result.choices?.[0]?.message?.content || '';
+                // For non-streaming requests, use requestUrl with timeout wrapping
+                // since requestUrl doesn't support AbortSignal directly
+                const makeRequest = async () => {
+                    const response = await requestUrl({
+                        url: `${this.url}/chat/completions`,
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${this.apiKey}`
+                        },
+                        body: JSON.stringify({
+                            model,
+                            messages,
+                            temperature,
+                            max_tokens: maxTokens,
+                            stream: false
+                        })
+                    });
+
+                    if (response.status !== 200) {
+                        throw new Error(`OpenAI API error: ${response.status}`);
+                    }
+
+                    const result = response.json;
+                    return result.choices?.[0]?.message?.content || '';
+                };
+                
+                // Create a promise that rejects if the signal is aborted
+                if (signal) {
+                    if (signal.aborted) {
+                        throw new Error('Request aborted by user');
+                    }
+                    
+                    // Create a promise race between the request and a promise that rejects if aborted
+                    return await Promise.race([
+                        makeRequest(),
+                        new Promise<string>((_, reject) => {
+                            signal.addEventListener('abort', () => {
+                                reject(new Error('Request aborted by user'));
+                            });
+                        })
+                    ]);
+                } else {
+                    return await makeRequest();
+                }
             }
         } catch (error) {
-            if (error instanceof Error && error.name === 'AbortError') {
-                return 'Request aborted';
+            if (error instanceof Error && (error.name === 'AbortError' || error.message === 'Request aborted by user')) {
+                const abortError = new Error('Request aborted by user');
+                abortError.name = 'AbortError';
+                throw abortError;
             }
             throw error;
         } finally {
+            // Always clean up abortController when request completes
+            // This ensures we don't have lingering references
             this.abortController = undefined;
         }
     }

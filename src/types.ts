@@ -16,6 +16,7 @@ export interface ProviderSettings {
     baseUrl?: string;
     defaultModel?: string;
     models?: string[];
+    visibleModels?: string[];
 }
 
 export interface PluginSettings {

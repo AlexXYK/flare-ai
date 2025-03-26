@@ -1,6 +1,8 @@
 export interface FlareConfig {
     name: string;
-    provider: string;
+    providerName: string;
+    providerType: string;
+    provider?: string;
     model: string;
     enabled: boolean;
     description?: string;

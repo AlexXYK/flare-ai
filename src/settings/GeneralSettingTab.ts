@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice, DropdownComponent } from 'obsidian';
+import { App, PluginSettingTab, Setting, DropdownComponent, TextComponent, ButtonComponent, Notice, setIcon, setTooltip } from 'obsidian';
 import type FlarePlugin from '../../main';
 import { ProviderSettings } from '../types/AIProvider';
 import { PluginSettings } from '../types/PluginSettings';
@@ -23,47 +23,35 @@ export class GeneralSettingTab extends PluginSettingTab {
         this.hasUnsavedChanges = false;
         this.sectionActionButtons.clear();
 
-        // Header
-        containerEl.createEl('h1', { text: 'FLARE.ai' });
-        
-        const wrapper = containerEl.createDiv('flare-manager');
+        // Create sections directly in the container with more specific classes
+        const providersSection = containerEl.createDiv({ cls: 'settings-section providers-section' });
+        const flaresSection = containerEl.createDiv({ cls: 'settings-section flares-section' });
+        const generalSection = containerEl.createDiv({ cls: 'settings-section general-section' });
+        const historySection = containerEl.createDiv({ cls: 'settings-section history-section' });
+        const titleSection = containerEl.createDiv({ cls: 'settings-section title-section' });
+        const exportSection = containerEl.createDiv({ cls: 'settings-section export-section' });
 
         // Providers Section
-        const providersSection = this.createSection(wrapper, 'Providers', true);
+        new Setting(providersSection).setName('Providers').setHeading();
         this.plugin.providerManager.createSettingsUI(providersSection);
 
         // Flares Section
-        const flaresSection = this.createSection(wrapper, 'Flares', true);
+        new Setting(flaresSection).setName('Flares').setHeading();
         this.plugin.flareManager.createSettingsUI(flaresSection);
 
-        // General Section (no "Settings" suffix)
-        const generalSection = this.createSection(wrapper, 'General', true);
+        // General Section
+        new Setting(generalSection).setName('General').setHeading();
         this.addGeneralSettings(generalSection);
 
-        // History Section (no "Settings" suffix)
-        const historySection = this.createSection(wrapper, 'History', true);
+        // History Section
+        new Setting(historySection).setName('History').setHeading();
         this.addHistorySettings(historySection);
 
         // Title Generation Section
-        this.addTitleGenerationSettings(wrapper);
-    }
-
-    private createSection(containerEl: HTMLElement, title: string, collapsible: boolean = false): HTMLElement {
-        const section = containerEl.createDiv({ cls: 'flare-section' });
-        const header = section.createDiv({ cls: 'flare-section-header' });
-        const content = section.createDiv({ cls: 'flare-section-content' });
-
-        header.createSpan({ cls: 'flare-section-chevron' });
-        header.createSpan({ text: title });
-
-        if (collapsible) {
-            header.addEventListener('click', () => {
-                header.classList.toggle('is-collapsed');
-                content.classList.toggle('is-hidden');
-            });
-        }
-
-        return content;
+        this.addTitleGenerationSettings(titleSection);
+        
+        // Export Section
+        this.addExportSettings(exportSection);
     }
 
     private addProviderSettings(containerEl: HTMLElement) {
@@ -119,6 +107,28 @@ export class GeneralSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.historyFolder)
                 .onChange(value => {
                     this.plugin.settings.historyFolder = value || 'FLAREai/history';
+                    this.markSectionAsChanged('general');
+                }));
+
+        // Export folder - moved from export settings
+        new Setting(containerEl)
+            .setName('Export location')
+            .setDesc('Where to store your exported chat histories')
+            .addText(text => text
+                .setPlaceholder('FLAREai/exports')
+                .setValue(this.plugin.settings.exportSettings?.exportFolder || 'FLAREai/exports')
+                .onChange(value => {
+                    if (!this.plugin.settings.exportSettings) {
+                        this.plugin.settings.exportSettings = {
+                            exportFolder: value || 'FLAREai/exports',
+                            frontmatterTemplate: '',
+                            metadataTemplate: '',
+                            includeSystemMessages: true,
+                            includeReasoningBlocks: true
+                        };
+                    } else {
+                        this.plugin.settings.exportSettings.exportFolder = value || 'FLAREai/exports';
+                    }
                     this.markSectionAsChanged('general');
                 }));
 
@@ -265,6 +275,8 @@ export class GeneralSettingTab extends PluginSettingTab {
                 this.plugin.settings.maxHistoryFiles = this.originalSettings.maxHistoryFiles;
             } else if (section === 'title') {
                 this.plugin.settings.titleSettings = JSON.parse(JSON.stringify(this.originalSettings.titleSettings));
+            } else if (section === 'export') {
+                this.plugin.settings.exportSettings = JSON.parse(JSON.stringify(this.originalSettings.exportSettings));
             }
 
             // Refresh the display
@@ -278,15 +290,15 @@ export class GeneralSettingTab extends PluginSettingTab {
     }
 
     private addTitleGenerationSettings(containerEl: HTMLElement) {
-        // Create collapsible section for title generation
-        const titleSection = this.createSection(containerEl, 'Title generation', true);
+        // Create section for title generation
+        new Setting(containerEl).setName('Title generation').setHeading();
 
         // Add action buttons container
-        const actionButtons = titleSection.createDiv({ cls: 'flare-form-actions' });
+        const actionButtons = containerEl.createDiv({ cls: 'flare-form-actions' });
         this.sectionActionButtons.set('title', actionButtons);
 
         // Add auto title generation toggle
-        new Setting(titleSection)
+        new Setting(containerEl)
             .setName('Auto-generate titles')
             .setDesc('Automatically generate titles after a specified number of message exchanges')
             .addToggle(toggle => {
@@ -294,15 +306,15 @@ export class GeneralSettingTab extends PluginSettingTab {
                     .onChange(async value => {
                         this.plugin.settings.titleSettings.autoGenerate = value;
                         this.markSectionAsChanged('title');
-                        await this.plugin.saveData(this.plugin.settings);
                     });
             });
 
         // Add message pairs setting
-        new Setting(titleSection)
+        new Setting(containerEl)
             .setName('Auto-generate after pairs')
             .setDesc('Number of message pairs after which to automatically generate a title')
             .addText(text => {
+                text.inputEl.addClass('flare-pairs-input');
                 text.setValue(String(this.plugin.settings.titleSettings.autoGenerateAfterPairs || 2))
                     .setPlaceholder('2')
                     .onChange(async value => {
@@ -310,12 +322,12 @@ export class GeneralSettingTab extends PluginSettingTab {
                         if (!isNaN(pairs) && pairs > 0) {
                             this.plugin.settings.titleSettings.autoGenerateAfterPairs = pairs;
                             this.markSectionAsChanged('title');
-                            await this.plugin.saveData(this.plugin.settings);
                         }
                     });
             });
 
-        new Setting(titleSection)
+        // Add provider setting
+        new Setting(containerEl)
             .setName('Provider')
             .setDesc('Select the provider to use for title generation')
             .addDropdown(dropdown => {
@@ -324,28 +336,44 @@ export class GeneralSettingTab extends PluginSettingTab {
                 dropdown.onChange(async value => {
                     this.plugin.settings.titleSettings.provider = value;
                     this.markSectionAsChanged('title');
-                    await this.refreshTitleModels();
+                    
+                    // Immediately load models for the selected provider
+                    if (this.titleModelDropdown && value) {
+                        await this.updateTitleModels(value);
+                    } else if (this.titleModelDropdown) {
+                        this.titleModelDropdown.selectEl.empty();
+                        this.titleModelDropdown.addOption('', 'Select a model...');
+                        this.titleModelDropdown.setValue('');
+                    }
                 });
             });
 
-        // Create model container and setting
-        const modelContainer = titleSection.createDiv('model-container');
-        new Setting(modelContainer)
+        // Model dropdown - create as a regular setting-item
+        const modelSetting = new Setting(containerEl)
             .setName('Model')
             .setDesc('Select the model to use for title generation')
             .addDropdown(dropdown => {
                 this.titleModelDropdown = dropdown;
-                dropdown.setValue(this.plugin.settings.titleSettings.model);
-                dropdown.onChange(async value => {
+                
+                // Add default option
+                dropdown.addOption('', 'Select a model...');
+                
+                // Set up change handler
+                dropdown.onChange(value => {
                     this.plugin.settings.titleSettings.model = value;
                     this.markSectionAsChanged('title');
                 });
+
+                // If we have a provider, load its models
+                if (this.plugin.settings.titleSettings.provider) {
+                    // Load models for the current provider automatically when settings tab is displayed
+                    this.loadTitleModels(this.plugin.settings.titleSettings.provider, dropdown);
+                }
+                
+                return dropdown;
             });
 
-        // Initial model load
-        setTimeout(() => this.refreshTitleModels(), 100);
-
-        new Setting(titleSection)
+        new Setting(containerEl)
             .setName('Temperature')
             .setDesc('Set the temperature for title generation (0.0 - 1.5)')
             .addText(text => {
@@ -359,7 +387,7 @@ export class GeneralSettingTab extends PluginSettingTab {
                     });
             });
 
-        new Setting(titleSection)
+        new Setting(containerEl)
             .setName('Maximum tokens')
             .setDesc('Maximum length of generated title')
             .addText(text => {
@@ -374,28 +402,20 @@ export class GeneralSettingTab extends PluginSettingTab {
                     });
             });
 
-        // Create a container for the prompt setting
-        const promptContainer = titleSection.createDiv('setting-item');
-        const promptInfo = promptContainer.createDiv('setting-item-info');
-        promptInfo.createDiv('setting-item-name').setText('Prompt');
-        promptInfo.createDiv('setting-item-description').setText('Set the prompt for title generation');
+        // Add the prompt description as a separate setting
+        new Setting(containerEl)
+            .setName('Prompt')
+            .setDesc('Set the prompt for title generation');
 
-        // Create a container for the textarea
-        const textareaContainer = promptContainer.createDiv('setting-item-control');
-        
-        const promptArea = textareaContainer.createEl('textarea', {
-            cls: 'flare-system-prompt',
-            attr: {
-                placeholder: 'Enter your prompt here...',
-                spellcheck: 'false',
-                rows: '8',
-                'aria-label': 'Title generation prompt input'
-            }
+        // Create a container for the textarea (flat structure)
+        const titlePromptInput = containerEl.createEl('textarea', {
+            cls: 'system-prompt'
         });
+        setTooltip(titlePromptInput, 'Title generation prompt input');
         
-        promptArea.value = this.plugin.settings.titleSettings.prompt;
-        promptArea.addEventListener('input', () => {
-            this.plugin.settings.titleSettings.prompt = promptArea.value;
+        titlePromptInput.value = this.plugin.settings.titleSettings.prompt;
+        titlePromptInput.addEventListener('input', () => {
+            this.plugin.settings.titleSettings.prompt = titlePromptInput.value;
             this.markSectionAsChanged('title');
         });
 
@@ -418,132 +438,176 @@ export class GeneralSettingTab extends PluginSettingTab {
             });
     }
 
-    private async createModelSetting(container: HTMLElement, providerId: string) {
+    /** Loads models for a provider into the title generation dropdown
+     * @param providerId The ID of the provider
+     * @param dropdown The dropdown to populate
+     */
+    private async loadTitleModels(providerId: string, dropdown: DropdownComponent) {
         const provider = this.plugin.settings.providers[providerId];
-        if (!provider || !provider.type) return;
+        if (!provider) return;
 
-        const modelSetting = new Setting(container)
-            .setName('Model')
-            .setDesc('Select which model to use for generating chat titles')
-            .addDropdown(dropdown => {
+        try {
+            // Show loading state
+            dropdown.selectEl.empty();
+            dropdown.addOption('loading', 'Loading models...');
+            dropdown.setValue('loading');
+            dropdown.selectEl.disabled = true;
+            
+            // If provider has visibleModels configured, use them directly
+            if (provider.visibleModels && provider.visibleModels.length > 0) {
+                // Clear loading state
+                dropdown.selectEl.empty();
                 dropdown.addOption('', 'Select a model...');
-                dropdown.setDisabled(true);
-                return dropdown;
-            })
-            .addButton(btn => 
-                btn
-                    .setIcon('refresh-cw')
-                    .setTooltip('Refresh Models')
-                    .onClick(() => this.refreshModelSelection(container))
-            );
+                dropdown.selectEl.disabled = false;
+                
+                // Add visible models directly from provider settings
+                provider.visibleModels.forEach(model => {
+                    dropdown.addOption(model, model);
+                });
+                
+                // Set current value if exists
+                dropdown.setValue(this.plugin.settings.titleSettings.model || provider.defaultModel || '');
+                return;
+            }
+            
+            // Only if we don't have visibleModels, try to get models from the provider
+            const allModels = await this.plugin.getModelsForProvider(provider.type);
+            
+            // Filter models based on visibility settings
+            let visibleModels = allModels;
+            if (provider.visibleModels && provider.visibleModels.length > 0) {
+                // For Gemini and Ollama, directly use the visible models from provider settings
+                // This ensures custom models added by the user are included
+                if (provider.type === 'gemini' || provider.type === 'ollama') {
+                    visibleModels = provider.visibleModels;
+                } else {
+                    visibleModels = allModels.filter(model => 
+                        provider.visibleModels?.includes(model) ?? false
+                    );
+                }
+            }
 
-        // Initial model load
-        await this.refreshModelSelection(container);
+            // Clear loading state
+            dropdown.selectEl.empty();
+            dropdown.addOption('', 'Select a model...');
+            dropdown.selectEl.disabled = false;
+
+            // Add model options
+            visibleModels.forEach(model => {
+                dropdown.addOption(model, model);
+            });
+
+            // Set current value if exists
+            dropdown.setValue(this.plugin.settings.titleSettings.model || provider.defaultModel || '');
+        } catch (error) {
+            // Reset dropdown on error
+            dropdown.selectEl.empty();
+            dropdown.addOption('', 'Error loading models');
+            dropdown.selectEl.disabled = false;
+            
+            console.error('Failed to load models:', error);
+            if (error instanceof Error) {
+                new Notice('Failed to load models: ' + error.message);
+            } else {
+                new Notice('Failed to load models');
+            }
+        }
     }
 
-    private async refreshModelSelection(container: HTMLElement) {
+    /** Updates the title generation model dropdown based on the selected provider
+     * @param providerId The ID of the selected provider
+     */
+    private async updateTitleModels(providerId: string) {
+        if (!this.titleModelDropdown) return;
+
+        const provider = this.plugin.settings.providers[providerId];
+        if (!provider) return;
+
         try {
-            const provider = this.plugin.settings.providers[this.plugin.settings.titleSettings.provider];
-            if (!provider || !provider.type) return;
+            // Clear existing options and show loading state
+            this.titleModelDropdown.selectEl.empty();
+            this.titleModelDropdown.addOption('loading', 'Loading models...');
+            this.titleModelDropdown.setValue('loading');
+            this.titleModelDropdown.selectEl.disabled = true;
 
-            // Add loading state to the button
-            const refreshButton = container.querySelector('.clickable-icon') as HTMLElement;
-            if (refreshButton) {
-                refreshButton.addClass('loading');
+            // Get all available models
+            const allModels = await this.plugin.getModelsForProvider(provider.type);
+            
+            // Filter models based on visibility settings
+            let visibleModels = allModels;
+            if (provider.visibleModels && provider.visibleModels.length > 0) {
+                // For Gemini and Ollama, directly use the visible models from provider settings
+                // This ensures custom models added by the user are included
+                if (provider.type === 'gemini' || provider.type === 'ollama') {
+                    visibleModels = provider.visibleModels;
+                } else {
+                    visibleModels = allModels.filter(model => 
+                        provider.visibleModels?.includes(model) ?? false
+                    );
+                }
             }
 
-            // Add loading state to the model dropdown
-            const modelSetting = container.querySelector('.setting-item') as HTMLElement;
-            if (!modelSetting) return;
-            modelSetting.addClass('loading');
+            // Clear loading state
+            this.titleModelDropdown.selectEl.empty();
+            this.titleModelDropdown.addOption('', 'Select a model...');
+            this.titleModelDropdown.selectEl.disabled = false;
 
-            try {
-                // Get fresh list of models
-                const allModels = await this.plugin.getModelsForProvider(provider.type);
-                
-                // Filter models based on provider's visibleModels setting
-                const models = provider.visibleModels?.length ? 
-                    allModels.filter(model => provider.visibleModels?.includes(model)) :
-                    allModels;
-                
-                // Update the dropdown
-                const modelDropdown = modelSetting.querySelector('select');
-                if (modelDropdown instanceof HTMLSelectElement) {
-                    modelDropdown.disabled = false;
-                    // Remove all existing options
-                    while (modelDropdown.firstChild) {
-                        modelDropdown.removeChild(modelDropdown.firstChild);
-                    }
-                    // Add new options
-                    modelDropdown.appendChild(new Option('Select a model...', ''));
-                    models.forEach(model => {
-                        modelDropdown.appendChild(new Option(model, model));
-                    });
+            // Add model options
+            visibleModels.forEach(model => {
+                this.titleModelDropdown.addOption(model, model);
+            });
 
-                    // Keep current selection if it exists in new model list, otherwise use default
-                    if (this.plugin.settings.titleSettings.model && models.includes(this.plugin.settings.titleSettings.model)) {
-                        modelDropdown.value = this.plugin.settings.titleSettings.model;
-                    } else {
-                        const newModel = provider.defaultModel || models[0] || '';
-                        this.plugin.settings.titleSettings.model = newModel;
-                        modelDropdown.value = newModel;
-                        this.showTitleSettingsButtons();
-                    }
-
-                    // Add change handler
-                    modelDropdown.onchange = () => {
-                        this.plugin.settings.titleSettings.model = modelDropdown.value;
-                        this.showTitleSettingsButtons();
-                    };
-                }
-
-                new Notice('Models refreshed');
-            } finally {
-                // Remove loading states
-                if (refreshButton) {
-                    refreshButton.removeClass('loading');
-                }
-                modelSetting.removeClass('loading');
-            }
+            // Set current value if exists
+            this.titleModelDropdown.setValue(this.plugin.settings.titleSettings.model || provider.defaultModel || '');
         } catch (error) {
-            console.error('Failed to refresh models:', error);
-            new Notice('Failed to refresh models');
-
-            // Remove any existing error messages
-            const existingError = container.querySelector('.flare-error-message');
-            if (existingError) existingError.remove();
-
-            // Create error message container
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'flare-error-message';
-            errorDiv.textContent = 'Failed to load models. Please try again.';
+            // Reset dropdown on error
+            this.titleModelDropdown.selectEl.empty();
+            this.titleModelDropdown.addOption('', 'Error loading models');
+            this.titleModelDropdown.selectEl.disabled = false;
             
-            // Create retry button
-            const retryButton = document.createElement('button');
-            retryButton.className = 'mod-warning';
-            retryButton.textContent = 'Retry';
-            retryButton.onclick = () => {
-                errorDiv.remove();
-                this.refreshModelSelection(container);
-            };
-            
-            // Add button to error message
-            errorDiv.appendChild(retryButton);
-            
-            // Add error message to container
-            if (container instanceof HTMLElement) {
-                container.appendChild(errorDiv);
+            console.error('Failed to load models:', error);
+            if (error instanceof Error) {
+                new Notice('Failed to load models: ' + error.message);
+            } else {
+                new Notice('Failed to load models');
             }
         }
     }
 
     private populateProviderDropdown(dropdown: DropdownComponent) {
+        // Clear existing options
+        dropdown.selectEl.empty();
+        
         // Add default option
         dropdown.addOption('', 'Select a provider...');
         
         Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
             if (provider.type && this.plugin.providers.has(provider.type)) {
                 dropdown.addOption(id, provider.name || id);
+            }
+        });
+    }
+
+    // Add method to refresh all provider dropdowns in title settings
+    public refreshTitleProviderDropdowns() {
+        // Find all provider dropdowns in title settings
+        const dropdowns = document.querySelectorAll('.title-generation select, .title-settings select, [class*="title"] .setting-item select') as NodeListOf<HTMLSelectElement>;
+        dropdowns.forEach(select => {
+            const dropdown = select as any;
+            if (dropdown.getValue) {
+                const currentValue = dropdown.getValue();
+                // Clear existing options
+                dropdown.selectEl.empty();
+                // Add default option
+                dropdown.addOption('', 'Select a provider...');
+                // Add provider options
+                Object.entries(this.plugin.settings.providers).forEach(([id, provider]) => {
+                    if (provider.type && this.plugin.providers.has(provider.type)) {
+                        dropdown.addOption(id, provider.name || id);
+                    }
+                });
+                // Restore current value if it still exists
+                dropdown.setValue(currentValue);
             }
         });
     }
@@ -582,10 +646,131 @@ export class GeneralSettingTab extends PluginSettingTab {
         }
     }
 
-    private async refreshTitleModels() {
-        const modelContainer = this.containerEl.querySelector('.model-container') as HTMLElement;
-        if (modelContainer) {
-            await this.refreshModelSelection(modelContainer);
-        }
+    private addExportSettings(containerEl: HTMLElement) {
+        // Create section for export settings
+        new Setting(containerEl).setName('Export settings').setHeading();
+
+        // Add action buttons container
+        const actionButtons = containerEl.createDiv({ cls: 'flare-form-actions' });
+        this.sectionActionButtons.set('export', actionButtons);
+
+        // Include system messages
+        new Setting(containerEl)
+            .setName('Include system messages')
+            .setDesc('Include system messages in exported chat histories')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.exportSettings?.includeSystemMessages ?? true)
+                .onChange(value => {
+                    if (!this.plugin.settings.exportSettings) {
+                        this.plugin.settings.exportSettings = {
+                            exportFolder: 'FLAREai/exports',
+                            frontmatterTemplate: '',
+                            metadataTemplate: '',
+                            includeSystemMessages: value,
+                            includeReasoningBlocks: true
+                        };
+                    } else {
+                        this.plugin.settings.exportSettings.includeSystemMessages = value;
+                    }
+                    this.markSectionAsChanged('export');
+                }));
+        
+        // Include reasoning blocks
+        new Setting(containerEl)
+            .setName('Include reasoning blocks')
+            .setDesc('Include AI reasoning blocks in exported chat histories')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.exportSettings?.includeReasoningBlocks ?? true)
+                .onChange(value => {
+                    if (!this.plugin.settings.exportSettings) {
+                        this.plugin.settings.exportSettings = {
+                            exportFolder: 'FLAREai/exports',
+                            frontmatterTemplate: '',
+                            metadataTemplate: '',
+                            includeSystemMessages: true,
+                            includeReasoningBlocks: value
+                        };
+                    } else {
+                        this.plugin.settings.exportSettings.includeReasoningBlocks = value;
+                    }
+                    this.markSectionAsChanged('export');
+                }));
+
+        // Add frontmatter template description as a separate setting
+        new Setting(containerEl)
+            .setName('Frontmatter template')
+            .setDesc('Template for frontmatter in exported chats. Available variables: {{title}}, {{date}}');
+
+        // Create the textarea in flat structure
+        const frontmatterInput = containerEl.createEl('textarea', {
+            cls: 'system-prompt'
+        });
+        setTooltip(frontmatterInput, 'Frontmatter template for exports');
+
+        frontmatterInput.value = this.plugin.settings.exportSettings?.frontmatterTemplate || `---
+title: {{title}}
+date: {{date}}
+---`;
+
+        frontmatterInput.addEventListener('input', () => {
+            if (!this.plugin.settings.exportSettings) {
+                this.plugin.settings.exportSettings = {
+                    exportFolder: 'FLAREai/exports',
+                    frontmatterTemplate: frontmatterInput.value,
+                    metadataTemplate: '',
+                    includeSystemMessages: true,
+                    includeReasoningBlocks: true
+                };
+            } else {
+                this.plugin.settings.exportSettings.frontmatterTemplate = frontmatterInput.value;
+            }
+            this.markSectionAsChanged('export');
+        });
+
+        // Add metadata template description as a separate setting
+        new Setting(containerEl)
+            .setName('Message metadata template')
+            .setDesc('Template for message metadata in exported chats. Leave empty for no metadata.');
+
+        // Create the textarea in flat structure
+        const metadataInput = containerEl.createEl('textarea', {
+            cls: 'system-prompt'
+        });
+        setTooltip(metadataInput, 'Message metadata template for exports');
+
+        metadataInput.value = this.plugin.settings.exportSettings?.metadataTemplate || '';
+
+        metadataInput.addEventListener('input', () => {
+            if (!this.plugin.settings.exportSettings) {
+                this.plugin.settings.exportSettings = {
+                    exportFolder: 'FLAREai/exports',
+                    frontmatterTemplate: '',
+                    metadataTemplate: metadataInput.value,
+                    includeSystemMessages: true,
+                    includeReasoningBlocks: true
+                };
+            } else {
+                this.plugin.settings.exportSettings.metadataTemplate = metadataInput.value;
+            }
+            this.markSectionAsChanged('export');
+        });
+
+        // Add save/revert buttons
+        new Setting(actionButtons)
+            .addButton(button => {
+                button
+                    .setButtonText('Save')
+                    .setCta()
+                    .onClick(async () => {
+                        await this.saveSectionSettings('export');
+                    });
+            })
+            .addButton(button => {
+                button
+                    .setButtonText('Revert')
+                    .onClick(async () => {
+                        await this.revertSectionSettings('export');
+                    });
+            });
     }
 } 

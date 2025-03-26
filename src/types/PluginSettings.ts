@@ -8,27 +8,45 @@ export interface HandoffSettings {
     defaultTemplate: string;
 }
 
+/** Settings for chat export */
+export interface ExportSettings {
+    /** Where exported chats are saved */
+    exportFolder: string;
+    /** Template for frontmatter in exported chats */
+    frontmatterTemplate: string;
+    /** Template for message metadata in exported chats */
+    metadataTemplate: string;
+    /** Whether to include system messages in exports */
+    includeSystemMessages: boolean;
+    /** Whether to include reasoning blocks in exports */
+    includeReasoningBlocks: boolean;
+}
+
 export interface PluginSettings {
-    providers: { [key: string]: ProviderSettings };
-    flares: { [key: string]: FlareConfig };
-    defaultProvider: string;
-    defaultFlare: string;
+    version: string;
     flaresFolder: string;
     historyFolder: string;
+    exportFolder: string;
+    providers: { [key: string]: ProviderSettings };
+    defaultProvider: string;
+    defaultFlare: string;
     autoSaveEnabled: boolean;
     autoSaveInterval: number;
     maxHistoryFiles: number;
     dateFormat: string;
     titleSettings: TitleSettings;
     handoffSettings: HandoffSettings;
+    exportSettings: ExportSettings;
 }
 
 export const DEFAULT_SETTINGS: Partial<PluginSettings> = {
-    providers: {},
-    flares: {},
-    defaultFlare: 'default',
+    version: '1.0.0',
     flaresFolder: 'FLAREai/flares',
     historyFolder: 'FLAREai/history',
+    exportFolder: 'FLAREai/exports',
+    providers: {},
+    defaultProvider: '',
+    defaultFlare: '',
     autoSaveEnabled: true,
     autoSaveInterval: 30,
     maxHistoryFiles: 100,
@@ -38,9 +56,11 @@ export const DEFAULT_SETTINGS: Partial<PluginSettings> = {
         model: '',
         temperature: 0.7,
         maxTokens: 50,
-        prompt: 'Based on the chat history above, generate a concise and descriptive title that captures the main topic or purpose of the conversation. The title should be clear and informative, avoiding generic descriptions. Keep it under 50 characters.',
         autoGenerate: false,
-        autoGenerateAfterPairs: 2
+        autoGenerateAfterPairs: 2,
+        prompt: `Generate a short, descriptive title (5-7 words) for this chat conversation. 
+The title should reflect the main topic or purpose of the conversation.
+Return ONLY the title text without quotes, bullets, or any formatting.`
     },
     handoffSettings: {
         enabled: true,
@@ -56,5 +76,15 @@ Previous conversation context:
 {chathistory}
 
 Continue the conversation naturally, maintaining context while following your core instructions.`
+    },
+    exportSettings: {
+        exportFolder: 'FLAREai/exports',
+        frontmatterTemplate: `---
+title: {{title}}
+date: {{date}}
+---`,
+        metadataTemplate: '',
+        includeSystemMessages: true,
+        includeReasoningBlocks: true
     }
 }; 

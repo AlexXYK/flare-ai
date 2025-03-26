@@ -47,18 +47,38 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
 
     constructor(private baseUrl: string) {
         super();
-        this.url = baseUrl.trim() || 'http://localhost:11434';
+        
+        if (baseUrl && baseUrl.trim() !== '') {
+            this.url = baseUrl.trim();
+        } else {
+            this.url = 'http://localhost:11434';
+        }
     }
 
     setConfig(config: ProviderSettings) {
         super.setConfig(config);
-        this.url = config.baseUrl?.trim() || 'http://localhost:11434';
+        
+        // Only update URL if it's not already set with a custom value from the constructor
+        // and the config provides a non-empty baseUrl
+        if (config.baseUrl && config.baseUrl.trim() !== '') {
+            // Always use the explicitly provided config value
+            this.url = config.baseUrl.trim();
+        } else if (this.url === '') {
+            // Only use the default if we don't already have a URL
+            this.url = 'http://localhost:11434';
+        }
+        
+        // Explicitly set baseUrl in this.config to ensure it's preserved
+        // after setConfig is called
+        if (this.config && this.url && this.url !== 'http://localhost:11434') {
+            this.config.baseUrl = this.url;
+        }
     }
 
     async getAvailableModels(): Promise<string[]> {
         try {
             const response = await requestUrl({
-                url: `${this.config.baseUrl}/api/tags`,
+                url: `${this.url}/api/tags`,
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
@@ -96,29 +116,30 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
         this.abortController = new AbortController();
 
         try {
-            const response = await fetch(`${this.config.baseUrl}/api/chat`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    model,
-                    messages,
-                    stream,
-                    context: this.context,
-                    options: {
-                        temperature,
-                        num_predict: maxTokens
-                    }
-                }),
-                signal: this.abortController.signal
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
             if (stream && onToken) {
+                // Use fetch for streaming since requestUrl doesn't support it
+                const response = await fetch(`${this.url}/api/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages,
+                        stream: true,
+                        context: this.context,
+                        options: {
+                            temperature,
+                            num_predict: maxTokens
+                        }
+                    }),
+                    signal: this.abortController.signal
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
                 let completeResponse = '';
                 const reader = response.body?.getReader();
                 const decoder = new TextDecoder();
@@ -164,16 +185,43 @@ export class OllamaProvider extends BaseProvider implements AIProvider {
 
                 return completeResponse;
             } else {
-                const result = await response.json();
-                // Store context for future requests if available
-                if (result.context) {
-                    this.context = result.context;
+                // Use requestUrl for non-streaming requests
+                const response = await requestUrl({
+                    url: `${this.url}/api/chat`,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages,
+                        stream: false,
+                        context: this.context,
+                        options: {
+                            temperature,
+                            num_predict: maxTokens
+                        }
+                    })
+                });
+
+                if (response.status !== 200) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                return result.message?.content || '';
+
+                try {
+                    const result = response.json as OllamaChatResponse;
+                    // Store context for future requests if available
+                    if (result.context) {
+                        this.context = result.context;
+                    }
+                    return result.message?.content || '';
+                } catch (e) {
+                    console.error('Failed to parse Ollama response:', e);
+                    throw new Error('Failed to parse Ollama response');
+                }
             }
         } catch (error) {
             if (error instanceof Error && error.name === 'AbortError') {
-                console.log('Request aborted');
                 return 'Request aborted';
             }
             throw error;

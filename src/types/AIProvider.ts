@@ -6,6 +6,7 @@ export interface AIProvider {
     getAvailableModels(): Promise<string[]>;
     config: ProviderSettings;
     setConfig(config: ProviderSettings): void;
+    cancelRequest?(): void;
 }
 
 export interface AIProviderOptions {
@@ -20,6 +21,7 @@ export interface AIProviderOptions {
     isFlareSwitch?: boolean;
     stream?: boolean;
     onToken?: (token: string) => void;
+    signal?: AbortSignal;
 }
 
 export interface ProviderSettings {
@@ -92,4 +94,5 @@ export interface MessageOptions {
     provider?: string;
     model?: string;
     onToken?: (token: string) => void;
+    signal?: AbortSignal;
 } 
