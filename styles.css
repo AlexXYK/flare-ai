@@ -914,6 +914,10 @@
     background: var(--background-primary);
 }
 
+.general-section .setting-item {
+    border-top: 0;
+}
+
 /* Provider Settings */
 .flare-provider-buttons {
     display: flex;
