@@ -24,12 +24,15 @@ export class GeneralSettingTab extends PluginSettingTab {
         this.sectionActionButtons.clear();
 
         // Create sections directly in the container with more specific classes
+        const generalSection = containerEl.createDiv({ cls: 'general-section' });
         const providersSection = containerEl.createDiv({ cls: 'settings-section providers-section' });
         const flaresSection = containerEl.createDiv({ cls: 'settings-section flares-section' });
-        const generalSection = containerEl.createDiv({ cls: 'settings-section general-section' });
         const historySection = containerEl.createDiv({ cls: 'settings-section history-section' });
         const titleSection = containerEl.createDiv({ cls: 'settings-section title-section' });
         const exportSection = containerEl.createDiv({ cls: 'settings-section export-section' });
+
+        // General Section
+        this.addGeneralSettings(generalSection);
 
         // Providers Section
         new Setting(providersSection).setName('Providers').setHeading();
@@ -38,10 +41,6 @@ export class GeneralSettingTab extends PluginSettingTab {
         // Flares Section
         new Setting(flaresSection).setName('Flares').setHeading();
         this.plugin.flareManager.createSettingsUI(flaresSection);
-
-        // General Section
-        new Setting(generalSection).setName('General').setHeading();
-        this.addGeneralSettings(generalSection);
 
         // History Section
         new Setting(historySection).setName('History').setHeading();
